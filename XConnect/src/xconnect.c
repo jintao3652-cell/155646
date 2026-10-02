@@ -30,8 +30,8 @@
 #define LISTEN_PORT   51001
 #define PLAYER_MAX    256
 #define PLAYER_TIMEOUT 30.0   /* 秒 */
-#define DATA_INTERVAL 0.2     /* 秒（5Hz） */
-#define LOOP_INTERVAL 0.05    /* 主循环节拍 */
+#define DATA_INTERVAL 0.2f   /* 秒（5Hz） */
+#define LOOP_INTERVAL 0.05f  /* 主循环节拍 */
 
 /* ---------------- 本机飞行数据 dataref ---------------- */
 
@@ -83,8 +83,8 @@ typedef struct {
 } Player;
 
 static Player g_players[PLAYER_MAX];
-static int g_client_sock = NET_INVALID;
-static int g_listen_sock = NET_INVALID;
+static net_sock_t g_client_sock = NET_INVALID;
+static net_sock_t g_listen_sock = NET_INVALID;
 static int g_running = 0;
 static double g_last_send = 0.0;
 static int g_atc_count = 0;

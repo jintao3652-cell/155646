@@ -31,6 +31,11 @@ endif()
 add_library(XConnect MODULE src/xconnect.c src/json.c src/net.c src/csl.c)
 target_include_directories(XConnect PRIVATE "${XPLM_BASE}" "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+# SDK 430 起不再自动定义 XPLM200 系列版本宏，须由插件显式声明，
+# 否则 XPLMObjectRef / XPLMDrawInfo_t 等将被 #if defined(XPLMxxx) 隐藏。
+target_compile_definitions(XConnect PRIVATE
+    XPLM200 XPLM210 XPLM300 XPLM400 XPLM410 XPLM420 XPLM430)
+
 # 插件必须无动态链接依赖（X-Plane 加载 .xpl 前需解依赖）
 set_target_properties(XConnect PROPERTIES
     PREFIX ""

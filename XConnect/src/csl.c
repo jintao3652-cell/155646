@@ -33,10 +33,11 @@ int csl_dataref_count(void) {
 }
 
 void csl_init(void) {
+    char sys[1024];
     const char* sep = XPLMGetDirectorySeparator();
-    const char* sys = XPLMGetSystemPath();
     snprintf(g_csl_rel, sizeof(g_csl_rel),
              "Resources%splugins%sXConnect%sCSL", sep, sep, sep);
+    XPLMGetSystemPath(sys);   /* SDK 430: void XPLMGetSystemPath(char*) */
     snprintf(g_csl_abs, sizeof(g_csl_abs), "%s%s", sys, g_csl_rel);
 }
 
@@ -74,8 +75,10 @@ static void make_obj_rel(char* out, size_t cap, const char* family,
 }
 
 static XPLMInstanceRef try_create(const char* relPath) {
+    char sys[1024];
     char abs[2048];
-    snprintf(abs, sizeof(abs), "%s%s", XPLMGetSystemPath(), relPath);
+    XPLMGetSystemPath(sys);   /* SDK 430: void XPLMGetSystemPath(char*) */
+    snprintf(abs, sizeof(abs), "%s%s", sys, relPath);
     if (!path_exists(abs)) return NULL;
 
 #if kXPLM_Version >= 430
@@ -146,13 +149,13 @@ void csl_set_position(XPLMInstanceRef inst, double lat, double lon,
     {
         /* 局部坐标 + 姿态结构体（structSize 必须填充） */
         XPLMDrawInfo_t info;
-        float x = 0.0f, y = 0.0f, z = 0.0f;
+        double x = 0.0, y = 0.0, z = 0.0;
         XPLMWorldToLocal(lat, lon, alt_m, &x, &y, &z);
         memset(&info, 0, sizeof(info));
         info.structSize = (int)sizeof(info);
-        info.x = x;
-        info.y = y;
-        info.z = z;
+        info.x = (float)x;
+        info.y = (float)y;
+        info.z = (float)z;
         info.pitch = (float)pitch;
         info.heading = (float)heading;
         info.roll = (float)roll;

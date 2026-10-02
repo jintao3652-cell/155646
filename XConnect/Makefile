@@ -3,6 +3,8 @@
 
 CC      ?= gcc
 CFLAGS  += -O2 -Wall -fPIC -shared -std=c99 -DLIN
+# SDK 430 需显式声明版本宏，否则 XPLMObjectRef 等被条件编译隐藏
+CFLAGS  += -DXPLM200 -DXPLM210 -DXPLM300 -DXPLM400 -DXPLM410 -DXPLM420 -DXPLM430
 CFLAGS  += -I$(SDK)/XPLM -Isrc
 LDLIBS  += -lpthread
 
