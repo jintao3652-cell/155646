@@ -14,7 +14,9 @@ endif()
 file(TO_CMAKE_PATH "${XPlaneSDK}" XPlaneSDK)
 
 find_path(XPLM_INC XPLM.h
-    HINTS "${XPlaneSDK}/XPLM" "${XPlaneSDK}/SDK/CHeaders/XPLM")
+    HINTS "${XPlaneSDK}/XPLM"
+          "${XPlaneSDK}/SDK/CHeaders/XPLM"
+          "${XPlaneSDK}/CHeaders/XPLM")
 if(NOT XPLM_INC)
     message(FATAL_ERROR "未找到 XPLM.h（检查 SDK 布局：XPLM/ 或 SDK/CHeaders/XPLM/）")
 endif()

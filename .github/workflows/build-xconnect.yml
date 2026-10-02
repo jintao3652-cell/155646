@@ -34,8 +34,8 @@ jobs:
           git clone --depth 1 https://github.com/x-plane/xplm.git _sdk
           echo "SDK=$PWD/_sdk" >> $GITHUB_ENV
 
-      # Windows：需要官方 SDK 包提供的 XPLM.lib
-      # 优先使用仓库 secrets.XPLANE_SDK_URL 指向的 SDK 压缩包；否则尝试候选镜像
+      # Windows: requires XPLM.lib from the official SDK package.
+      # Prefer the SDK zip from secrets.XPLANE_SDK_URL; otherwise try mirrors.
       - name: Download X-Plane SDK (Windows)
         if: runner.os == 'Windows'
         shell: powershell
@@ -51,13 +51,13 @@ jobs:
               "https://x-plane.dev/sdk/XPSDK300.zip"
             )
             foreach ($u in $candidates) {
-              Write-Host "尝试下载 SDK: $u"
+              Write-Host "Trying SDK download: $u"
               try { Invoke-WebRequest -Uri $u -OutFile sdk.zip -UseBasicParsing -ErrorAction Stop; $url = $u; break }
               catch { }
             }
           }
           if (-not (Test-Path sdk.zip)) {
-            Write-Error "无法自动下载 X-Plane SDK。请在仓库 Settings → Secrets 配置 XPLANE_SDK_URL 指向 SDK zip 直链。"
+            Write-Error "Unable to auto-download the X-Plane SDK. Set the XPLANE_SDK_URL secret to a direct SDK zip URL."
             exit 1
           }
           New-Item -ItemType Directory -Force -Path _sdk | Out-Null
@@ -72,6 +72,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Verify artifact
+        shell: bash
         run: test -f build/XConnect.xpl
 
       - name: Upload artifact
