@@ -63,6 +63,13 @@ else()
 endif()
 
 # 输出到 build 顶层，文件名 XConnect.xpl
+# 多配置生成器（Visual Studio）默认会追加 /Release 等子目录，
+# 这里为所有配置统一输出目录，保证产物固定在 build/XConnect.xpl
+foreach(_cfg RELEASE DEBUG RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(XConnect PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY_${_cfg} "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_${_cfg} "${CMAKE_BINARY_DIR}")
+endforeach()
 set_target_properties(XConnect PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

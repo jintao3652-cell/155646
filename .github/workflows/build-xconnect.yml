@@ -36,7 +36,11 @@ jobs:
 
       - name: Verify artifact
         shell: bash
-        run: test -f build/XConnect.xpl
+        run: |
+          if [ -f build/XConnect.xpl ]; then echo "found at build/XConnect.xpl";
+          elif [ -f build/Release/XConnect.xpl ]; then echo "found at build/Release/XConnect.xpl"; cp build/Release/XConnect.xpl build/XConnect.xpl;
+          elif [ -f build/Debug/XConnect.xpl ]; then echo "found at build/Debug/XConnect.xpl"; cp build/Debug/XConnect.xpl build/XConnect.xpl;
+          else echo "::error::XConnect.xpl not found"; exit 1; fi
         working-directory: XConnect
 
       - name: Upload artifact
