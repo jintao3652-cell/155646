@@ -335,8 +335,6 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
 PLUGIN_API int XPluginStart(const char* host, const char* sdk,
                             char* outName, char* outSig, char* outDesc) {
     int i;
-    char cslRoot[1024];
-    const char* sysPath;
 
     (void)host;
     (void)sdk;
@@ -351,14 +349,9 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
     for (i = 0; i < DR_COUNT; i++)
         g_drefs[i] = XPLMFindDataRef(kDrefNames[i]);
 
-    sysPath = XPLMGetSystemPath();
-    snprintf(cslRoot, sizeof(cslRoot), "%sResources%splugins%sXConnect%sCSL",
-             sysPath, XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator(),
-             XPLMGetDirectorySeparator());
-    csl_init(cslRoot);
-    XPLMDebugString(XCONNECT_NAME ": CSL root: ");
-    XPLMDebugString(cslRoot);
-    XPLMDebugString("\n");
+    csl_init();
+    XPLMDebugString(XCONNECT_NAME
+        ": CSL root: Resources/plugins/XConnect/CSL\n");
 
     XPLMRegisterFlightLoopCallback(xconnect_flight_loop, 1.0, NULL);
 

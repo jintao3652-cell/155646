@@ -28,36 +28,44 @@ XConnect/
 
 ## 编译要求
 
-- X-Plane SDK（含 `XPLM.h`、`XPLMInstance.h`、`lib/XPLM.lib`）
-  下载：https://developer.x-plane.com/sdk/ （或 GitHub: github.com/x-plane/xplm）
+- X-Plane SDK **已内置**于 `XConnect/SDK/`（XPSDK 43.0，含头文件与
+  `XPLM_64.lib`），本地与 CI 均无需额外下载
 - Windows：Visual Studio / Build Tools；Linux：gcc；macOS：clang
 
-### CMake 构建（推荐）
+### CMake 构建（推荐，SDK 自动指向仓库内置目录）
 
 ```bash
-cmake -B build -DXPlaneSDK=<SDK路径>
+cmake -B build
 cmake --build build --config Release
 # 产物: build/XConnect.xpl
 ```
+
+如需使用其他 SDK：`cmake -B build -DXPlaneSDK=<路径>`
 
 ### GitHub Action（一键编译 + 上传）
 
 仓库已内置 `.github/workflows/build-xconnect.yml`：
 
 1. 把项目推送到 GitHub 仓库（需 `git init` + 首次 push）
-2. Action 在 `ubuntu-latest`（gcc）与 `windows-latest`（MSVC）上自动编译
+2. Action 在 `ubuntu-latest`（gcc）与 `windows-latest`（MSVC）自动编译
 3. 编译产物 `XConnect.xpl` 作为 artifact 上传，可直接下载
 
-Linux 构建自动从官方头文件仓库拉取 SDK；Windows 需要官方 SDK 包的
-`XPLM.lib`，若候选下载地址失效，请在仓库 **Settings → Secrets** 配置
-`XPLANE_SDK_URL` 指向 SDK zip 直链。
+SDK 已随仓库提交，无需配置任何 secrets。
 
 ### Linux 简单构建
 
 ```bash
-make SDK=<SDK路径>
+make SDK=SDK
 # 产物: XConnect.xpl
 ```
+
+> 注：`Makefile` 基于旧 SDK 布局编写；用内置 SDK（430）请改用 CMake 构建。
+
+## SDK 版本适配
+
+- 已适配 **XPSDK 43.0**（`XPLMCreateInstance` + `XPLMDrawInfo_t` 新实例化 API、
+  `XPLM_64.lib` 命名、头文件拆分无 `XPLM.h`）
+- 源码含双版本条件编译（`kXPLM_Version >= 430`），旧 SDK（300+）亦可编译
 
 ## 安装
 

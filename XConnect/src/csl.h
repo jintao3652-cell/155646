@@ -1,8 +1,12 @@
-/* CSL 模型加载与 XPLMInstance 渲染。
- * 模型布局（插件目录 Resources/plugins/XConnect/CSL/）：
- *   CSL/{ICAO}.obj             单层
- *   CSL/{family}/{ICAO}.obj    两层（X-CSL 风格包，family 为包名）
- * 动画 dataref 遵循 XPMP2 / X-CSL 约定。
+/* CSL 模型加载与实例化渲染（双版本兼容：SDK 430 新 API / 旧 SDK 旧 API）。
+ *
+ * 模型布局（相对 X-System 根）：
+ *   Resources/plugins/XConnect/CSL/{ICAO}.obj             单层
+ *   Resources/plugins/XConnect/CSL/{family}/{ICAO}.obj    两层（X-CSL 风格）
+ *
+ * SDK 版本差异（kXPLM_Version 判定）：
+ *   >= 430: XPLMLoadObject + XPLMCreateInstance + XPLMDrawInfo_t
+ *   <  430: XPLMInstanceCreate(path, datarefs, count) + float pos[9]
  */
 #ifndef XCONNECT_CSL_H
 #define XCONNECT_CSL_H
@@ -14,11 +18,11 @@
 /* 玩家渲染实例（由主程序持有） */
 typedef struct {
     XPLMInstanceRef inst;   /* NULL 表示未加载 */
-    int               tried;  /* 是否已尝试加载（失败则不再试） */
+    int             tried;  /* 是否已尝试加载（失败则不再试） */
 } CslNode;
 
-/* 初始化：记录 CSL 根目录。base 为 "插件目录/CSL"。 */
-void csl_init(const char* cslRoot);
+/* 初始化：解析 CSL 相对路径（基于 XPLMGetSystemPath）。 */
+void csl_init(void);
 
 /* 释放全部已加载实例（插件退出时）。 */
 void csl_shutdown(void);
@@ -27,7 +31,7 @@ void csl_shutdown(void);
  * 成功返回 XPLMInstanceRef，失败返回 NULL（结果缓存于 node）。 */
 XPLMInstanceRef csl_load(CslNode* node, const char* icao, const char* family);
 
-/* 设置实例位置与动画。values 长度须 ≥ CSL_DATAREF_COUNT。 */
+/* 设置实例位置（WGS84）与动画。animValues 长度须 ≥ csl_dataref_count()。 */
 void csl_set_position(XPLMInstanceRef inst, double lat, double lon,
                       double alt_m, double heading, double pitch, double roll,
                       const float* animValues, int animCount);

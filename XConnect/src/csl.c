@@ -5,6 +5,9 @@
 #include <string.h>
 
 #include "XPLMUtilities.h"
+#if kXPLM_Version >= 430
+#include "XPLMGraphics.h"   /* XPLMWorldToLocal（XPLMDrawInfo_t 在 XPLMScenery.h，经 XPLMInstance.h 引入） */
+#endif
 
 /* XPMP2 / X-CSL 约定的动画 dataref（顺序与 X-CSL obj 一致） */
 static const char* kCslDataRefs[CSL_MAX_DATAREFS] = {
@@ -22,26 +25,27 @@ static const char* kCslDataRefs[CSL_MAX_DATAREFS] = {
 };
 #define CSL_DATAREF_COUNT ((int)(sizeof(kCslDataRefs) / sizeof(kCslDataRefs[0])))
 
-static char g_csl_root[1024] = "";
+static char g_csl_rel[1024] = "";   /* 相对 X-System 根（XPLMLoadObject 用） */
+static char g_csl_abs[1024] = "";   /* 绝对路径（存在性检查用） */
 
 int csl_dataref_count(void) {
     return CSL_DATAREF_COUNT;
 }
 
-void csl_init(const char* cslRoot) {
-    if (cslRoot) {
-        strncpy(g_csl_root, cslRoot, sizeof(g_csl_root) - 1);
-        g_csl_root[sizeof(g_csl_root) - 1] = '\0';
-    }
+void csl_init(void) {
+    const char* sep = XPLMGetDirectorySeparator();
+    const char* sys = XPLMGetSystemPath();
+    snprintf(g_csl_rel, sizeof(g_csl_rel),
+             "Resources%splugins%sXConnect%sCSL", sep, sep, sep);
+    snprintf(g_csl_abs, sizeof(g_csl_abs), "%s%s", sys, g_csl_rel);
 }
 
 void csl_shutdown(void) {
-    /* 实例在插件级由 XPLM 管理；XPLMUnloadInstance 由持有者调用，
-       这里仅做占位以保持 API 对称。 */
+    /* 实例由持有者逐个释放；对象引用在实例销毁后由 XPLM 管理 */
 }
 
-static int path_exists(const char* path) {
-    FILE* f = fopen(path, "rb");
+static int path_exists(const char* absPath) {
+    FILE* f = fopen(absPath, "rb");
     if (f) {
         fclose(f);
         return 1;
@@ -49,63 +53,78 @@ static int path_exists(const char* path) {
     return 0;
 }
 
-static void make_root_obj_path(char* out, size_t cap, const char* icao) {
-    char ics[16];
-    size_t i;
-    for (i = 0; icao[i] && i < sizeof(ics) - 1; i++)
-        ics[i] = (char)toupper((unsigned char)icao[i]);
-    ics[i] = '\0';
-    snprintf(out, cap, "%s%s%s.obj", g_csl_root,
-             XPLMGetDirectorySeparator(), ics);
-}
-
-static void make_pkg_obj_path(char* out, size_t cap, const char* family,
-                              const char* icao) {
+static void make_obj_rel(char* out, size_t cap, const char* family,
+                         const char* icao) {
     char fm[128], ics[16];
     size_t i;
-    for (i = 0; family[i] && i < sizeof(fm) - 1; i++)
-        fm[i] = (char)toupper((unsigned char)family[i]);
-    fm[i] = '\0';
     for (i = 0; icao[i] && i < sizeof(ics) - 1; i++)
         ics[i] = (char)toupper((unsigned char)icao[i]);
     ics[i] = '\0';
-    snprintf(out, cap, "%s%s%s%s%s.obj", g_csl_root,
-             XPLMGetDirectorySeparator(), fm,
-             XPLMGetDirectorySeparator(), ics);
+    if (family && *family) {
+        for (i = 0; family[i] && i < sizeof(fm) - 1; i++)
+            fm[i] = (char)toupper((unsigned char)family[i]);
+        fm[i] = '\0';
+        snprintf(out, cap, "%s%s%s%s%s.obj", g_csl_rel,
+                 XPLMGetDirectorySeparator(), fm,
+                 XPLMGetDirectorySeparator(), ics);
+    } else {
+        snprintf(out, cap, "%s%s%s.obj", g_csl_rel,
+                 XPLMGetDirectorySeparator(), ics);
+    }
 }
 
-static XPLMInstanceRef try_create(const char* objPath) {
-    XPLMInstanceRef inst;
-    if (!objPath || !*objPath) return NULL;
-    if (!path_exists(objPath)) return NULL;
-    inst = XPLMInstanceCreate(objPath, kCslDataRefs, CSL_DATAREF_COUNT);
-    if (!inst) {
-        /* 动画 dataref 版本失败时降级：无动画实例 */
-        inst = XPLMInstanceCreate(objPath, NULL, 0);
+static XPLMInstanceRef try_create(const char* relPath) {
+    char abs[2048];
+    snprintf(abs, sizeof(abs), "%s%s", XPLMGetSystemPath(), relPath);
+    if (!path_exists(abs)) return NULL;
+
+#if kXPLM_Version >= 430
+    {
+        /* SDK 430：XPLMLoadObject + XPLMCreateInstance（null 结尾 datarefs） */
+        XPLMObjectRef obj = XPLMLoadObject(relPath);
+        if (!obj) return NULL;
+        {
+            const char* drefs[CSL_MAX_DATAREFS + 1];
+            int i;
+            for (i = 0; i < CSL_DATAREF_COUNT; i++) drefs[i] = kCslDataRefs[i];
+            drefs[CSL_DATAREF_COUNT] = NULL;
+            return XPLMCreateInstance(obj, drefs);
+        }
     }
-    return inst;
+#else
+    /* 旧 SDK：XPLMInstanceCreate(path, datarefs, count) */
+    {
+        XPLMInstanceRef inst = XPLMInstanceCreate(relPath, kCslDataRefs,
+                                                  CSL_DATAREF_COUNT);
+        if (!inst)
+            inst = XPLMInstanceCreate(relPath, NULL, 0);
+        return inst;
+    }
+#endif
 }
 
 XPLMInstanceRef csl_load(CslNode* node, const char* icao, const char* family) {
-    char path[1024];
+    char rel[2048];
     if (node->tried) return node->inst;   /* 已尝试过：返回缓存结果 */
     node->tried = 1;
 
     if (family && *family) {
-        make_pkg_obj_path(path, sizeof(path), family, icao);
-        node->inst = try_create(path);
+        make_obj_rel(rel, sizeof(rel), family, icao);
+        node->inst = try_create(rel);
         if (node->inst) return node->inst;
     }
-    /* 兼容 family 为完整子目录名（含包名时 ICAO 路径可能大写/小写）：
-       先用 family 拼，失败则回退单层。 */
-    make_root_obj_path(path, sizeof(path), icao);
-    node->inst = try_create(path);
+    make_obj_rel(rel, sizeof(rel), NULL, icao);
+    node->inst = try_create(rel);
     return node->inst;
 }
 
 void csl_release_node(CslNode* node) {
     if (node->inst) {
+#if kXPLM_Version >= 430
+        XPLMDestroyInstance(node->inst);
+#else
         XPLMInstanceDestroy(node->inst);
+#endif
         node->inst = NULL;
     }
     node->tried = 0;
@@ -114,22 +133,44 @@ void csl_release_node(CslNode* node) {
 void csl_set_position(XPLMInstanceRef inst, double lat, double lon,
                       double alt_m, double heading, double pitch, double roll,
                       const float* animValues, int animCount) {
-    float pos[9];
+    float data[CSL_MAX_DATAREFS];
+    int i;
     if (!inst) return;
-    pos[0] = (float)lat;
-    pos[1] = (float)lon;
-    pos[2] = (float)alt_m;
-    pos[3] = (float)heading;
-    pos[4] = (float)pitch;
-    pos[5] = (float)roll;
-    pos[6] = 0.0f;
-    pos[7] = 0.0f;
-    pos[8] = 0.0f;
-    if (animValues && animCount > 0) {
-        XPLMInstanceSetPosition(inst, pos, animValues);
-    } else {
-        float def[CSL_DATAREF_COUNT];
-        memset(def, 0, sizeof(def));
-        XPLMInstanceSetPosition(inst, pos, def);
+
+    for (i = 0; i < animCount && i < CSL_MAX_DATAREFS; i++)
+        data[i] = animValues[i];
+    for (; i < CSL_MAX_DATAREFS; i++)
+        data[i] = 0.0f;
+
+#if kXPLM_Version >= 430
+    {
+        /* 局部坐标 + 姿态结构体（structSize 必须填充） */
+        XPLMDrawInfo_t info;
+        float x = 0.0f, y = 0.0f, z = 0.0f;
+        XPLMWorldToLocal(lat, lon, alt_m, &x, &y, &z);
+        memset(&info, 0, sizeof(info));
+        info.structSize = (int)sizeof(info);
+        info.x = x;
+        info.y = y;
+        info.z = z;
+        info.pitch = (float)pitch;
+        info.heading = (float)heading;
+        info.roll = (float)roll;
+        XPLMInstanceSetPosition(inst, &info, data);
     }
+#else
+    {
+        float pos[9];
+        pos[0] = (float)lat;
+        pos[1] = (float)lon;
+        pos[2] = (float)alt_m;
+        pos[3] = (float)heading;
+        pos[4] = (float)pitch;
+        pos[5] = (float)roll;
+        pos[6] = 0.0f;
+        pos[7] = 0.0f;
+        pos[8] = 0.0f;
+        XPLMInstanceSetPosition(inst, pos, data);
+    }
+#endif
 }
