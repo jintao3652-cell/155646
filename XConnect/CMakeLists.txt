@@ -37,7 +37,7 @@ set_target_properties(XConnect PROPERTIES
     SUFFIX ".xpl")
 
 if(WIN32)
-    target_compile_definitions(XConnect PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(XConnect PRIVATE _CRT_SECURE_NO_WARNINGS IBM)
     target_compile_options(XConnect PRIVATE /O2 /W3)
     # 导入库：SDK 430 为 XPLM_64.lib；旧版为 XPLM.lib
     find_library(XPLM_LIB NAMES XPLM_64 XPLM
@@ -48,9 +48,11 @@ if(WIN32)
         message(FATAL_ERROR "未找到 XPLM_64.lib / XPLM.lib（Windows 需官方 SDK 包）")
     endif()
 elseif(APPLE)
+    target_compile_definitions(XConnect PRIVATE APL)
     set_target_properties(XConnect PROPERTIES
         BUNDLE TRUE PREFIX "" SUFFIX ".xpl")
 else()
+    target_compile_definitions(XConnect PRIVATE LIN)
     target_compile_options(XConnect PRIVATE -O2 -Wall -fPIC -shared)
     target_link_libraries(XConnect PRIVATE pthread)
 endif()

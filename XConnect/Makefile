@@ -2,7 +2,7 @@
 # 用法: make SDK=/path/to/XPlaneSDK
 
 CC      ?= gcc
-CFLAGS  += -O2 -Wall -fPIC -shared -std=c99
+CFLAGS  += -O2 -Wall -fPIC -shared -std=c99 -DLIN
 CFLAGS  += -I$(SDK)/XPLM -Isrc
 LDLIBS  += -lpthread
 
