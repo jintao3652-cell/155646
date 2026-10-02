@@ -1,0 +1,13 @@
+{
+  "callsign": "CCA1234",
+  "cid": "1001",
+  "password": "pw",
+  "real_name": "Zhang San",
+  "aircraft_icao": "A20N",
+  "airline_icao": "CCA",
+  "remember_password": true,
+  "server_host": "127.0.0.1",
+  "server_port": 18909,
+  "xconnect_host": "127.0.0.1",
+  "xconnect_port": 51001
+}

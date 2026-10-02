@@ -1,0 +1,82 @@
+name: Build XConnect
+
+on:
+  workflow_dispatch:        # 手动触发
+  push:
+    paths:
+      - 'XConnect/**'
+  pull_request:
+    paths:
+      - 'XConnect/**'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: XConnect-linux-x86_64
+          - os: windows-latest
+            artifact: XConnect-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: XConnect
+    steps:
+      - uses: actions/checkout@v4
+
+      # Linux/macOS：只需 SDK 头文件（x-plane/xplm 官方仓库，无 XPLM.lib 依赖）
+      - name: Fetch SDK headers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          git clone --depth 1 https://github.com/x-plane/xplm.git _sdk
+          echo "SDK=$PWD/_sdk" >> $GITHUB_ENV
+
+      # Windows：需要官方 SDK 包提供的 XPLM.lib
+      # 优先使用仓库 secrets.XPLANE_SDK_URL 指向的 SDK 压缩包；否则尝试候选镜像
+      - name: Download X-Plane SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          SDK_URL: ${{ secrets.XPLANE_SDK_URL }}
+        run: |
+          $url = $env:SDK_URL
+          if (-not $url) {
+            $candidates = @(
+              "https://download.x-plane.com/sdk/XPSDK300.zip",
+              "https://developer.x-plane.com/wp-content/uploads/2018/10/XPSDK300.zip",
+              "https://developer.x-plane.com/wp-content/uploads/2022/05/XPSDK301.zip",
+              "https://x-plane.dev/sdk/XPSDK300.zip"
+            )
+            foreach ($u in $candidates) {
+              Write-Host "尝试下载 SDK: $u"
+              try { Invoke-WebRequest -Uri $u -OutFile sdk.zip -UseBasicParsing -ErrorAction Stop; $url = $u; break }
+              catch { }
+            }
+          }
+          if (-not (Test-Path sdk.zip)) {
+            Write-Error "无法自动下载 X-Plane SDK。请在仓库 Settings → Secrets 配置 XPLANE_SDK_URL 指向 SDK zip 直链。"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path _sdk | Out-Null
+          Expand-Archive -Path sdk.zip -DestinationPath _sdk -Force
+          $sdkPath = (Resolve-Path _sdk).Path
+          "SDK=$sdkPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Configure CMake
+        run: cmake -B build -DXPlaneSDK="$SDK" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify artifact
+        run: test -f build/XConnect.xpl
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: XConnect/build/XConnect.xpl
+          if-no-files-found: error

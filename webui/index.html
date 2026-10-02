@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>XFlySim-Client</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 顶栏（xPilot 风格单条 bar） -->
+  <header class="bar">
+    <div class="brand" title="XFlySim-Client">XF</div>
+
+    <div id="connect-fields" class="fields">
+      <input id="in-callsign" placeholder="CALLSIGN" maxlength="12" spellcheck="false">
+      <input id="in-aircraft" placeholder="AIRCRAFT" maxlength="4" spellcheck="false">
+      <input id="in-airline" placeholder="AIRLINE" maxlength="3" spellcheck="false">
+      <select id="sel-sim" title="X-Plane 版本">
+        <option value="xp12">XP12</option>
+        <option value="xp11">XP11</option>
+      </select>
+    </div>
+
+    <button id="btn-connect" class="accent">Connect</button>
+
+    <div id="status-fields" class="status hidden">
+      <div class="stat"><label>COM1</label><span id="st-com1">———</span></div>
+      <div class="stat"><label>COM2</label><span id="st-com2">———</span></div>
+      <div class="stat"><label>XPDR</label><span id="st-xpdr">———</span></div>
+      <div class="stat"><label>G/S</label><span id="st-gs">—</span></div>
+      <div class="stat"><label>ALT</label><span id="st-alt">—</span></div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <span id="st-fsd" class="pill">OFFLINE</span>
+    <span id="st-xplane" class="pill dim">XP —</span>
+    <span id="st-roster" class="roster"></span>
+
+    <button id="btn-msg" class="icon" title="消息">✉</button>
+    <button id="btn-settings" class="icon" title="设置">⚙</button>
+    <button id="btn-quit" class="icon" title="退出">✕</button>
+  </header>
+
+  <!-- 日志（低调） -->
+  <main id="log" class="log"></main>
+
+  <!-- 消息面板（右侧滑出） -->
+  <div id="msg-overlay" class="drawer-wrap hidden">
+    <div class="drawer">
+      <div class="drawer-head">
+        <span>Messages</span>
+        <button id="msg-close" class="icon">✕</button>
+      </div>
+      <div id="msg-list" class="msg-list"></div>
+      <div class="msg-input-row">
+        <input id="msg-to" placeholder="TO: 呼号 或 @频率" spellcheck="false">
+        <input id="msg-text" placeholder="Message..." spellcheck="false">
+        <button id="msg-send" class="accent">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置面板 -->
+  <div id="set-overlay" class="overlay hidden">
+    <div class="panel">
+      <div class="panel-head">
+        <span>设置</span>
+        <button id="set-close" class="icon">✕</button>
+      </div>
+      <div class="set-grid">
+        <fieldset>
+          <legend>账号</legend>
+          <label>真实姓名 <input id="set-realname" spellcheck="false"></label>
+          <label>CID <input id="set-cid" spellcheck="false"></label>
+          <label>密码 <input id="set-password" type="password" spellcheck="false"></label>
+          <label class="chk"><input id="set-remember" type="checkbox"> 记住密码</label>
+        </fieldset>
+        <fieldset>
+          <legend>飞行信息</legend>
+          <label>呼号 <input id="set-callsign" spellcheck="false"></label>
+          <label>机型 ICAO <input id="set-aircraft" maxlength="4" spellcheck="false"></label>
+          <label>航司 ICAO <input id="set-airline" maxlength="3" spellcheck="false"></label>
+        </fieldset>
+        <fieldset>
+          <legend>服务器</legend>
+          <label>FSD 服务器 <input id="set-host" spellcheck="false"></label>
+          <label>FSD 端口 <input id="set-port" spellcheck="false"></label>
+          <label>插件地址 <input id="set-xphost" spellcheck="false"></label>
+          <label>插件端口 <input id="set-xpport" spellcheck="false"></label>
+          <p class="tip">客户端连接 X-Plane 内的 XConnect 插件（默认 127.0.0.1:51001），插件离线时禁止连线</p>
+        </fieldset>
+      </div>
+      <div class="panel-foot">
+        <button id="set-save" class="accent">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
