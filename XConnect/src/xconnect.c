@@ -470,22 +470,29 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
     strcpy(outName, XCONNECT_NAME);
     strcpy(outSig, XCONNECT_SIG);
     strcpy(outDesc, XCONNECT_DESC);
+    xconnect_logf("  step: names done");
 
     lock_init();
     g_running = 1;
+    xconnect_logf("  step: locks done");
+
     if (net_init() != 0) {
         XPLMDebugString(XCONNECT_NAME ": network init failed\n");
         return 1;
     }
+    xconnect_logf("  step: net init done");
 
     for (i = 0; i < DR_COUNT; i++)
         g_drefs[i] = XPLMFindDataRef(kDrefNames[i]);
+    xconnect_logf("  step: datarefs done");
 
     csl_init();
     XPLMDebugString(XCONNECT_NAME
         ": CSL root: Resources/plugins/XConnect/CSL\n");
+    xconnect_logf("  step: csl done");
 
     XPLMRegisterFlightLoopCallback(xconnect_flight_loop, 1.0, NULL);
+    xconnect_logf("  step: flight loop registered");
 
     /* 网络线程（回调签名与 LPTHREAD_START_ROUTINE 完全一致） */
 #ifdef _WIN32
@@ -500,6 +507,7 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
         pthread_detach(tid);
     }
 #endif
+    xconnect_logf("  step: net thread started");
 
     xconnect_logf("XPluginStart end ok");
     return 1;
