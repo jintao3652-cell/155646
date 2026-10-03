@@ -6,7 +6,7 @@
   "aircraft_icao": "A20N",
   "airline_icao": "CCA",
   "remember_password": true,
-  "debug_mode": true,
+  "debug_mode": false,
   "server_host": "ol.xflysim.com",
   "server_port": 6809,
   "xconnect_host": "127.0.0.1",

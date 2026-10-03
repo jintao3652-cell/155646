@@ -4,6 +4,15 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>   /* FindFirstFileA 目录枚举 */
+#else
+#include <dirent.h>
+#endif
+
 #include "XPLMUtilities.h"
 #if kXPLM_Version >= 430
 #include "XPLMGraphics.h"   /* XPLMWorldToLocal（XPLMDrawInfo_t 在 XPLMScenery.h，经 XPLMInstance.h 引入） */
@@ -74,6 +83,73 @@ static void make_obj_rel(char* out, size_t cap, const char* family,
     }
 }
 
+/* 在绝对目录 dir 中查找 "{ICAO}*.obj"（跳过 *fan.obj），
+ * 匹配到则把相对路径（X-System 根）写入 outRel。返回 1 找到。 */
+static int find_icao_obj_in_dir(const char* dir, const char* icao,
+                                char* outRel, size_t cap) {
+    const char* sep = XPLMGetDirectorySeparator();
+    char ico_u[16];
+    size_t i;
+    for (i = 0; icao[i] && i < sizeof(ico_u) - 1; i++)
+        ico_u[i] = (char)toupper((unsigned char)icao[i]);
+    ico_u[i] = '\0';
+    icao = ico_u;
+
+#ifdef _WIN32
+    {
+        char pattern[1200];
+        WIN32_FIND_DATAA fd;
+        HANDLE h;
+        snprintf(pattern, sizeof(pattern), "%s%s%s*.obj", dir, sep, icao);
+        h = FindFirstFileA(pattern, &fd);
+        if (h == INVALID_HANDLE_VALUE) return 0;
+        do {
+            char name[64], name_u[64];
+            size_t k;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            for (k = 0; fd.cFileName[k] && k < sizeof(name) - 1; k++)
+                name[k] = fd.cFileName[k];
+            name[k] = '\0';
+            for (k = 0; name[k] && k < sizeof(name_u) - 1; k++)
+                name_u[k] = (char)toupper((unsigned char)name[k]);
+            name_u[k] = '\0';
+            if (strstr(name_u, "FAN.OBJ")) continue;  /* 风扇动画附加 obj */
+            snprintf(outRel, cap, "%s%s%s%s%s", g_csl_rel, sep, icao, sep, name);
+            FindClose(h);
+            return 1;
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+        return 0;
+    }
+#else
+    {
+        DIR* d = opendir(dir);
+        struct dirent* e;
+        size_t ico_len = strlen(icao);
+        if (!d) return 0;
+        while ((e = readdir(d)) != NULL) {
+            char name[64], name_u[64];
+            size_t k;
+            for (k = 0; e->d_name[k] && k < sizeof(name) - 1; k++)
+                name[k] = e->d_name[k];
+            name[k] = '\0';
+            for (k = 0; name[k] && k < sizeof(name_u) - 1; k++)
+                name_u[k] = (char)toupper((unsigned char)name[k]);
+            name_u[k] = '\0';
+            if (strncmp(name_u, icao, ico_len) != 0) continue;
+            if (strstr(name_u, "FAN.OBJ")) continue;
+            if (strstr(name_u, ".OBJ") != (name_u + strlen(name_u) - 4))
+                continue;
+            snprintf(outRel, cap, "%s%s%s%s%s", g_csl_rel, sep, icao, sep, name);
+            closedir(d);
+            return 1;
+        }
+        closedir(d);
+        return 0;
+    }
+#endif
+}
+
 static XPLMInstanceRef try_create(const char* relPath) {
     char sys[1024];
     char abs[2048];
@@ -111,6 +187,7 @@ static XPLMInstanceRef try_create(const char* relPath) {
 
 XPLMInstanceRef csl_load(CslNode* node, const char* icao, const char* family) {
     char rel[2048];
+    char dir[1024];
     if (node->tried) return node->inst;   /* 已尝试过：返回缓存结果 */
     node->tried = 1;
 
@@ -121,7 +198,23 @@ XPLMInstanceRef csl_load(CslNode* node, const char* icao, const char* family) {
     }
     make_obj_rel(rel, sizeof(rel), NULL, icao);
     node->inst = try_create(rel);
-    return node->inst;
+    if (node->inst) return node->inst;
+
+    /* X-CSL 风格：CSL/{ICAO}/{ICAO}{引擎}.obj（如 A20N/A20NCFM.obj） */
+    {
+        char icao_u[16];
+        size_t i;
+        for (i = 0; icao[i] && i < sizeof(icao_u) - 1; i++)
+            icao_u[i] = (char)toupper((unsigned char)icao[i]);
+        icao_u[i] = '\0';
+        snprintf(dir, sizeof(dir), "%s%s%s", g_csl_abs,
+                 XPLMGetDirectorySeparator(), icao_u);
+    }
+    if (find_icao_obj_in_dir(dir, icao, rel, sizeof(rel))) {
+        node->inst = try_create(rel);
+        if (node->inst) return node->inst;
+    }
+    return NULL;
 }
 
 void csl_release_node(CslNode* node) {
