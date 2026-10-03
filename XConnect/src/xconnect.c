@@ -467,9 +467,10 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
     }
     xconnect_logf("XPluginStart entry");
 
-    strcpy(outName, XCONNECT_NAME);
-    strcpy(outSig, XCONNECT_SIG);
-    strcpy(outDesc, XCONNECT_DESC);
+    /* SDK 430：outName/outSignature/outDescription 允许为 NULL，必须判空 */
+    if (outName) strcpy(outName, XCONNECT_NAME);
+    if (outSig) strcpy(outSig, XCONNECT_SIG);
+    if (outDesc) strcpy(outDesc, XCONNECT_DESC);
     xconnect_logf("  step: names done");
 
     lock_init();
