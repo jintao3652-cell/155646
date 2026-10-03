@@ -118,16 +118,15 @@ class XConnectClient:
             try:
                 sock = socket.create_connection(
                     (self.host, self.port), timeout=4.0)
-            except OSError as exc:
+            except OSError:
                 if not self._ever_connected:
-                    self._log(f"[xconnect] 插件未上线（{self.host}:{self.port}）: "
-                              f"{exc.strerror or exc}")
+                    self._log("[xconnect] 未发现模拟机")
                 self._stop.wait(RECONNECT_INTERVAL)
                 continue
             self._ever_connected = True
             sock.settimeout(1.0)
             self._sock = sock
-            self._log(f"[xconnect] 插件已上线（{self.host}:{self.port}）")
+            self._log("[xconnect] 已发现模拟机")
             if self.on_connected:
                 self.on_connected()
             self._rx_loop(sock)

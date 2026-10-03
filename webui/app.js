@@ -41,21 +41,16 @@ function handleEvent(ev) {
 function setXconnectState(state) {
   switch (state) {
     case "connected":
-      el.xplane.textContent = "XP Online";
+      el.xplane.textContent = "已发现模拟机";
       el.xplane.className = "pill ok";
       break;
     case "waiting":
-      el.xplane.textContent = "XP Offline";
-      el.xplane.className = "pill wait";
-      break;
     case "failed":
-      el.xplane.textContent = "XP Offline";
-      el.xplane.className = "pill dim";
-      addLog("[xconnect] 无法连接插件，请检查 X-Plane 是否运行", "err");
-      break;
     case "disconnected":
-      el.xplane.textContent = "XP Offline";
-      el.xplane.className = "pill dim";
+      el.xplane.textContent = "未发现模拟机";
+      el.xplane.className = state === "waiting" ? "pill wait" : "pill dim";
+      if (state === "failed")
+        addLog("[xconnect] 无法连接模拟机，请检查 X-Plane 是否运行", "err");
       break;
   }
 }
@@ -117,10 +112,10 @@ async function statusTick() {
     el.roster.textContent = st.atc > 0 || st.players > 0
       ? `ATC ${st.atc} · PLR ${st.players}` : "";
     if (st.xconnect) {
-      el.xplane.textContent = "XP Online";
+      el.xplane.textContent = "已发现模拟机";
       el.xplane.className = "pill ok";
-    } else if (el.xplane.textContent !== "XP Offline") {
-      el.xplane.textContent = "XP Offline";
+    } else if (el.xplane.textContent !== "未发现模拟机") {
+      el.xplane.textContent = "未发现模拟机";
       el.xplane.className = "pill dim";
     }
   } catch (e) { /* 忽略 */ }
@@ -131,7 +126,6 @@ async function statusTick() {
 function setConnected(on) {
   connected = on;
   el.fields.classList.toggle("hidden", on);
-  el.status.classList.toggle("hidden", !on);
   el.connect.textContent = on ? "Disconnect" : "Connect";
   el.connect.disabled = false;
 }
@@ -304,7 +298,7 @@ window.__previewShown = false;
 window.addEventListener("pywebviewready", () => {
   bridgeReady = true;
   api = window.pywebview.api;
-  addLog("pywebview 已就绪，后端 API 可用", "in");
+  addLog("欢迎使用 XFlySim Client", "in");
   init();
 });
 

@@ -103,7 +103,7 @@ class NetworkModel:
         self.xconnect.start()
 
     def _on_xconnect_connected(self) -> None:
-        self._log("[xconnect] 插件已上线，数据通道就绪")
+        self._log("[xconnect] 数据通道就绪")
         if self.on_xconnect_connected:
             self.on_xconnect_connected()
 
@@ -113,7 +113,7 @@ class NetworkModel:
             self.on_plugin_message(doc)
 
     def _on_xconnect_disconnected(self) -> None:
-        self._log("[xconnect] 插件离线")
+        self._log("[xconnect] 未发现模拟机")
         if self.on_xconnect_disconnected:
             self.on_xconnect_disconnected()
         # 插件离线（X-Plane 关闭）→ 自动断开 FSD 连接

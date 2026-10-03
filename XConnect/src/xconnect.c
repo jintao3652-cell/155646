@@ -165,6 +165,7 @@ typedef struct {
 static Player g_players[PLAYER_MAX];
 static net_sock_t g_client_sock = NET_INVALID;
 static net_sock_t g_listen_sock = NET_INVALID;
+static XPLMFlightLoopID g_flight_loop = NULL;
 static int g_running = 0;
 static double g_last_send = 0.0;
 static int g_atc_count = 0;
@@ -495,8 +496,24 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
         ": CSL root: Resources/plugins/XConnect/CSL\n");
     xconnect_logf("  step: csl done");
 
-    XPLMRegisterFlightLoopCallback(xconnect_flight_loop, 1.0, NULL);
-    xconnect_logf("  step: flight loop registered");
+    /* X-Plane 12.4 起 legacy XPLMRegisterFlightLoopCallback 安装的
+     * pre-flight-loop 回调不再被调用；改用新 API XPLMCreateFlightLoop。 */
+    {
+        XPLMCreateFlightLoop_t params;
+        memset(&params, 0, sizeof(params));
+        params.structSize = (int)sizeof(params);
+        params.phase = xplm_FlightLoop_Phase_BeforeFlightModel;
+        params.callbackFunc = xconnect_flight_loop;
+        params.refcon = NULL;
+        g_flight_loop = XPLMCreateFlightLoop(&params);
+        if (g_flight_loop) {
+            /* -1 + inRelativeToNow=1：下一个循环即调用 */
+            XPLMScheduleFlightLoop(g_flight_loop, -1.0f, 1);
+            xconnect_logf("  step: flight loop scheduled");
+        } else {
+            xconnect_logf("  step: flight loop create FAILED");
+        }
+    }
 
     /* 网络线程（回调签名与 LPTHREAD_START_ROUTINE 完全一致） */
 #ifdef _WIN32
@@ -532,7 +549,10 @@ PLUGIN_API void XPluginStop(void) {
     }
     LOCK_LEAVE(g_sock_lock);
 
-    XPLMUnregisterFlightLoopCallback(xconnect_flight_loop, NULL);
+    if (g_flight_loop) {
+        XPLMDestroyFlightLoop(g_flight_loop);
+        g_flight_loop = NULL;
+    }
 
     for (i = 0; i < PLAYER_MAX; i++)
         csl_release_node(&g_players[i].model);
