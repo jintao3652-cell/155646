@@ -26,8 +26,6 @@
 #include "net.h"
 
 #define XCONNECT_NAME "XConnect"
-#define XCONNECT_SIG  "xflysim.xconnect"
-#define XCONNECT_DESC "XFlySim X-Plane bridge: flight data + CSL rendering"
 #define LISTEN_PORT   51001
 #define PLAYER_MAX    256
 #define PLAYER_TIMEOUT 30.0   /* 秒 */
@@ -73,27 +71,6 @@ static XPLMDataRef g_drefs[DR_COUNT];
 static char g_log_path[2048] = "";
 
 static double xc_now_sec(void);   /* 定义见锁宏块：优先于日志工具使用 */
-
-#ifdef _WIN32
-/* 检查内存页是否可写（X-Plane 12 可能传入只读字符串给 out* 参数，
- * 直接写入会导致访问违规崩溃） */
-static int ptr_writable(const void* p) {
-    MEMORY_BASIC_INFORMATION mbi;
-    if (!VirtualQuery(p, &mbi, sizeof(mbi))) return 0;
-    if (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
-                       PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
-        return 1;
-    return 0;
-}
-
-static void safe_out(char* buf, size_t cap, const char* val) {
-    if (buf && ptr_writable(buf)) snprintf(buf, cap, "%s", val);
-}
-#else
-static void safe_out(char* buf, size_t cap, const char* val) {
-    if (buf) snprintf(buf, cap, "%s", val);
-}
-#endif
 
 /* 写诊断日志（插件目录 xconnect.log）。飞行的每一步关键入口都记录，
  * 崩溃后可从最后一行定位阶段。 */
@@ -450,6 +427,7 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
 #ifdef _WIN32
     __try {
 #endif
+        if (counter == 0) xconnect_logf("loop first frame");
         if (elapsedMe - g_last_send >= DATA_INTERVAL) {
             build_flight_data(line, sizeof(line));
             LOCK_ENTER(g_sock_lock);
@@ -470,8 +448,11 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
 
 /* ---------------- 插件入口 ---------------- */
 
-PLUGIN_API int XPluginStart(const char* host, const char* sdk,
-                            char* outName, char* outSig, char* outDesc) {
+/* X-Plane 12.4 (SDK 430) 的 XPluginStart 只传 3 个参数（host, sdk, outName），
+ * outSignature/outDescription 输出参数已从 ABI 移除；第 4/5 参数位置读到的是
+ * 未初始化寄存器（映像基址，只读），写入必然崩溃、不写则残留旧签名导致
+ * "A version of this plugin is already loaded" 冲突。故仅声明并写入 outName。 */
+PLUGIN_API int XPluginStart(const char* host, const char* sdk, char* outName) {
     int i;
 
     (void)host;
@@ -486,15 +467,10 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
                  sys, XPLMGetDirectorySeparator(),
                  XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
     }
-    xconnect_logf("XConnect v3 (built %s %s): entry", __DATE__, __TIME__);
-    xconnect_logf("  params: outName=%p outSig=%p outDesc=%p",
-                  (void*)outName, (void*)outSig, (void*)outDesc);
+    xconnect_logf("XConnect v4 (built %s %s): entry", __DATE__, __TIME__);
+    xconnect_logf("  params: outName=%p", (void*)outName);
 
-    /* X-Plane 12 可能传入只读字符串（尤其 outSig/outDesc）：
-       仅写入可写缓冲区，避免访问违规 */
-    safe_out(outName, 256, XCONNECT_NAME);
-    safe_out(outSig, 256, XCONNECT_SIG);
-    safe_out(outDesc, 256, XCONNECT_DESC);
+    if (outName) snprintf(outName, 256, "%s", XCONNECT_NAME);
     xconnect_logf("  step: names done");
 
     lock_init();
@@ -560,12 +536,15 @@ PLUGIN_API void XPluginStop(void) {
 
     csl_shutdown();
     lock_done();
+    xconnect_logf("XPluginStop done");
 }
 
 PLUGIN_API void XPluginEnable(void) {
+    xconnect_logf("XPluginEnable");
 }
 
 PLUGIN_API int XPluginDisable(void) {
+    xconnect_logf("XPluginDisable");
     return 1;
 }
 
