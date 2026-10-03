@@ -74,6 +74,27 @@ static char g_log_path[2048] = "";
 
 static double xc_now_sec(void);   /* 定义见锁宏块：优先于日志工具使用 */
 
+#ifdef _WIN32
+/* 检查内存页是否可写（X-Plane 12 可能传入只读字符串给 out* 参数，
+ * 直接写入会导致访问违规崩溃） */
+static int ptr_writable(const void* p) {
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(p, &mbi, sizeof(mbi))) return 0;
+    if (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                       PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
+        return 1;
+    return 0;
+}
+
+static void safe_out(char* buf, size_t cap, const char* val) {
+    if (buf && ptr_writable(buf)) snprintf(buf, cap, "%s", val);
+}
+#else
+static void safe_out(char* buf, size_t cap, const char* val) {
+    if (buf) snprintf(buf, cap, "%s", val);
+}
+#endif
+
 /* 写诊断日志（插件目录 xconnect.log）。飞行的每一步关键入口都记录，
  * 崩溃后可从最后一行定位阶段。 */
 static void xconnect_logf(const char* fmt, ...) {
@@ -465,14 +486,15 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
                  sys, XPLMGetDirectorySeparator(),
                  XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
     }
-    xconnect_logf("XConnect v2 (built %s %s): entry", __DATE__, __TIME__);
+    xconnect_logf("XConnect v3 (built %s %s): entry", __DATE__, __TIME__);
     xconnect_logf("  params: outName=%p outSig=%p outDesc=%p",
                   (void*)outName, (void*)outSig, (void*)outDesc);
 
-    /* SDK 430：out 参数允许为 NULL，且缓冲区长度未知 → 限长写入 */
-    if (outName) snprintf(outName, 64, "%s", XCONNECT_NAME);
-    if (outSig)  snprintf(outSig, 64, "%s", XCONNECT_SIG);
-    if (outDesc) snprintf(outDesc, 64, "%s", XCONNECT_DESC);
+    /* X-Plane 12 可能传入只读字符串（尤其 outSig/outDesc）：
+       仅写入可写缓冲区，避免访问违规 */
+    safe_out(outName, 256, XCONNECT_NAME);
+    safe_out(outSig, 256, XCONNECT_SIG);
+    safe_out(outDesc, 256, XCONNECT_DESC);
     xconnect_logf("  step: names done");
 
     lock_init();
