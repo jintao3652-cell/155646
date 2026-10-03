@@ -53,19 +53,9 @@ jobs:
           fi
           ls -la build/XConnect.xpl
           if [ "$RUNNER_OS" = "Windows" ]; then
-            python -c "
-raw = open('build/XConnect.xpl', 'rb').read()
-assert raw[:2] == b'MZ', 'not a PE binary'
-assert b'XPluginStart' in raw, 'XPluginStart not exported'
-print('PE OK: MZ header + XPluginStart export present')
-"
+            python -c "raw=open('build/XConnect.xpl','rb').read(); assert raw[:2]==b'MZ','not PE'; assert b'XPluginStart' in raw,'XPluginStart missing'; print('PE OK: MZ + XPluginStart export')"
           else
-            python -c "
-raw = open('build/XConnect.xpl', 'rb').read()
-assert raw[:4] == b'\x7fELF', 'not an ELF binary'
-assert b'XPluginStart' in raw, 'XPluginStart not exported'
-print('ELF OK: ELF header + XPluginStart symbol present')
-"
+            python -c "raw=open('build/XConnect.xpl','rb').read(); assert raw[:4]==b'\\x7fELF','not ELF'; assert b'XPluginStart' in raw,'XPluginStart missing'; print('ELF OK: ELF + XPluginStart symbol')"
           fi
         working-directory: XConnect
 
