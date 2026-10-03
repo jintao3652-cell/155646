@@ -88,10 +88,13 @@ static XPLMInstanceRef try_create(const char* relPath) {
         if (!obj) return NULL;
         {
             const char* drefs[CSL_MAX_DATAREFS + 1];
+            XPLMInstanceRef inst;
             int i;
             for (i = 0; i < CSL_DATAREF_COUNT; i++) drefs[i] = kCslDataRefs[i];
             drefs[CSL_DATAREF_COUNT] = NULL;
-            return XPLMCreateInstance(obj, drefs);
+            inst = XPLMCreateInstance(obj, drefs);
+            if (!inst) XPLMUnloadObject(obj);   /* 创建失败需卸载对象引用 */
+            return inst;
         }
     }
 #else

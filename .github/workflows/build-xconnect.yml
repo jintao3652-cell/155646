@@ -37,10 +37,36 @@ jobs:
       - name: Verify artifact
         shell: bash
         run: |
-          if [ -f build/XConnect.xpl ]; then echo "found at build/XConnect.xpl";
-          elif [ -f build/Release/XConnect.xpl ]; then echo "found at build/Release/XConnect.xpl"; cp build/Release/XConnect.xpl build/XConnect.xpl;
-          elif [ -f build/Debug/XConnect.xpl ]; then echo "found at build/Debug/XConnect.xpl"; cp build/Debug/XConnect.xpl build/XConnect.xpl;
-          else echo "::error::XConnect.xpl not found"; exit 1; fi
+          echo "--- build tree ---"
+          find build -maxdepth 2 -type f 2>/dev/null || true
+          if [ -f build/XConnect.xpl ]; then
+            echo "found at build/XConnect.xpl"
+          elif [ -f build/Release/XConnect.xpl ]; then
+            echo "found at build/Release/XConnect.xpl"; cp build/Release/XConnect.xpl build/XConnect.xpl
+          elif [ -f build/Debug/XConnect.xpl ]; then
+            echo "found at build/Debug/XConnect.xpl"; cp build/Debug/XConnect.xpl build/XConnect.xpl
+          elif [ -f build/XConnect.dll ]; then
+            echo "found at build/XConnect.dll (dll suffix)"; cp build/XConnect.dll build/XConnect.xpl
+          else
+            echo "::error::XConnect.xpl not found (see build tree above)"
+            exit 1
+          fi
+          ls -la build/XConnect.xpl
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python -c "
+raw = open('build/XConnect.xpl', 'rb').read()
+assert raw[:2] == b'MZ', 'not a PE binary'
+assert b'XPluginStart' in raw, 'XPluginStart not exported'
+print('PE OK: MZ header + XPluginStart export present')
+"
+          else
+            python -c "
+raw = open('build/XConnect.xpl', 'rb').read()
+assert raw[:4] == b'\x7fELF', 'not an ELF binary'
+assert b'XPluginStart' in raw, 'XPluginStart not exported'
+print('ELF OK: ELF header + XPluginStart symbol present')
+"
+          fi
         working-directory: XConnect
 
       - name: Upload artifact

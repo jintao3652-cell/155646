@@ -67,6 +67,51 @@ static const char* kDrefNames[DR_COUNT] = {
 
 static XPLMDataRef g_drefs[DR_COUNT];
 
+/* 安全读取：对空引用/数组类 dataref 也不会崩溃 */
+static float dref_float(XPLMDataRef r) {
+    int t;
+    if (!r) return 0.0f;
+    t = XPLMGetDataRefTypes(r);
+    if (t & xplmType_Float) {
+        float v = 0.0f;
+        XPLMGetDataf(r, &v);
+        return v;
+    }
+    if (t & xplmType_FloatArray) {
+        float v = 0.0f;
+        XPLMGetDatavf(r, &v, 0, 1);
+        return v;
+    }
+    if (t & xplmType_Int) {
+        int v = 0;
+        XPLMGetDatai(r, &v);
+        return (float)v;
+    }
+    if (t & xplmType_IntArray) {
+        int v = 0;
+        XPLMGetDatavi(r, &v, 0, 1);
+        return (float)v;
+    }
+    return 0.0f;
+}
+
+static int dref_int(XPLMDataRef r) {
+    int t;
+    if (!r) return 0;
+    t = XPLMGetDataRefTypes(r);
+    if (t & xplmType_Int) {
+        int v = 0;
+        XPLMGetDatai(r, &v);
+        return v;
+    }
+    if (t & xplmType_IntArray) {
+        int v = 0;
+        XPLMGetDatavi(r, &v, 0, 1);
+        return v;
+    }
+    return (int)dref_float(r);
+}
+
 /* ---------------- 玩家表 ---------------- */
 
 typedef struct {
@@ -99,13 +144,25 @@ static void* g_sock_lock = NULL;
 #define LOCK_DONE(l) DeleteCriticalSection((CRITICAL_SECTION*)(l))
 #define LOCK_ENTER(l) EnterCriticalSection((CRITICAL_SECTION*)(l))
 #define LOCK_LEAVE(l) LeaveCriticalSection((CRITICAL_SECTION*)(l))
+
+/* 单调时钟（秒）。网络线程与主循环共用，避免在非主线程调用 XPLM API。 */
+static double xc_now_sec(void) {
+    return (double)GetTickCount64() / 1000.0;
+}
 #else
 #include <pthread.h>
+#include <time.h>
 #define LOCK_TYPE pthread_mutex_t
 #define LOCK_INIT(l) pthread_mutex_init((pthread_mutex_t*)(l), NULL)
 #define LOCK_DONE(l) pthread_mutex_destroy((pthread_mutex_t*)(l))
 #define LOCK_ENTER(l) pthread_mutex_lock((pthread_mutex_t*)(l))
 #define LOCK_LEAVE(l) pthread_mutex_unlock((pthread_mutex_t*)(l))
+
+static double xc_now_sec(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
 #endif
 
 static void lock_init(void) {
@@ -195,7 +252,7 @@ static void handle_client_line(const char* line) {
                     GETNUM("bank", p->roll);
                     GETNUM("heading", p->heading);
                     GETNUM("ground_speed", p->gs_kt);
-                    p->last_seen = XPLMGetElapsedTime();
+                    p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
                 }
                 /* 不在列表中的玩家由超时机制（PLAYER_TIMEOUT）清理 */
                 LOCK_LEAVE(g_players_lock);
@@ -212,10 +269,14 @@ static void handle_client_line(const char* line) {
     json_free(root);
 }
 
+#ifdef _WIN32
+static DWORD WINAPI net_thread(LPVOID arg) {
+#else
 static void* net_thread(void* arg) {
+#endif
     (void)arg;
     g_listen_sock = net_listen(LISTEN_PORT);
-    if (g_listen_sock == NET_INVALID) return NULL;
+    if (g_listen_sock == NET_INVALID) return 0;
 
     while (g_running) {
         net_sock_t sock = net_accept(g_listen_sock);
@@ -240,18 +301,15 @@ static void* net_thread(void* arg) {
         LOCK_LEAVE(g_sock_lock);
         net_close(sock);
     }
-    return NULL;
+    return 0;
 }
 
 /* ---------------- 主循环 ---------------- */
 
 static void build_flight_data(char* out, int size) {
-    float gear = 0.0f;
-    XPLMGetDatavf(g_drefs[DR_GEAR], &gear, 0, 1);
-    int xpdrMode = XPLMGetDatai(g_drefs[DR_XPDR_MODE]);
-    const char* squark = xpdrMode >= 2 ? "S" : "N";
-    long com1 = (long)(XPLMGetDataf(g_drefs[DR_COM1]) / 1000.0);
-    long com2 = (long)(XPLMGetDataf(g_drefs[DR_COM2]) / 1000.0);
+    long com1 = (long)(dref_float(g_drefs[DR_COM1]) / 1000.0);
+    long com2 = (long)(dref_float(g_drefs[DR_COM2]) / 1000.0);
+    const char* squark = dref_int(g_drefs[DR_XPDR_MODE]) >= 2 ? "S" : "N";
 
     snprintf(out, size,
         "{\"type\":\"flight_data\","
@@ -262,20 +320,21 @@ static void build_flight_data(char* out, int size) {
         "\"com1_freq\":%ld,\"com2_freq\":%ld,"
         "\"transponder\":%d,\"squark\":\"%s\",\"gear_deploy\":%.2f,"
         "\"flaps_ratio\":%.2f,\"throttle_ratio\":%.2f}",
-        XPLMGetDataf(g_drefs[DR_LAT]), XPLMGetDataf(g_drefs[DR_LON]),
-        XPLMGetDataf(g_drefs[DR_ELEV]) * 3.28084,
-        XPLMGetDataf(g_drefs[DR_AGL]) * 3.28084,
-        XPLMGetDataf(g_drefs[DR_ELEV]),
-        XPLMGetDataf(g_drefs[DR_PITCH]), XPLMGetDataf(g_drefs[DR_BANK]),
-        XPLMGetDataf(g_drefs[DR_MAG_HEAD]), XPLMGetDataf(g_drefs[DR_TRUE_HEAD]),
-        XPLMGetDataf(g_drefs[DR_GS]) * 1.943844,
-        XPLMGetDataf(g_drefs[DR_IAS]), XPLMGetDataf(g_drefs[DR_VSI]),
+        dref_float(g_drefs[DR_LAT]), dref_float(g_drefs[DR_LON]),
+        dref_float(g_drefs[DR_ELEV]) * 3.28084,
+        dref_float(g_drefs[DR_AGL]) * 3.28084,
+        dref_float(g_drefs[DR_ELEV]),
+        dref_float(g_drefs[DR_PITCH]), dref_float(g_drefs[DR_BANK]),
+        dref_float(g_drefs[DR_MAG_HEAD]), dref_float(g_drefs[DR_TRUE_HEAD]),
+        dref_float(g_drefs[DR_GS]) * 1.943844,
+        dref_float(g_drefs[DR_IAS]), dref_float(g_drefs[DR_VSI]),
         com1, com2,
-        XPLMGetDatai(g_drefs[DR_XPDR_CODE]), squark, gear,
-        XPLMGetDataf(g_drefs[DR_FLAPS]), XPLMGetDataf(g_drefs[DR_THROTTLE]));
+        dref_int(g_drefs[DR_XPDR_CODE]), squark,
+        dref_float(g_drefs[DR_GEAR]),
+        dref_float(g_drefs[DR_FLAPS]), dref_float(g_drefs[DR_THROTTLE]));
 }
 
-static void update_players(float elapsedSim) {
+static void update_players(double now) {
     float anim[CSL_MAX_DATAREFS];
     int i;
     LOCK_ENTER(g_players_lock);
@@ -284,7 +343,7 @@ static void update_players(float elapsedSim) {
         if (!p->active) continue;
 
         /* 超时清理 */
-        if (elapsedSim - p->last_seen > PLAYER_TIMEOUT) {
+        if (now - p->last_seen > PLAYER_TIMEOUT) {
             csl_release_node(&p->model);
             p->active = 0;
             continue;
@@ -326,7 +385,7 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
     }
     LOCK_LEAVE(g_sock_lock);
 
-    update_players(elapsedSim);
+    update_players(xc_now_sec());
     return LOOP_INTERVAL;
 }
 
@@ -345,6 +404,10 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
 
     lock_init();
     g_running = 1;
+    if (net_init() != 0) {
+        XPLMDebugString(XCONNECT_NAME ": network init failed\n");
+        return 1;
+    }
 
     for (i = 0; i < DR_COUNT; i++)
         g_drefs[i] = XPLMFindDataRef(kDrefNames[i]);
@@ -355,11 +418,10 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
 
     XPLMRegisterFlightLoopCallback(xconnect_flight_loop, 1.0, NULL);
 
-    /* 网络线程 */
+    /* 网络线程（回调签名与 LPTHREAD_START_ROUTINE 完全一致） */
 #ifdef _WIN32
     {
-        HANDLE h = CreateThread(NULL, 0,
-            (LPTHREAD_START_ROUTINE)net_thread, NULL, 0, NULL);
+        HANDLE h = CreateThread(NULL, 0, net_thread, NULL, 0, NULL);
         if (h) CloseHandle(h);
     }
 #else
