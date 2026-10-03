@@ -1,331 +1,318 @@
-/* XFlySim-Client 前端逻辑：pywebview 桥接 + 事件轮询（xPilot 风格简约 UI） */
+/* XFlySim-Client 前端逻辑：Vue3 + Element Plus + Font Awesome
+ * 数据来源：pywebview → Api（事件轮询 pull / 直接调用） */
 "use strict";
 
-let api = null;
-let connected = false;
-const $ = (id) => document.getElementById(id);
+const { createApp } = Vue;
 
-const el = {
-  callsign: $("in-callsign"), aircraft: $("in-aircraft"), airline: $("in-airline"),
-  sim: $("sel-sim"), connect: $("btn-connect"),
-  fields: $("connect-fields"), status: $("status-fields"),
-  fsd: $("st-fsd"), xplane: $("st-xplane"), roster: $("st-roster"),
-  com1: $("st-com1"), com2: $("st-com2"),
-  xpdr: $("st-xpdr"), gs: $("st-gs"), alt: $("st-alt"),
-  log: $("log"), toast: $("toast"),
-  msgOverlay: $("msg-overlay"), msgList: $("msg-list"),
-  msgTo: $("msg-to"), msgText: $("msg-text"), msgSend: $("msg-send"),
-  setOverlay: $("set-overlay"),
-};
+createApp({
+  data() {
+    return {
+      api: null,
+      bridgeReady: false,
+      connected: false,
+      busy: false,
+      callsign: "", aircraft: "", airline: "",
+      sim: "xp12",
+      st: { com1: "———", com2: "———", xpdr: "———", gs: "—", alt: "—" },
+      fsd: { text: "OFFLINE", tag: "danger" },
+      xplane: { text: "未发现模拟机", tag: "info" },
+      csl: { text: "CSL —", tag: "info", title: "CSL 模型加载情况" },
+      roster: "",
+      log: [],
+      msgs: [],
+      msgTo: "", msgText: "",
+      fp: { type: "I", aircraft: "", speed: "450", alt: "FL350", dep: "",
+            dest: "", altapt: "", plan_time: "0000", actual: "0000",
+            enrh: 0, enrm: 0, fuelh: 0, fuelm: 0, remarks: "", route: "" },
+      set: { real_name: "", cid: "", password: "", remember: true,
+             callsign: "", aircraft: "", airline: "",
+             host: "", port: 6809, xphost: "", xpport: 51001, debug: false },
+      overlays: { msg: false, set: false, fp: false },
+      toastTimer: null,
+    };
+  },
 
-/* ---------- 事件处理 ---------- */
+  mounted() {
+    window.addEventListener("pywebviewready", () => {
+      this.bridgeReady = true;
+      this.api = window.pywebview.api;
+      this.addLog("欢迎使用 XFlySim Client", "in");
+      this.init();
+    });
+    // 兜底：3s 未触发视为纯浏览器预览
+    setTimeout(() => {
+      if (!this.bridgeReady) {
+        window.__previewShown = true;
+        this.addLog("预览模式：未连接后端（请通过 python webapp.py 启动）", "err");
+      }
+    }, 3000);
 
-function handleEvent(ev) {
-  switch (ev.event) {
-    case "log": addLog(ev.data, "out"); break;
-    case "text":
-      addLog(`[消息] ${ev.data[0]}: ${ev.data[1]}`, "txt");
-      appendMsg(ev.data[0], ev.data[1], false);
-      break;
-    case "flight": updateFlight(ev.data); break;
-    case "xconnect": setXconnectState(ev.data); break;
-    case "csl": setCslStatus(ev.data); break;
-    case "xplog": addLog("◂ " + JSON.stringify(ev.data), "in"); break;
-    case "sys": addLog(`[!] ${ev.data}`, "err"); break;
-    case "disconnected":
-      setConnected(false);
-      addLog("已断开连接", "in");
-      break;
-  }
-}
+    setInterval(() => this.poll(), 100);
+    setInterval(() => this.statusTick(), 1000);
+  },
 
-function setXconnectState(state) {
-  switch (state) {
-    case "connected":
-      el.xplane.textContent = "已发现模拟机";
-      el.xplane.className = "pill ok";
-      break;
-    case "waiting":
-    case "failed":
-    case "disconnected":
-      el.xplane.textContent = "未发现模拟机";
-      el.xplane.className = state === "waiting" ? "pill wait" : "pill dim";
-      if (state === "failed")
-        addLog("[xconnect] 无法连接模拟机，请检查 X-Plane 是否运行", "err");
-      break;
-  }
-}
+  methods: {
+    /* ---------- 初始化 ---------- */
+    async init() {
+      try {
+        const s = await this.api.get_settings();
+        if (!this.callsign) this.callsign = s.callsign;
+        if (!this.aircraft) this.aircraft = s.aircraft_icao;
+        if (!this.airline) this.airline = s.airline_icao;
+        this.api.set_debug(!!s.debug_mode);
+      } catch (e) { /* 忽略 */ }
+    },
 
-function setCslStatus(d) {
-  const loaded = d.loaded || [];
-  const missing = d.missing || [];
-  const total = loaded.length + missing.length;
-  el.csl = el.csl || $("st-csl");
-  if (total === 0) {
-    el.csl.textContent = "CSL —";
-    el.csl.className = "pill dim";
-    el.csl.title = "CSL 模型加载情况";
-    return;
-  }
-  el.csl.textContent = `CSL ${loaded.length}/${total}`;
-  el.csl.className = missing.length ? "pill wait" : "pill ok";
-  el.csl.title = "已加载: " + (loaded.join(", ") || "无") +
-                 "\n缺失: " + (missing.join(", ") || "无");
-  if (missing.length)
-    addLog(`CSL 缺失模型: ${missing.join(", ")}（放入 plugins/XConnect/CSL/）`, "err");
-}
+    /* ---------- 事件轮询 ---------- */
+    async poll() {
+      if (!this.api) return;
+      try {
+        const events = await this.api.pull();
+        events.forEach((ev) => this.handleEvent(ev));
+      } catch (e) { /* 忽略瞬时桥接错误 */ }
+    },
 
-async function poll() {
-  try {
-    const events = await api.pull();
-    events.forEach(handleEvent);
-  } catch (e) { /* 忽略瞬时桥接错误 */ }
-}
+    handleEvent(ev) {
+      switch (ev.event) {
+        case "log": this.addLog(ev.data, "out"); break;
+        case "text":
+          this.addLog(`[消息] ${ev.data[0]}: ${ev.data[1]}`, "txt");
+          this.appendMsg(ev.data[0], ev.data[1], false);
+          break;
+        case "flight": this.updateFlight(ev.data); break;
+        case "xconnect": this.setXconnectState(ev.data); break;
+        case "csl": this.setCslStatus(ev.data); break;
+        case "xplog": this.addLog("◂ " + JSON.stringify(ev.data), "in"); break;
+        case "sys": this.addLog(`[!] ${ev.data}`, "err"); break;
+        case "disconnected":
+          this.connected = false;
+          this.addLog("已断开连接", "in");
+          break;
+      }
+    },
 
-/* ---------- 日志 ---------- */
+    setXconnectState(state) {
+      switch (state) {
+        case "connected":
+          this.xplane = { text: "已发现模拟机", tag: "success" };
+          break;
+        case "waiting":
+          this.xplane = { text: "未发现模拟机", tag: "warning" };
+          break;
+        case "failed":
+          this.xplane = { text: "未发现模拟机", tag: "info" };
+          this.addLog("[xconnect] 无法连接模拟机，请检查 X-Plane 是否运行", "err");
+          break;
+        case "disconnected":
+          this.xplane = { text: "未发现模拟机", tag: "info" };
+          break;
+      }
+    },
 
-function addLog(msg, cls = "") {
-  const t = new Date().toTimeString().slice(0, 8);
-  const line = document.createElement("div");
-  const ts = document.createElement("span");
-  ts.className = "t"; ts.textContent = t;
-  line.appendChild(ts);
-  line.appendChild(document.createTextNode(msg));
-  if (cls) line.classList.add(cls);
-  el.log.appendChild(line);
-  el.log.scrollTop = el.log.scrollHeight;
-}
+    setCslStatus(d) {
+      const loaded = d.loaded || [];
+      const missing = d.missing || [];
+      const total = loaded.length + missing.length;
+      if (total === 0) {
+        this.csl = { text: "CSL —", tag: "info", title: "CSL 模型加载情况" };
+        return;
+      }
+      this.csl = {
+        text: `CSL ${loaded.length}/${total}`,
+        tag: missing.length ? "warning" : "success",
+        title: "已加载: " + (loaded.join(", ") || "无") +
+               "\n缺失: " + (missing.join(", ") || "无"),
+      };
+      if (missing.length)
+        this.addLog(`CSL 缺失模型: ${missing.join(", ")}（放入 plugins/XConnect/CSL/）`, "err");
+    },
 
-/* ---------- 状态 ---------- */
+    updateFlight(fd) {
+      this.st.com1 = this.fmtFreq(fd.com1_freq);
+      this.st.com2 = this.fmtFreq(fd.com2_freq);
+      this.st.xpdr = String(fd.transponder).padStart(4, "0");
+      this.st.gs = `${fd.groundspeed.toFixed(0)} kn`;
+      this.st.alt = `${fd.altitude_msl.toFixed(0)} ft`;
+      // 模拟器识别机型：自动填充（只读显示）
+      if (fd.aircraft_icao && fd.aircraft_icao !== this.aircraft) {
+        this.aircraft = fd.aircraft_icao.toUpperCase();
+        this.addLog(`识别机型: ${this.aircraft}`, "in");
+      }
+    },
 
-function updateFlight(fd) {
-  el.com1.textContent = fmtFreq(fd.com1_freq);
-  el.com2.textContent = fmtFreq(fd.com2_freq);
-  el.xpdr.textContent = String(fd.transponder).padStart(4, "0");
-  el.gs.textContent = `${fd.groundspeed.toFixed(0)} kn`;
-  el.alt.textContent = `${fd.altitude_msl.toFixed(0)} ft`;
-}
+    fmtFreq(milli) {
+      if (milli < 100000) milli += 100000;
+      return `${Math.floor(milli / 1000)}.${String(milli % 1000).padStart(3, "0")}`;
+    },
 
-function fmtFreq(milli) {
-  if (milli < 100000) milli += 100000;
-  return `${Math.floor(milli / 1000)}.${String(milli % 1000).padStart(3, "0")}`;
-}
+    async statusTick() {
+      if (!this.api) return;
+      try {
+        const s = await this.api.status();
+        switch (s.fsd) {
+          case "Online": this.fsd = { text: "ONLINE", tag: "success" }; break;
+          case "Connecting":
+          case "WaitLogin":
+            this.fsd = { text: s.fsd.toUpperCase(), tag: "warning" }; break;
+          default: this.fsd = { text: "OFFLINE", tag: "danger" }; break;
+        }
+        this.roster = (s.atc > 0 || s.players > 0)
+          ? `ATC ${s.atc} · PLR ${s.players}` : "";
+        if (s.xconnect)
+          this.xplane = { text: "已发现模拟机", tag: "success" };
+      } catch (e) { /* 忽略 */ }
+    },
 
-async function statusTick() {
-  if (!api) return;
-  try {
-    const st = await api.status();
-    switch (st.fsd) {
-      case "Online":
-        el.fsd.textContent = "ONLINE";
-        el.fsd.className = "pill online";
-        break;
-      case "Connecting":
-      case "WaitLogin":
-        el.fsd.textContent = st.fsd.toUpperCase();
-        el.fsd.className = "pill wait";
-        break;
-      default:
-        el.fsd.textContent = "OFFLINE";
-        el.fsd.className = "pill offline";
-    }
-    el.roster.textContent = st.atc > 0 || st.players > 0
-      ? `ATC ${st.atc} · PLR ${st.players}` : "";
-    if (st.xconnect) {
-      el.xplane.textContent = "已发现模拟机";
-      el.xplane.className = "pill ok";
-    } else if (el.xplane.textContent !== "未发现模拟机") {
-      el.xplane.textContent = "未发现模拟机";
-      el.xplane.className = "pill dim";
-    }
-  } catch (e) { /* 忽略 */ }
-}
+    /* ---------- 连线 / 断开 ---------- */
+    onSim() { if (this.api) this.api.set_sim(this.sim); },
 
-/* ---------- 连线 / 断开 ---------- */
+    async doConnect() {
+      if (this.connected || this.busy) return;
+      this.busy = true;
+      try {
+        const r = await this.api.connect(this.callsign, this.aircraft, this.airline);
+        if (!r.ok) {
+          this.$message({ type: "error", message: r.error || "连接失败" });
+          return;
+        }
+        this.connected = true;
+        this.$message(`已连线 ${this.callsign.trim().toUpperCase()}`);
+      } catch (e) {
+        this.$message({ type: "error", message: `连接失败: ${e}` });
+      } finally {
+        this.busy = false;
+      }
+    },
 
-function setConnected(on) {
-  connected = on;
-  el.fields.classList.toggle("hidden", on);
-  el.connect.textContent = on ? "Disconnect" : "Connect";
-  el.connect.disabled = false;
-}
+    async doDisconnect() {
+      if (!this.connected || this.busy) return;
+      this.busy = true;
+      try {
+        const r = await this.api.disconnect();
+        if (!r.ok) this.$message({ type: "error", message: r.error || "断开失败" });
+        // 按钮复位由 disconnected 事件驱动
+      } catch (e) {
+        this.$message({ type: "error", message: `断开失败: ${e}` });
+      } finally {
+        this.busy = false;
+      }
+    },
 
-async function doConnect() {
-  if (connected) return;
-  el.connect.textContent = "Connecting...";
-  el.connect.disabled = true;
-  try {
-    const r = await api.connect(el.callsign.value, el.aircraft.value, el.airline.value);
-    if (!r.ok) {
-      showToast(r.error || "连接失败", true);
-      setConnected(false);
-      return;
-    }
-    setConnected(true);
-    showToast(`已连线 ${el.callsign.value.trim().toUpperCase()}`);
-  } catch (e) {
-    showToast(`连接失败: ${e}`, true);
-    setConnected(false);
-  }
-}
+    /* ---------- 日志 / 消息 ---------- */
+    addLog(msg, cls = "") {
+      const t = new Date().toTimeString().slice(0, 8);
+      this.log.push({ t, m: msg, cls });
+      this.$nextTick(() => {
+        const zone = document.querySelector(".main-zone");
+        if (zone) zone.scrollTop = zone.scrollHeight;
+      });
+    },
 
-async function doDisconnect() {
-  if (!connected) return;
-  el.connect.textContent = "Disconnecting...";
-  el.connect.disabled = true;
-  try {
-    const r = await api.disconnect();
-    if (!r.ok) {
-      showToast(r.error || "断开失败", true);
-      setConnected(true);
-    }
-  } catch (e) {
-    showToast(`断开失败: ${e}`, true);
-    setConnected(true);
-  }
-}
+    appendMsg(from, text, sent) {
+      this.msgs.push({ from, text, sent });
+    },
 
-/* ---------- 消息 ---------- */
+    async sendMsg() {
+      const to = this.msgTo.trim();
+      const msg = this.msgText.trim();
+      if (!to || !msg) return;
+      let r;
+      if (to.startsWith("@")) {
+        const mhz = parseFloat(to.slice(1));
+        if (isNaN(mhz)) { this.$message({ type: "error", message: "频率格式错误，应为 @121.800" }); return; }
+        r = await this.api.send_freq(mhz, msg);
+        this.appendMsg(`@${to.slice(1)}`, msg, true);
+      } else {
+        r = await this.api.send_text(to.toUpperCase(), msg);
+        this.appendMsg(to.toUpperCase(), msg, true);
+      }
+      if (!r.ok) this.$message({ type: "error", message: r.error || "发送失败" });
+      this.msgText = "";
+    },
 
-function appendMsg(from, text, sent) {
-  const div = document.createElement("div");
-  div.className = `m${sent ? " sent" : ""}`;
-  const b = document.createElement("b");
-  b.textContent = from;
-  div.appendChild(b);
-  div.appendChild(document.createTextNode(`  ${text}`));
-  el.msgList.appendChild(div);
-  el.msgList.scrollTop = el.msgList.scrollHeight;
-}
+    /* ---------- 设置 ---------- */
+    async openSettings() {
+      const s = await this.api.get_settings();
+      this.set = {
+        real_name: s.real_name, cid: s.cid, password: s.password,
+        remember: !!s.remember_password,
+        callsign: s.callsign, airline: s.airline_icao,
+        host: s.server_host, port: s.server_port,
+        xphost: s.xconnect_host, xpport: s.xconnect_port,
+        debug: !!s.debug_mode,
+      };
+      this.overlays.set = true;
+    },
 
-async function sendMsg() {
-  const to = el.msgTo.value.trim();
-  const msg = el.msgText.value.trim();
-  if (!to || !msg) return;
-  let r;
-  if (to.startsWith("@")) {
-    const mhz = parseFloat(to.slice(1));
-    if (isNaN(mhz)) { showToast("频率格式错误，应为 @121.800", true); return; }
-    r = await api.send_freq(mhz, msg);
-    appendMsg(`@${to.slice(1)}`, msg, true);
-  } else {
-    r = await api.send_text(to, msg);
-    appendMsg(to.toUpperCase(), msg, true);
-  }
-  if (!r.ok) showToast(r.error || "发送失败", true);
-  el.msgText.value = "";
-}
+    async saveSettings() {
+      const d = {
+        real_name: this.set.real_name.trim(),
+        cid: this.set.cid.trim(),
+        password: this.set.remember ? this.set.password : "",
+        remember_password: this.set.remember,
+        callsign: this.set.callsign.trim().toUpperCase(),
+        airline_icao: this.set.airline.trim().toUpperCase(),
+        server_host: this.set.host.trim(),
+        server_port: parseInt(this.set.port, 10),
+        xconnect_host: this.set.xphost.trim(),
+        xconnect_port: parseInt(this.set.xpport, 10),
+        debug_mode: this.set.debug,
+      };
+      this.api.set_debug(d.debug_mode);
+      const r = await this.api.save_settings(d);
+      if (r.ok) {
+        this.callsign = d.callsign;
+        this.airline = d.airline_icao;
+        this.$message(d.debug_mode ? "已保存（调试模式已开启）" : "已保存");
+        this.overlays.set = false;
+      } else {
+        this.$message({ type: "error", message: r.error || "保存失败" });
+      }
+    },
 
-/* ---------- 设置 ---------- */
+    /* ---------- 飞行计划 ---------- */
+    openFlightPlan() {
+      if (!this.connected) {
+        this.$message({ type: "warning", message: "请先连线 FSD 再提交飞行计划" });
+        return;
+      }
+      if (!this.fp.aircraft) this.fp.aircraft = this.aircraft;
+      this.overlays.fp = true;
+    },
 
-async function openSettings() {
-  const s = await api.get_settings();
-  $("set-realname").value = s.real_name;
-  $("set-cid").value = s.cid;
-  $("set-password").value = s.password;
-  $("set-remember").checked = !!s.remember_password;
-  $("set-callsign").value = s.callsign;
-  $("set-aircraft").value = s.aircraft_icao;
-  $("set-airline").value = s.airline_icao;
-  $("set-host").value = s.server_host;
-  $("set-port").value = s.server_port;
-  $("set-xphost").value = s.xconnect_host;
-  $("set-xpport").value = s.xconnect_port;
-  $("set-debug").checked = !!s.debug_mode;
-  el.setOverlay.classList.remove("hidden");
-}
+    async submitFlightPlan() {
+      const dep = this.fp.dep.trim().toUpperCase();
+      const dest = this.fp.dest.trim().toUpperCase();
+      if (!dep || !dest) {
+        this.$message({ type: "error", message: "请填写起飞机场与目的地" });
+        return;
+      }
+      const r = await this.api.submit_flight_plan({
+        type: this.fp.type,
+        aircraft: this.fp.aircraft.trim(),
+        cruise_speed: this.fp.speed.trim() || "450",
+        cruise_alt: this.fp.alt.trim() || "FL350",
+        dep, dest,
+        alt: this.fp.altapt.trim().toUpperCase(),
+        plan_time: this.fp.plan_time.trim() || "0000",
+        actual_time: this.fp.actual.trim() || "0000",
+        enroute_h: this.fp.enrh || 0,
+        enroute_m: this.fp.enrm || 0,
+        fuel_h: this.fp.fuelh || 0,
+        fuel_m: this.fp.fuelm || 0,
+        remarks: this.fp.remarks,
+        route: this.fp.route.trim(),
+      });
+      if (r.ok) {
+        this.$message("飞行计划已提交");
+        this.overlays.fp = false;
+      } else {
+        this.$message({ type: "error", message: r.error || "提交失败" });
+      }
+    },
 
-async function saveSettings() {
-  const d = {
-    real_name: $("set-realname").value.trim(),
-    cid: $("set-cid").value.trim(),
-    password: $("set-remember").checked ? $("set-password").value : "",
-    remember_password: $("set-remember").checked,
-    callsign: $("set-callsign").value.trim().toUpperCase(),
-    aircraft_icao: $("set-aircraft").value.trim().toUpperCase(),
-    airline_icao: $("set-airline").value.trim().toUpperCase(),
-    server_host: $("set-host").value.trim(),
-    server_port: parseInt($("set-port").value, 10),
-    xconnect_host: $("set-xphost").value.trim(),
-    xconnect_port: parseInt($("set-xpport").value, 10),
-    debug_mode: $("set-debug").checked,
-  };
-  api.set_debug(d.debug_mode);
-  const r = await api.save_settings(d);
-  if (r.ok) {
-    el.callsign.value = d.callsign;
-    el.aircraft.value = d.aircraft_icao;
-    el.airline.value = d.airline_icao;
-    showToast(d.debug_mode ? "已保存（调试模式已开启）" : "已保存 (config.json)");
-    el.setOverlay.classList.add("hidden");
-  } else {
-    showToast(r.error || "保存失败", true);
-  }
-}
-
-/* ---------- Toast ---------- */
-
-let toastTimer = null;
-function showToast(msg, isErr = false) {
-  el.toast.textContent = msg;
-  el.toast.className = "toast" + (isErr ? " err" : "");
-  el.toast.classList.remove("hidden");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.toast.classList.add("hidden"), 2600);
-}
-
-/* ---------- 初始化 ---------- */
-
-function init() {
-  api.get_settings().then((s) => {
-    if (!el.callsign.value) el.callsign.value = s.callsign;
-    if (!el.aircraft.value) el.aircraft.value = s.aircraft_icao;
-    if (!el.airline.value) el.airline.value = s.airline_icao;
-  });
-
-  el.connect.addEventListener("click", () => {
-    if (connected) doDisconnect();
-    else doConnect();
-  });
-  $("btn-quit").addEventListener("click", () => window.close());
-  el.msgBtn = $("btn-msg");
-  el.msgBtn.addEventListener("click", () => {
-    el.msgOverlay.classList.remove("hidden");
-    el.msgText.focus();
-  });
-  $("msg-close").addEventListener("click", () => el.msgOverlay.classList.add("hidden"));
-  el.msgOverlay.addEventListener("click", (e) => {
-    if (e.target === el.msgOverlay) el.msgOverlay.classList.add("hidden");
-  });
-  el.msgSend.addEventListener("click", sendMsg);
-  el.msgText.addEventListener("keydown", (e) => { if (e.key === "Enter") sendMsg(); });
-
-  $("btn-settings").addEventListener("click", openSettings);
-  $("set-close").addEventListener("click", () => el.setOverlay.classList.add("hidden"));
-  $("set-save").addEventListener("click", saveSettings);
-
-  el.sim.addEventListener("change", () => api.set_sim(el.sim.value));
-
-  setInterval(poll, 100);
-  setInterval(statusTick, 1000);
-}
-
-/* ---------- 桥接就绪（pywebview 页面加载后注入） ---------- */
-
-let bridgeReady = false;
-window.__previewShown = false;
-
-window.addEventListener("pywebviewready", () => {
-  bridgeReady = true;
-  api = window.pywebview.api;
-  addLog("欢迎使用 XFlySim Client", "in");
-  init();
-});
-
-// 兜底：3 秒内 pywebviewready 未触发 → 视为纯浏览器预览（无后端）
-setTimeout(() => {
-  if (!bridgeReady) {
-    window.__previewShown = true;
-    addLog("预览模式：未连接后端（请通过 python webapp.py 启动）", "err");
-  }
-}, 3000);
+    quit() {
+      window.close();
+    },
+  },
+}).use(ElementPlus).mount("#app");

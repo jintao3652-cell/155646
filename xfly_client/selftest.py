@@ -20,23 +20,20 @@ def run_all() -> int:
         if not cond:
             fails += 1
 
-    # --- PBH 编码 ---
+    # --- PBH 编码（swift 公式：有符号取反 + 1024 量化） ---
     check(pk.encode_pbh(0, 0, 0) == 0, "PBH zero")
-    check(pk.encode_pbh(360, 360, 360) ==
-          (1023 << 22 | 1023 << 12 | 1023 << 2), "PBH full scale")
     pbh = pk.encode_pbh(10, -20, 90)
-    check(((pbh >> 22) & 0x3FF) == 28, "PBH pitch field (10deg)")
-    check(((pbh >> 12) & 0x3FF) == round(340 * 1023 / 360.0), "PBH bank field (-20deg)")
-    check(((pbh >> 2) & 0x3FF) == round(90 * 1023 / 360.0), "PBH heading field")
+    check(((pbh >> 22) & 0x3FF) == ((-28) & 0x3FF), "PBH pitch field (10deg)")
+    check(((pbh >> 12) & 0x3FF) == (56 & 0x3FF), "PBH bank field (-20deg)")
+    check(((pbh >> 2) & 0x3FF) == 256, "PBH heading field (90deg)")
     check((pk.encode_pbh(0, 0, 0) & 0b10) == 0, "PBH on_ground clear (default)")
     check((pk.encode_pbh(0, 0, 0, on_ground=True) & 0b10) == 0b10, "PBH on_ground set")
     pbh_g = pk.encode_pbh(10, -20, 90, on_ground=True)
-    check(((pbh_g & 0b10) >> 1) == 1 and ((pbh_g >> 22) & 0x3FF) == 28,
+    check(((pbh_g & 0b10) >> 1) == 1 and ((pbh_g >> 22) & 0x3FF) == ((-28) & 0x3FF),
           "PBH on_ground coexists with angles")
-    # 解码往返（bank 为无符号 0..360 量化，-20 解码为 340，用模 360 比较）
+    # 解码往返
     h, b, p, g = pk.decode_pbh(pk.encode_pbh(10, -20, 90, True))
-    wrapped = ((b + 180.0) % 360.0) - 180.0
-    check(abs(h - 90) < 0.5 and abs(p - 10) < 0.5 and abs(wrapped - (-20)) < 0.5
+    check(abs(h - 90) < 0.6 and abs(b - (-20)) < 1.5 and abs(p - 10) < 1.5
           and g, "PBH decode round-trip")
 
     # --- 包构造 ---
@@ -44,7 +41,7 @@ def run_all() -> int:
     check(ap == "#APDAL625:SERVER:1400000:secret:1:9:16:Zhang San", "#AP layout")
     pos = pk.pilot_position("DAL625", "N", "2000", 1, 40.65906, -73.79891,
                             26000, 400, pk.encode_pbh(0, 0, 90), 359)
-    check(pos.startswith("@N:DAL625:2000:1:40.659060:-73.798910:26000:400:"),
+    check(pos.startswith("@N:DAL625:2000:1:40.65906:-73.79891:26000:400:"),
           "pilot pos layout")
     check(pk.delete_pilot("AAL325", "1400000") == "#DPAAL325:1400000", "#DP layout")
     check(pk.text_message("N7938C", "@22800", "hello") ==
@@ -57,6 +54,12 @@ def run_all() -> int:
                             "CSN B738 B-1234") ==
           "#SBCCA987:CSN3081:FSIPI:0:CSN:B738::::::CSN B738 B-1234",
           "FSIPI layout")
+    fp = pk.flight_plan("CCA1234", "I", "A20N", "450", "ZGGG", "1200", "1200",
+                        "FL350", "ZBAD", 2, 30, 5, 20, "ZSNJ",
+                        "RMK:POB10", "DCT SHL W22 TYN B208")
+    check(fp == ("$FPCCA1234:SERVER:I:A20N:450:ZGGG:1200:1200:FL350:ZBAD:"
+                 "2:30:5:20:ZSNJ:RMKPOB10:DCT SHL W22 TYN B208"),
+          "$FP layout (colon removed)")
 
     # --- 解析器 ---
     parsed = ps.parse("@S:GTI8197:2000:1:40.65906:-73.79891:26:0:4290776072:359")

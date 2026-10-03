@@ -218,6 +218,33 @@ class Api:
             return {"ok": True}
         return {"ok": False, "error": "未连接"}
 
+    def submit_flight_plan(self, d: dict) -> dict:
+        """提交飞行计划（$FP）。"""
+        model = self._model
+        if not (model and model.fsd):
+            return {"ok": False, "error": "未连线"}
+        try:
+            model.fsd.send_flight_plan(
+                flight_type=str(d.get("type", "I")).upper(),
+                aircraft=str(d.get("aircraft") or self._cfg.aircraft_icao).upper(),
+                cruise_speed=str(d.get("cruise_speed", "450")),
+                dep_airport=str(d.get("dep", "")).upper(),
+                plan_time=str(d.get("plan_time", "0000")),
+                actual_time=str(d.get("actual_time", "0000")),
+                cruise_alt=str(d.get("cruise_alt", "FL350")).upper(),
+                dest_airport=str(d.get("dest", "")).upper(),
+                enroute_h=int(d.get("enroute_h", 0)),
+                enroute_m=int(d.get("enroute_m", 0)),
+                fuel_h=int(d.get("fuel_h", 0)),
+                fuel_m=int(d.get("fuel_m", 0)),
+                alt_airport=str(d.get("alt", "")).upper(),
+                remarks=str(d.get("remarks", "")),
+                route=str(d.get("route", "")).upper(),
+            )
+            return {"ok": True}
+        except ValueError:
+            return {"ok": False, "error": "计划字段格式错误（时/分需为数字）"}
+
     # ---------- 状态 ----------
 
     def status(self) -> dict:

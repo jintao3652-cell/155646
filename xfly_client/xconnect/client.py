@@ -25,6 +25,7 @@ RX_LINE_LIMIT = 1 << 16
 
 @dataclass
 class FlightData:
+    aircraft_icao: str = ""        # 模拟器当前机型 ICAO（插件自动识别）
     latitude: float = 0.0
     longitude: float = 0.0
     altitude: float = 0.0

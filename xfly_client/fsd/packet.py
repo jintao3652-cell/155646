@@ -1,35 +1,40 @@
-"""FSD 报文构造：PBH 编码、频率换算、各包类型构造。"""
+"""FSD 报文构造（以 swift pilotclient 的 Legacy FSD 协议为准）。
+
+参考 xfly_client/fsd/FSD_PROTOCOL.md：
+- PBH 编码：pitch/bank 有符号并取反（×-1），heading 1024 量化
+- 位置 @ 经纬度 5 位小数
+- 保活：服务器无 $PI 处理器时沿用 #TM...:SERVER:ping（本地约定）
+"""
 
 from __future__ import annotations
 
 NETWORK_RATING = 1
 PROTOCOL_REVISION = 9
+# 模拟器类型按 ISFP 私有服务器约定（xPilot 习惯）：15=XP11, 16=XP12
 SIM_TYPE_XP11 = 15
 SIM_TYPE_XP12 = 16
 
-CLIENT_ID = 55538  # xPilot-assigned id（非官方使用，参照 C# 版）
-CLIENT_NAME = "XFlySim-Client"
+CLIENT_ID = 55538          # xPilot-assigned id（非官方，参照 C# 版）
 AUTH_KEY = "ImuL1WbbhVuD8d3MuKpWn2rrLZRa9iVP"
 
 SERVER_CALLSIGN = "SERVER"
 
 
-def _quantize(deg: float) -> int:
-    """角度 → 0..1023 量化。"""
-    if deg < 0:
-        deg += 360
-    if deg > 360:
-        deg %= 360
-    v = round(deg * 1023.0 / 360.0)
-    return max(0, min(1023, v))
-
-
 def encode_pbh(pitch_deg: float, bank_deg: float, heading_deg: float,
                on_ground: bool = False) -> int:
-    """编码 PBH 位域。bit1=on_ground，bit2-11 heading，bit12-21 bank，bit22-31 pitch。"""
-    p = _quantize(pitch_deg)
-    b = _quantize(bank_deg)
-    h = _quantize(heading_deg)
+    """PBH 编码（swift 公式）。
+
+    - pitch = qFloor(pitch * -256/90)   （10bit 有符号，取反）
+    - bank  = qFloor(bank  * -512/180)  （10bit 有符号，取反）
+    - hdg   = heading * 1024/360        （10bit 无符号）
+    bit0 未用；bit1 onGround；bits2-11 heading；bits12-21 bank；bits22-31 pitch。
+    """
+    p = int(pitch_deg * -256.0 / 90.0)
+    b = int(bank_deg * -512.0 / 180.0)
+    h = int(heading_deg * 1024.0 / 360.0)
+    p = max(-256, min(255, p)) & 0x3FF
+    b = max(-512, min(511, b)) & 0x3FF
+    h = max(0, min(1023, h))
     return (p << 22) | (b << 12) | (h << 2) | (2 if on_ground else 0)
 
 
@@ -38,16 +43,12 @@ def decode_pbh(pbh: int) -> tuple[float, float, float, bool]:
     h = (pbh >> 2) & 0x3FF
     b = (pbh >> 12) & 0x3FF
     p = (pbh >> 22) & 0x3FF
+    if b >= 512:
+        b -= 1024
+    if p >= 512:
+        p -= 1024
     on_ground = ((pbh & 0b10) >> 1) == 1
-    return h * 360.0 / 1023.0, b * 360.0 / 1023.0, p * 360.0 / 1023.0, on_ground
-
-
-def client_identification(callsign: str, cid: str, client_id: int = CLIENT_ID,
-                          client_name: str = CLIENT_NAME, major: int = 0,
-                          minor: int = 0, sys_uid: int = 0,
-                          hex_key: str = "") -> str:
-    return (f"$ID{callsign}:SERVER:{client_id:04x}:{client_name}:"
-            f"{major}:{minor}:{cid}:{sys_uid}:{hex_key}")
+    return h * 360.0 / 1024.0, -b * 180.0 / 512.0, -p * 90.0 / 256.0, on_ground
 
 
 def add_pilot(callsign: str, cid: str, password: str,
@@ -70,7 +71,7 @@ def pilot_position(callsign: str, transponder_mode: str, squawk: str,
                    mode: str | None = None) -> str:
     mode = mode if mode is not None else transponder_mode[0]
     return (f"@{mode}:{callsign}:{squawk}:{network_rating}:"
-            f"{lat:.6f}:{lon:.6f}:{alt_true_ft}:{gs_kt}:{pbh}:{alt_correction_ft}")
+            f"{lat:.5f}:{lon:.5f}:{alt_true_ft}:{gs_kt}:{pbh}:{alt_correction_ft}")
 
 
 def plane_info_request(callsign: str, to: str) -> str:
@@ -108,16 +109,27 @@ def pong(callsign: str, to: str, timestamp: str = "0") -> str:
     return f"$PO{callsign}:{to}:{timestamp}"
 
 
-def client_query_response(callsign: str, to: str, query_type: str,
-                          *payload: str) -> str:
-    line = f"$CR{callsign}:{to}:{query_type}"
-    if payload:
-        line += ":" + ":".join(payload)
-    return line
-
-
 def auth_response(callsign: str, to: str, hex_response: str) -> str:
     return f"$ZR{callsign}:{to}:{hex_response}"
+
+
+def flight_plan(callsign: str, flight_type: str, aircraft: str,
+                cruise_speed: str, dep_airport: str, plan_time: str,
+                actual_time: str, cruise_alt: str, dest_airport: str,
+                enroute_h: int, enroute_m: int,
+                fuel_h: int, fuel_m: int,
+                alt_airport: str = "", remarks: str = "",
+                route: str = "") -> str:
+    """$FP 飞行计划（swift 17 段格式，报文内禁止冒号）。"""
+    def clean(s: str) -> str:
+        return (s or "").replace(":", "")
+
+    return (f"$FP{callsign}:SERVER:{flight_type}:{clean(aircraft)}:"
+            f"{clean(cruise_speed)}:{clean(dep_airport)}:"
+            f"{clean(plan_time)}:{clean(actual_time)}:{clean(cruise_alt)}:"
+            f"{clean(dest_airport)}:"
+            f"{int(enroute_h)}:{int(enroute_m)}:{int(fuel_h)}:{int(fuel_m)}:"
+            f"{clean(alt_airport)}:{clean(remarks)}:{clean(route)}")
 
 
 def freq_to_target(mhz: float) -> str:
@@ -136,7 +148,3 @@ def millihertz_to_display(milli: int) -> str:
     if milli < 100000:
         milli += 100000
     return f"{milli // 1000}.{milli % 1000:03d}"
-
-
-def fsd_freq_to_display(fsd_freq: int) -> str:
-    return khz_to_display(fsd_freq)

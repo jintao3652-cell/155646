@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "XPLMDataAccess.h"
 #include "XPLMInstance.h"
@@ -41,6 +42,7 @@ typedef enum {
     DR_MAG_HEAD, DR_GS, DR_IAS, DR_VSI,
     DR_COM1, DR_COM2, DR_XPDR_CODE, DR_XPDR_MODE,
     DR_GEAR, DR_ONGROUND, DR_FLAPS, DR_THROTTLE,
+    DR_AC_ICAO,   /* 当前航空器机型 ICAO（字符串） */
     DR_COUNT
 } DrIndex;
 
@@ -64,6 +66,7 @@ static const char* kDrefNames[DR_COUNT] = {
     "sim/flightmodel/failures/onground_any",
     "sim/cockpit2/flight/indicators/flaps_ratio",
     "sim/cockpit2/engine/indicators/throttle_ratio",
+    "sim/cockpit2/aircraft/view/acf_icao",
 };
 
 static XPLMDataRef g_drefs[DR_COUNT];
@@ -153,11 +156,14 @@ typedef struct {
     char callsign[24];
     char icao[8];
     char family[64];
-    double lat, lon;
-    double alt_m;        /* MSL 米 */
-    double heading, pitch, roll;
-    double gs_kt;
-    double last_seen;    /* XPLMGetElapsedTime() */
+    /* 目标（最新网络数据）与当前显示（平滑插值用） */
+    double tgt_lat, tgt_lon, tgt_alt;
+    double tgt_heading, tgt_pitch, tgt_roll;
+    double tgt_gs;
+    double cur_lat, cur_lon, cur_alt;
+    double cur_heading, cur_pitch, cur_roll;
+    int have_first_fix;
+    double last_seen;    /* xc_now_sec */
     int active;
     CslNode model;
 } Player;
@@ -260,6 +266,7 @@ static void handle_client_line(const char* line) {
                                 if (!g_players[slot].active) {
                                     p = &g_players[slot];
                                     p->active = 1;
+                                    p->have_first_fix = 0;
                                     p->model.inst = NULL;
                                     p->model.tried = 0;
                                     strncpy(p->callsign, f->sval,
@@ -284,14 +291,24 @@ static void handle_client_line(const char* line) {
 
                         GETSTR("aircraft", p->icao);
                         GETSTR("aircraft_family", p->family);
-                        GETNUM("latitude", p->lat);
-                        GETNUM("longitude", p->lon);
-                        GETNUM("altitude", p->alt_m);
-                        p->alt_m *= 0.3048;          /* ft -> m */
-                        GETNUM("pitch", p->pitch);
-                        GETNUM("bank", p->roll);
-                        GETNUM("heading", p->heading);
-                        GETNUM("ground_speed", p->gs_kt);
+                        GETNUM("latitude", p->tgt_lat);
+                        GETNUM("longitude", p->tgt_lon);
+                        GETNUM("altitude", p->tgt_alt);
+                        p->tgt_alt *= 0.3048;        /* ft -> m */
+                        GETNUM("pitch", p->tgt_pitch);
+                        GETNUM("bank", p->tgt_roll);
+                        GETNUM("heading", p->tgt_heading);
+                        GETNUM("ground_speed", p->tgt_gs);
+                        /* 首个位置：直接定位，避免从 0 平滑飞过来 */
+                        if (!p->have_first_fix) {
+                            p->cur_lat = p->tgt_lat;
+                            p->cur_lon = p->tgt_lon;
+                            p->cur_alt = p->tgt_alt;
+                            p->cur_heading = p->tgt_heading;
+                            p->cur_pitch = p->tgt_pitch;
+                            p->cur_roll = p->tgt_roll;
+                            p->have_first_fix = 1;
+                        }
                         p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
                     }
                     /* 不在列表中的玩家由超时机制（PLAYER_TIMEOUT）清理 */
@@ -369,9 +386,27 @@ static void build_flight_data(char* out, int size) {
     long com1 = (long)(dref_float(g_drefs[DR_COM1]) / 1000.0);
     long com2 = (long)(dref_float(g_drefs[DR_COM2]) / 1000.0);
     const char* squark = dref_int(g_drefs[DR_XPDR_MODE]) >= 2 ? "S" : "N";
+    char icao[16];
+    int n, i;
+
+    icao[0] = '\0';
+    if (g_drefs[DR_AC_ICAO]) {
+        n = XPLMGetDatab(g_drefs[DR_AC_ICAO], icao, 0, (int)sizeof(icao) - 1);
+        if (n < 0) n = 0;
+        if (n > (int)sizeof(icao) - 1) n = (int)sizeof(icao) - 1;
+        icao[n] = '\0';
+        /* 仅保留字母数字（JSON 安全） */
+        for (i = 0; icao[i]; i++) {
+            if (!isalnum((unsigned char)icao[i]) && icao[i] != '-') {
+                icao[i] = '\0';
+                break;
+            }
+        }
+    }
 
     snprintf(out, size,
         "{\"type\":\"flight_data\","
+        "\"aircraft_icao\":\"%s\","
         "\"latitude\":%.6f,\"longitude\":%.6f,"
         "\"altitude_msl\":%.1f,\"altitude_agl\":%.1f,\"elevation\":%.1f,"
         "\"pitch\":%.2f,\"bank\":%.2f,\"heading\":%.2f,\"true_heading\":%.2f,"
@@ -468,8 +503,32 @@ static void update_players(double now) {
         if (!p->model.inst)
             csl_load(&p->model, p->icao, p->family);
         if (p->model.inst) {
+            /* 平滑移动：每帧向目标位置/姿态逼近（软追踪，消除瞬移） */
+            if (p->have_first_fix) {
+                const double k = 0.18;      /* 每帧逼近比例（~20Hz 下约 1.5s 收敛） */
+                double dh;
+                p->cur_lat += (p->tgt_lat - p->cur_lat) * k;
+                p->cur_lon += (p->tgt_lon - p->cur_lon) * k;
+                p->cur_alt += (p->tgt_alt - p->cur_alt) * k;
+                p->cur_pitch += (p->tgt_pitch - p->cur_pitch) * k;
+                p->cur_roll += (p->tgt_roll - p->cur_roll) * k;
+                /* 航向取最短路径插值 */
+                dh = p->tgt_heading - p->cur_heading;
+                while (dh > 180.0) dh -= 360.0;
+                while (dh < -180.0) dh += 360.0;
+                p->cur_heading += dh * k;
+            } else {
+                p->cur_lat = p->tgt_lat;
+                p->cur_lon = p->tgt_lon;
+                p->cur_alt = p->tgt_alt;
+                p->cur_heading = p->tgt_heading;
+                p->cur_pitch = p->tgt_pitch;
+                p->cur_roll = p->tgt_roll;
+            }
+
+            /* 起落架：低高度（<60m MSL）或低地速（<40kt）视为地面/进近，放下 */
             anim[0] = 0.0f;                 /* flap */
-            anim[1] = 0.0f;                 /* gear */
+            anim[1] = (p->tgt_alt < 60.0 || p->tgt_gs < 40.0) ? 1.0f : 0.0f;
             anim[2] = 0.0f;                 /* throttle */
             anim[3] = 1.0f;                 /* battery on */
             anim[4] = 1.0f;                 /* beacon */
@@ -479,9 +538,9 @@ static void update_players(double now) {
             anim[8] = 1.0f;                 /* xpdr available */
             anim[9] = 0.0f;                 /* xpdr code */
             anim[10] = 3.0f;                /* xpdr mode ALT */
-            csl_set_position(p->model.inst, p->lat, p->lon, p->alt_m,
-                             p->heading, p->pitch, p->roll,
-                             anim, csl_dataref_count());
+            csl_set_position(p->model.inst, p->cur_lat, p->cur_lon,
+                             p->cur_alt, p->cur_heading, p->cur_pitch,
+                             p->cur_roll, anim, csl_dataref_count());
         }
     }
     LOCK_LEAVE(g_players_lock);

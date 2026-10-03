@@ -2,104 +2,186 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>XShare - XFlySim XPlane客户端</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XFlySim-Client</title>
+  <link rel="stylesheet" href="vendor/element-plus.css">
+  <link rel="stylesheet" href="vendor/fontawesome-all.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- 顶栏（xPilot 风格单条 bar） -->
-  <header class="bar">
-    <div class="brand" title="XShare">XShare</div>
+<div id="app">
+  <el-container class="shell">
+    <!-- 顶栏 -->
+    <el-header class="bar">
+      <div class="brand" title="XFlySim-Client">XF</div>
 
-    <div id="connect-fields" class="fields">
-      <input id="in-callsign" placeholder="CALLSIGN" maxlength="12" spellcheck="false">
-      <input id="in-aircraft" placeholder="AIRCRAFT" maxlength="4" spellcheck="false">
-      <input id="in-airline" placeholder="AIRLINE" maxlength="3" spellcheck="false">
-      <select id="sel-sim" title="X-Plane 版本">
-        <option value="xp12">XP12</option>
-        <option value="xp11">XP11</option>
-      </select>
-    </div>
-
-    <button id="btn-connect" class="accent">Connect</button>
-
-    <div id="status-fields" class="status">
-      <div class="stat"><label>COM1</label><span id="st-com1">———</span></div>
-      <div class="stat"><label>COM2</label><span id="st-com2">———</span></div>
-      <div class="stat"><label>XPDR</label><span id="st-xpdr">———</span></div>
-      <div class="stat"><label>G/S</label><span id="st-gs">—</span></div>
-      <div class="stat"><label>ALT</label><span id="st-alt">—</span></div>
-    </div>
-
-    <div class="spacer"></div>
-
-    <span id="st-fsd" class="pill">OFFLINE</span>
-    <span id="st-xplane" class="pill dim">未发现模拟机</span>
-    <span id="st-csl" class="pill dim" title="CSL 模型加载情况">CSL —</span>
-    <span id="st-roster" class="roster"></span>
-
-    <button id="btn-msg" class="icon" title="消息">✉</button>
-    <button id="btn-settings" class="icon" title="设置">⚙</button>
-    <button id="btn-quit" class="icon" title="退出">✕</button>
-  </header>
-
-  <!-- 日志（低调） -->
-  <main id="log" class="log"></main>
-
-  <!-- 消息面板（右侧滑出） -->
-  <div id="msg-overlay" class="drawer-wrap hidden">
-    <div class="drawer">
-      <div class="drawer-head">
-        <span>Messages</span>
-        <button id="msg-close" class="icon">✕</button>
+      <div v-show="!connected" class="fields">
+        <el-input v-model="callsign" placeholder="CALLSIGN" maxlength="12" size="small" class="f-1"/>
+        <el-input v-model="aircraft" placeholder="机型自动识别" size="small" class="f-2" readonly
+                  title="由模拟器自动识别（XConnect 插件 acf_icao）">
+        <el-input v-model="airline" placeholder="AIRLINE" maxlength="3" size="small" class="f-2"/>
+        <el-select v-model="sim" size="small" class="f-sim" @change="onSim">
+          <el-option label="XP12" value="xp12"/>
+          <el-option label="XP11" value="xp11"/>
+        </el-select>
       </div>
-      <div id="msg-list" class="msg-list"></div>
+
+      <el-button :type="connected ? 'danger' : 'primary'"
+                 :loading="busy" class="btn-connect"
+                 @click="connected ? doDisconnect() : doConnect()">
+        <i class="fa-solid" :class="connected ? 'fa-link-slash' : 'fa-plane'"></i>
+        {{ connected ? (busy ? '断开中' : 'Disconnect') : (busy ? '连线中' : 'Connect') }}
+      </el-button>
+
+      <div class="status">
+        <div class="stat"><label>COM1</label><span class="mono">{{ st.com1 }}</span></div>
+        <div class="stat"><label>COM2</label><span class="mono">{{ st.com2 }}</span></div>
+        <div class="stat"><label>XPDR</label><span class="mono">{{ st.xpdr }}</span></div>
+        <div class="stat"><label>G/S</label><span class="mono">{{ st.gs }}</span></div>
+        <div class="stat"><label>ALT</label><span class="mono">{{ st.alt }}</span></div>
+      </div>
+
+      <div class="spacer"></div>
+
+      <el-tag size="small" :type="fsd.tag" effect="dark">{{ fsd.text }}</el-tag>
+      <el-tag size="small" :type="xplane.tag" effect="dark">{{ xplane.text }}</el-tag>
+      <el-tooltip :content="csl.title" placement="bottom">
+        <el-tag size="small" :type="csl.tag" effect="dark">{{ csl.text }}</el-tag>
+      </el-tooltip>
+      <span class="roster mono">{{ roster }}</span>
+
+      <div class="icons">
+        <el-button size="small" text @click="overlays.msg = true" title="消息">
+          <i class="fa-solid fa-comment"></i></el-button>
+        <el-button size="small" text @click="openFlightPlan" title="飞行计划">
+          <i class="fa-solid fa-file-flight"></i></el-button>
+        <el-button size="small" text @click="openSettings" title="设置">
+          <i class="fa-solid fa-gear"></i></el-button>
+        <el-button size="small" text @click="quit" title="退出">
+          <i class="fa-solid fa-xmark"></i></el-button>
+      </div>
+    </el-header>
+
+    <!-- 日志 -->
+    <el-main class="main-zone">
+      <div v-for="item in log" class="log-line" :class="item.cls">
+        <span class="t">{{ item.t }}</span>{{ item.m }}
+      </div>
+    </el-main>
+  </el-container>
+
+  <!-- 消息抽屉 -->
+  <el-drawer v-model="overlays.msg" title="Messages" size="360px" :append-to-body="true">
+    <div class="msg-list">
+      <div v-for="m in msgs" :class="['m', m.sent ? 'sent' : '']">
+        <b>{{ m.from }}</b>  {{ m.text }}
+      </div>
+    </div>
+    <template #footer>
       <div class="msg-input-row">
-        <input id="msg-to" placeholder="TO: 呼号 或 @频率" spellcheck="false">
-        <input id="msg-text" placeholder="Message..." spellcheck="false">
-        <button id="msg-send" class="accent">Send</button>
+        <el-input v-model="msgTo" placeholder="呼号 或 @频率" size="small" class="msg-to"/>
+        <el-input v-model="msgText" placeholder="Message..." size="small"
+                  @keydown.enter="sendMsg"/>
+        <el-button type="primary" size="small" @click="sendMsg">Send</el-button>
       </div>
-    </div>
-  </div>
+    </template>
+  </el-drawer>
 
-  <!-- 设置面板 -->
-  <div id="set-overlay" class="overlay hidden">
-    <div class="panel">
-      <div class="panel-head">
-        <span>设置</span>
-        <button id="set-close" class="icon">✕</button>
-      </div>
-      <div class="set-grid">
-        <fieldset>
-          <legend>账号</legend>
-          <label>真实姓名 <input id="set-realname" spellcheck="false"></label>
-          <label>CID <input id="set-cid" spellcheck="false"></label>
-          <label>密码 <input id="set-password" type="password" spellcheck="false"></label>
-          <label class="chk"><input id="set-remember" type="checkbox"> 记住密码</label>
-        </fieldset>
-        <fieldset>
+  <!-- 飞行计划 -->
+  <el-dialog v-model="overlays.fp" title="飞行计划" width="min(720px, 94vw)"
+             :append-to-body="true">
+    <div class="fp-grid">
+      <fieldset>
+        <legend>基本信息</legend>
+        <label>飞行规则
+          <el-select v-model="fp.type" size="small">
+            <el-option label="IFR" value="I"/>
+            <el-option label="VFR" value="V"/>
+            <el-option label="SVFR" value="S"/>
+            <el-option label="DVFR" value="D"/>
+          </el-select>
+        </label>
+        <label>机型 <el-input v-model="fp.aircraft" size="small"/></label>
+        <label>巡航速度 <el-input v-model="fp.speed" placeholder="450" size="small"/></label>
+        <label>巡航高度 <el-input v-model="fp.alt" placeholder="FL350" size="small"/></label>
+      </fieldset>
+      <fieldset>
+        <legend>航段</legend>
+        <label>起飞机场 <el-input v-model="fp.dep" placeholder="ZGGG" size="small"/></label>
+        <label>目的地 <el-input v-model="fp.dest" placeholder="ZBAD" size="small"/></label>
+        <label>备降场 <el-input v-model="fp.altapt" placeholder="ZSNJ" size="small"/></label>
+        <label>计划起飞时间 <el-input v-model="fp.plan_time" placeholder="1200" size="small"/></label>
+        <label>实际起飞时间 <el-input v-model="fp.actual" placeholder="1200" size="small"/></label>
+      </fieldset>
+      <fieldset>
+        <legend>航程与燃油</legend>
+        <label>航程(时/分)
+          <span class="hhmm">
+            <el-input-number v-model="fp.enrh" :min="0" :max="23" size="small" controls-position="right"/>
+            <el-input-number v-model="fp.enrm" :min="0" :max="59" size="small" controls-position="right"/>
+          </span>
+        </label>
+        <label>燃油(时/分)
+          <span class="hhmm">
+            <el-input-number v-model="fp.fuelh" :min="0" :max="23" size="small" controls-position="right"/>
+            <el-input-number v-model="fp.fuelm" :min="0" :max="59" size="small" controls-position="right"/>
+          </span>
+        </label>
+        <label>备注 <el-input v-model="fp.remarks" placeholder="RMK" size="small"/></label>
+      </fieldset>
+    </div>
+    <div class="fp-route">
+      <fieldset>
+        <legend>航路</legend>
+        <label>航路 <el-input v-model="fp.route" placeholder="DCT SHL W22 TYN B208" size="small"/></label>
+      </fieldset>
+    </div>
+    <template #footer>
+      <el-button @click="overlays.fp = false">取消</el-button>
+      <el-button type="primary" @click="submitFlightPlan">
+        <i class="fa-solid fa-paper-plane"></i> 提交计划
+      </el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 设置 -->
+  <el-dialog v-model="overlays.set" title="设置" width="min(760px, 94vw)"
+             :append-to-body="true">
+    <div class="fp-grid">
+      <fieldset>
+        <legend>账号</legend>
+        <label>真实姓名 <el-input v-model="set.real_name" size="small"/></label>
+        <label>CID <el-input v-model="set.cid" size="small"/></label>
+        <label>密码 <el-input v-model="set.password" type="password" show-password size="small"/></label>
+        <el-checkbox v-model="set.remember">记住密码</el-checkbox>
+      </fieldset>
+<fieldset>
           <legend>飞行信息</legend>
-          <label>呼号 <input id="set-callsign" spellcheck="false"></label>
-          <label>机型 ICAO <input id="set-aircraft" maxlength="4" spellcheck="false"></label>
-          <label>航司 ICAO <input id="set-airline" maxlength="3" spellcheck="false"></label>
+          <label>呼号 <el-input v-model="set.callsign" size="small"/></label>
+          <label>机型（自动识别）</label>
+          <label>航司 ICAO <el-input v-model="set.airline" maxlength="3" size="small"/></label>
         </fieldset>
-        <fieldset>
-          <legend>服务器</legend>
-          <label>FSD 服务器 <input id="set-host" spellcheck="false"></label>
-          <label>FSD 端口 <input id="set-port" spellcheck="false"></label>
-          <label>插件地址 <input id="set-xphost" spellcheck="false"></label>
-          <label>插件端口 <input id="set-xpport" spellcheck="false"></label>
-          <label class="chk"><input id="set-debug" type="checkbox"> 调试模式（显示插件原始报文）</label>
-          <p class="tip">客户端连接 X-Plane 内的 XConnect 插件（默认 127.0.0.1:51001），插件离线时禁止连线</p>
-        </fieldset>
-      </div>
-      <div class="panel-foot">
-        <button id="set-save" class="accent">保存</button>
-      </div>
+      <fieldset>
+        <legend>服务器</legend>
+        <label>FSD 服务器 <el-input v-model="set.host" size="small"/></label>
+        <label>FSD 端口 <el-input v-model="set.port" size="small"/></label>
+        <label>插件地址 <el-input v-model="set.xphost" size="small"/></label>
+        <label>插件端口 <el-input v-model="set.xpport" size="small"/></label>
+        <el-checkbox v-model="set.debug">调试模式（显示插件原始报文）</el-checkbox>
+        <p class="tip">客户端连接 X-Plane 内的 XConnect 插件（默认 127.0.0.1:51001），插件离线时禁止连线</p>
+      </fieldset>
     </div>
-  </div>
+    <template #footer>
+      <el-button @click="overlays.set = false">取消</el-button>
+      <el-button type="primary" @click="saveSettings">
+        <i class="fa-solid fa-check"></i> 保存
+      </el-button>
+    </template>
+  </el-dialog>
+</div>
 
-  <div id="toast" class="toast hidden"></div>
-
+  <script src="vendor/vue.global.prod.js"></script>
+  <script src="vendor/element-plus.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

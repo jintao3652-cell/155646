@@ -90,12 +90,13 @@ class XflyGui:
 
         for label, var, width, tool in (
                 ("呼号", self.callsign_var, 10, "如 CCA1234"),
-                ("机型ICAO", self.aircraft_var, 7, "4 位代码，如 A20N"),
+                ("机型", self.aircraft_var, 7, "由模拟器自动识别"),
                 ("航司ICAO", self.airline_var, 7, "涂装，如 CCA")):
             tk.Label(bar, text=label, bg=BG, fg=FG_DIM,
                      font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(6, 3))
             e = tk.Entry(bar, textvariable=var, width=width,
-                         font=("Consolas", 10))
+                         font=("Consolas", 10),
+                         **({"state": "readonly"} if var is self.aircraft_var else {}))
             self._style_widgets(e)
             e.pack(side=tk.LEFT)
             e.bind("<Return>", lambda _e: self._connect())
@@ -162,7 +163,7 @@ class XflyGui:
         if not callsign:
             missing.append("呼号")
         if len(aircraft) != 4 or not aircraft.isalnum():
-            missing.append("机型 ICAO（4 位）")
+            missing.append("机型 ICAO（等待模拟器识别）")
         if len(airline) != 3 or not airline.isalnum():
             missing.append("航司 ICAO（3 位）")
         if not self.cfg.real_name.strip():
@@ -414,6 +415,10 @@ class XflyGui:
                     self._set_xconnect_state(args[0])
                 elif kind == "flight":
                     self._last_fd = args[0]
+                    icao = getattr(args[0], "aircraft_icao", "")
+                    if icao and icao != self.aircraft_var.get():
+                        self.aircraft_var.set(icao)
+                        self.cfg.aircraft_icao = icao
                 elif kind == "sys":
                     self._show_log(f"[!] {args[0]}")
                 elif kind == "disconnected":

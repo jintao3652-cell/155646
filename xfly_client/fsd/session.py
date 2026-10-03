@@ -69,6 +69,8 @@ class FsdSession:
         self.on_plane_info_requested: Optional[Callable[[str, str], None]] = None
         self.on_plane_info_received: Optional[Callable[
             [str, str, list[str], str], None]] = None
+        self.on_flight_plan_received: Optional[Callable[
+            [str, str, list[str], str], None]] = None
         self.on_position_packet: Optional[Callable[[ParsedPacket], None]] = None
         self.on_socket_down_event: Optional[Callable[[], None]] = None
 
@@ -134,6 +136,25 @@ class FsdSession:
     def send_plane_info_request(self, to: str) -> None:
         self._send(pk.plane_info_request(self.callsign, to))
 
+    # ---------- 飞行计划 ----------
+
+    def send_flight_plan(self, flight_type: str = "I",
+                         aircraft: str | None = None,
+                         cruise_speed: str = "450",
+                         dep_airport: str = "", plan_time: str = "0000",
+                         actual_time: str = "0000", cruise_alt: str = "FL350",
+                         dest_airport: str = "",
+                         enroute_h: int = 0, enroute_m: int = 0,
+                         fuel_h: int = 2, fuel_m: int = 0,
+                         alt_airport: str = "", remarks: str = "",
+                         route: str = "") -> None:
+        self._send(pk.flight_plan(
+            self.callsign, flight_type,
+            aircraft or self.aircraft_icao, cruise_speed,
+            dep_airport, plan_time, actual_time, cruise_alt,
+            dest_airport, enroute_h, enroute_m, fuel_h, fuel_m,
+            alt_airport, remarks, route))
+
     # ---------- 飞行状态 ----------
 
     def update_flight_state(self, lat: float, lon: float, alt_true_ft: int,
@@ -194,6 +215,11 @@ class FsdSession:
             elif p.type in ("PI", "FSIPI"):
                 if self.on_plane_info_received:
                     self.on_plane_info_received(p.from_, p.type, p.flds, p.raw)
+
+        elif p.kind == "$FP":
+            # $FP<from>:<to>:<type>:... 服务器下发/请求飞行计划
+            if self.on_flight_plan_received:
+                self.on_flight_plan_received(p.from_, p.type, p.flds, p.raw)
 
         if self.on_position_packet:
             self.on_position_packet(p)
