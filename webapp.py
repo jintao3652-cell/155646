@@ -62,6 +62,8 @@ class Api:
         self._xconnect.on_connected = lambda: self._push("xconnect", "connected")
         self._xconnect.on_disconnected = \
             lambda: self._push("xconnect", "disconnected")
+        # 未连线 FSD 也接收并显示飞行数据（连线后由 NetworkModel 接管上报）
+        self._xconnect.on_flight_data = lambda fd: self._push("flight", asdict(fd))
         self._start_xconnect()
 
     def _start_xconnect(self) -> None:
@@ -94,7 +96,7 @@ class Api:
             for k, v in d.items():
                 if hasattr(cfg, k):
                     setattr(cfg, k, v)
-            cfg.server_host = cfg.server_host.strip() or "fsd.flyisfp.com"
+            cfg.server_host = cfg.server_host.strip() or "ol.xflysim.com"
             cfg.xconnect_host = cfg.xconnect_host.strip() or "127.0.0.1"
             if not (1 <= cfg.server_port <= 65535) or \
                     not (1 <= cfg.xconnect_port <= 65535):
@@ -248,7 +250,7 @@ def run_web(debug: bool = False) -> None:
     api = Api()
     try:
         webview.create_window(
-            "XFlySim-Client - ISFP 连飞",
+            "XShare - XFlySim Client",
             WEBUI_URL,
             width=980, height=460, resizable=True,
             js_api=api, background_color="#16181c",

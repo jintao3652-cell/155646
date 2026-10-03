@@ -57,6 +57,8 @@ class XflyGui:
         self._xconnect = XConnectClient(
             self.cfg.xconnect_host, self.cfg.xconnect_port)
         self._xconnect.on_log = lambda m: self._post("log", m)
+        # 未连线也显示飞行数据（连线后由 NetworkModel 接管）
+        self._xconnect.on_flight_data = lambda fd: self._post("flight", fd)
         self._start_xconnect()
 
     def _start_xconnect(self) -> None:
@@ -309,7 +311,7 @@ class XflyGui:
             cfg.aircraft_icao = vars_["aircraft_icao"].get().strip().upper()
             cfg.airline_icao = vars_["airline_icao"].get().strip().upper()
 
-            cfg.server_host = vars_["server_host"].get().strip() or "fsd.flyisfp.com"
+            cfg.server_host = vars_["server_host"].get().strip() or "ol.xflysim.com"
             cfg.xconnect_host = vars_["xconnect_host"].get().strip() or "127.0.0.1"
             try:
                 cfg.server_port = int(vars_["server_port"].get())

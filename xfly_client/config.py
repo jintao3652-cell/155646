@@ -17,7 +17,7 @@ class AppConfig:
     airline_icao: str = ""
     remember_password: bool = True
     debug_mode: bool = False
-    server_host: str = "fsd.flyisfp.com"
+    server_host: str = "ol.xflysim.com"
     server_port: int = 6809
     xconnect_host: str = "127.0.0.1"
     xconnect_port: int = 51001

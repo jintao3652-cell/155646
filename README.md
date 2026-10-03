@@ -1,13 +1,10 @@
 # XFlySim-Client
 
-ISFP 云际模拟飞行连飞平台 · Python 版轻量化连飞客户端（参照
-[ISFP-Connect-Lite](https://github.com/Interstellar-Simulation-Flight-Platform/ISFP-Connect-Lite) 移植）
-
 - **HTML/CSS/JS 界面**（pywebview + 系统 WebView2，深色 bar 风格）
 - 另有 Tkinter 深色界面（`gui.py`，纯标准库备选）与 CLI（`main.py`）
 - 支持 X-Plane 11 / 12：数据经 **XConnect 插件**（X-Plane 原生插件）桥接，
   并可将在线玩家渲染为 CSL 模型
-- 服务器：`fsd.flyisfp.com:6809`（可在设置中修改）
+- 服务器：`ol.xflysim.com:6809`（可在设置中修改）
 
 ## 功能
 
@@ -113,7 +110,7 @@ python main.py --selftest
   "aircraft_icao": "A20N",
   "airline_icao": "CCA",
   "remember_password": true,
-  "server_host": "fsd.flyisfp.com",
+  "server_host": "ol.xflysim.com",
   "server_port": 6809,
   "xconnect_host": "127.0.0.1",
   "xconnect_port": 51001
@@ -122,7 +119,7 @@ python main.py --selftest
 
 ## 协议要点（与 C# 版一致）
 
-- ISFP FSD 无 `$DI`/`$ID` 握手，TCP 连接后直接发送 `#AP`
+- 无 `$DI`/`$ID` 握手，TCP 连接后直接发送 `#AP`
 - 文本编码 GB18030（兼容中文）
 - 位置包：`@模式:呼号:应答机:等级:纬度:经度:高度:地速:PBH:修正`
 - PBH 位域：bit1=on_ground，bit2-11 heading，bit12-21 bank，bit22-31 pitch

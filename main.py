@@ -197,7 +197,7 @@ class CliApp:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="xflysim-client", description="XFlySim-Client: ISFP 云际模拟飞行 Python 连飞客户端")
+        prog="xflysim-client", description="XShare - XFlySim Client")
     parser.add_argument("--selftest", action="store_true", help="运行协议层自测")
     parser.add_argument("--host", help="FSD 服务器地址")
     parser.add_argument("--port", type=int, help="FSD 服务器端口")

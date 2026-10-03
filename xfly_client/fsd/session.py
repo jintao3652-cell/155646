@@ -1,7 +1,4 @@
 """FSD 高层会话：连接握手、登录、位置上报、保活、文本/METAR/机型事件。
-
-参照 FsdSession.cs：
-- TCP 连接后直接发 #AP（ISFP FSD 无 $DI/$ID 握手；如收到 $DI 则应答）
 - 每 5s 上报位置 @ 包，每 60s 发送保活 ping
 """
 

@@ -1,6 +1,4 @@
 """FSD 底层 TCP 链路：GB18030 编码、CRLF 行分帧、发送锁、断线回调。
-
-ISFP FSD 文本流量使用 GB18030（兼容中文）；用增量解码器处理跨包的多字节字符。
 """
 
 from __future__ import annotations
