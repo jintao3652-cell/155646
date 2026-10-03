@@ -72,6 +72,8 @@ static XPLMDataRef g_drefs[DR_COUNT];
 
 static char g_log_path[2048] = "";
 
+static double xc_now_sec(void);   /* 定义见锁宏块：优先于日志工具使用 */
+
 /* 写诊断日志（插件目录 xconnect.log）。飞行的每一步关键入口都记录，
  * 崩溃后可从最后一行定位阶段。 */
 static void xconnect_logf(const char* fmt, ...) {
