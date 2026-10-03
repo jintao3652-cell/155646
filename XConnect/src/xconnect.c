@@ -542,13 +542,16 @@ PLUGIN_API void XPluginStop(void) {
     xconnect_logf("XPluginStop done");
 }
 
-PLUGIN_API void XPluginEnable(void) {
-    xconnect_logf("XPluginEnable");
+/* SDK 430：XPluginEnable 返回 int，1 = 启用成功；返回 0 会导致
+ * XPLMEnablePlugin 返回 0，插件管理器状态不切换（Enable 点击无效果）。 */
+PLUGIN_API int XPluginEnable(void) {
+    xconnect_logf("XPluginEnable ok");
+    return 1;
 }
 
 PLUGIN_API int XPluginDisable(void) {
     xconnect_logf("XPluginDisable");
-    return 1;
+    return 1;   /* 允许被禁用 */
 }
 
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID inFrom, int inMsg,
