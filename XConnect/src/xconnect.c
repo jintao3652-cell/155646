@@ -167,6 +167,10 @@ static net_sock_t g_client_sock = NET_INVALID;
 static net_sock_t g_listen_sock = NET_INVALID;
 static XPLMFlightLoopID g_flight_loop = NULL;
 static double g_last_loop_log = -1.0;
+static char g_csl_loaded[PLAYER_MAX][8];
+static char g_csl_missing[PLAYER_MAX][8];
+static int g_csl_loaded_n = 0;
+static int g_csl_missing_n = 0;
 static double g_last_send_log = -1.0;
 static int g_running = 0;
 static double g_last_send = -1.0;   /* xc_now_sec 绝对时间 */
