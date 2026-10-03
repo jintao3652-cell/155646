@@ -166,6 +166,8 @@ static Player g_players[PLAYER_MAX];
 static net_sock_t g_client_sock = NET_INVALID;
 static net_sock_t g_listen_sock = NET_INVALID;
 static XPLMFlightLoopID g_flight_loop = NULL;
+static double g_last_loop_log = -1.0;
+static double g_last_send_log = -1.0;
 static int g_running = 0;
 static double g_last_send = 0.0;
 static int g_atc_count = 0;
@@ -430,13 +432,25 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
 #ifdef _WIN32
     __try {
 #endif
+        /* 节拍日志：确认飞行循环实际被调用的频率 */
+        if (xc_now_sec() - g_last_loop_log >= 1.0) {
+            g_last_loop_log = xc_now_sec();
+            xconnect_logf("loop tick elapsedMe=%.1f counter=%d",
+                          elapsedMe, counter);
+        }
         if (counter == 0) xconnect_logf("loop first frame");
         if (elapsedMe - g_last_send >= DATA_INTERVAL) {
+            int rc;
             build_flight_data(line, sizeof(line));
             LOCK_ENTER(g_sock_lock);
-            if (g_client_sock != NET_INVALID)
-                net_send_line(g_client_sock, line);
+            rc = (g_client_sock != NET_INVALID)
+                 ? net_send_line(g_client_sock, line) : 1;
             LOCK_LEAVE(g_sock_lock);
+            if (xc_now_sec() - g_last_send_log >= 1.0) {
+                g_last_send_log = xc_now_sec();
+                xconnect_logf("send flight_data rc=%d hasClient=%d",
+                              rc, g_client_sock != NET_INVALID);
+            }
             g_last_send = elapsedMe;
         }
 
