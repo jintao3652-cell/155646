@@ -67,25 +67,31 @@ static const char* kDrefNames[DR_COUNT] = {
 
 static XPLMDataRef g_drefs[DR_COUNT];
 
-/* 安全读取：对空引用/数组类 dataref 也不会崩溃 */
+/* 安全读取：对空引用/数组类 dataref 也不会崩溃。
+ * SDK 430 起 XPLMGetDataf/XPLMGetDatai 改为返回值模式（旧版为 out 指针）。 */
 static float dref_float(XPLMDataRef r) {
     int t;
     if (!r) return 0.0f;
     t = XPLMGetDataRefTypes(r);
+#if kXPLM_Version >= 430
+    if (t & xplmType_Float) return XPLMGetDataf(r);
+    if (t & xplmType_Int) return (float)XPLMGetDatai(r);
+#else
     if (t & xplmType_Float) {
         float v = 0.0f;
         XPLMGetDataf(r, &v);
-        return v;
-    }
-    if (t & xplmType_FloatArray) {
-        float v = 0.0f;
-        XPLMGetDatavf(r, &v, 0, 1);
         return v;
     }
     if (t & xplmType_Int) {
         int v = 0;
         XPLMGetDatai(r, &v);
         return (float)v;
+    }
+#endif
+    if (t & xplmType_FloatArray) {
+        float v = 0.0f;
+        XPLMGetDatavf(r, &v, 0, 1);
+        return v;
     }
     if (t & xplmType_IntArray) {
         int v = 0;
@@ -99,11 +105,15 @@ static int dref_int(XPLMDataRef r) {
     int t;
     if (!r) return 0;
     t = XPLMGetDataRefTypes(r);
+#if kXPLM_Version >= 430
+    if (t & xplmType_Int) return XPLMGetDatai(r);
+#else
     if (t & xplmType_Int) {
         int v = 0;
         XPLMGetDatai(r, &v);
         return v;
     }
+#endif
     if (t & xplmType_IntArray) {
         int v = 0;
         XPLMGetDatavi(r, &v, 0, 1);
@@ -270,10 +280,14 @@ static void handle_client_line(const char* line) {
 }
 
 #ifdef _WIN32
-static DWORD WINAPI net_thread(LPVOID arg) {
+#define THREAD_RET DWORD WINAPI
+#define THREAD_ARG LPVOID
 #else
-static void* net_thread(void* arg) {
+#define THREAD_RET void*
+#define THREAD_ARG void*
 #endif
+
+static THREAD_RET net_thread(THREAD_ARG arg) {
     (void)arg;
     g_listen_sock = net_listen(LISTEN_PORT);
     if (g_listen_sock == NET_INVALID) return 0;
