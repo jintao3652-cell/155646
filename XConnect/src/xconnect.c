@@ -351,6 +351,8 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
         LOCK_ENTER(g_sock_lock);
         if (g_client_sock == sock) g_client_sock = NET_INVALID;
         LOCK_LEAVE(g_sock_lock);
+        g_csl_loaded_n = 0;
+        g_csl_missing_n = 0;
         net_close(sock);
         xconnect_logf("net: client disconnected");
     }
@@ -385,6 +387,69 @@ static void build_flight_data(char* out, int size) {
         dref_int(g_drefs[DR_XPDR_CODE]), squark,
         dref_float(g_drefs[DR_GEAR]),
         dref_float(g_drefs[DR_FLAPS]), dref_float(g_drefs[DR_THROTTLE]));
+}
+
+/* ---------------- CSL 加载状态上报 ---------------- */
+
+static char g_csl_loaded[PLAYER_MAX][8];
+static char g_csl_missing[PLAYER_MAX][8];
+static int g_csl_loaded_n = 0;
+static int g_csl_missing_n = 0;
+
+/* 汇总当前 CSL 加载状态；有变化时向客户端推送 csl_status。 */
+static void refresh_csl_status(void) {
+    char loaded[PLAYER_MAX][8];
+    char missing[PLAYER_MAX][8];
+    int ln = 0, mn = 0;
+    int i;
+    int changed = 0;
+
+    LOCK_ENTER(g_players_lock);
+    for (i = 0; i < PLAYER_MAX; i++) {
+        Player* p = &g_players[i];
+        if (!p->active || !p->icao[0]) continue;
+        if (p->model.inst) {
+            if (ln < PLAYER_MAX)
+                snprintf(loaded[ln++], 8, "%s", p->icao);
+        } else if (p->model.tried) {
+            if (mn < PLAYER_MAX)
+                snprintf(missing[mn++], 8, "%s", p->icao);
+        }
+    }
+    LOCK_LEAVE(g_players_lock);
+
+    if (ln != g_csl_loaded_n || mn != g_csl_missing_n)
+        changed = 1;
+    else
+        for (i = 0; i < ln && !changed; i++)
+            if (strcmp(loaded[i], g_csl_loaded[i]) != 0) changed = 1;
+    for (i = 0; i < mn && !changed; i++)
+        if (strcmp(missing[i], g_csl_missing[i]) != 0) changed = 1;
+
+    if (!changed) return;
+
+    memcpy(g_csl_loaded, loaded, sizeof(loaded[0]) * ln);
+    memcpy(g_csl_missing, missing, sizeof(missing[0]) * mn);
+    g_csl_loaded_n = ln;
+    g_csl_missing_n = mn;
+
+    {
+        char line[4096];
+        int n = snprintf(line, sizeof(line),
+                         "{\"type\":\"csl_status\",\"loaded\":[");
+        for (i = 0; i < ln; i++)
+            n += snprintf(line + n, sizeof(line) - (size_t)n,
+                          "%s\"%s\"", i ? "," : "", loaded[i]);
+        n += snprintf(line + n, sizeof(line) - (size_t)n, "],\"missing\":[");
+        for (i = 0; i < mn; i++)
+            n += snprintf(line + n, sizeof(line) - (size_t)n,
+                          "%s\"%s\"", i ? "," : "", missing[i]);
+        n += snprintf(line + n, sizeof(line) - (size_t)n, "]}");
+        LOCK_ENTER(g_sock_lock);
+        if (g_client_sock != NET_INVALID)
+            net_send_line(g_client_sock, line);
+        LOCK_LEAVE(g_sock_lock);
+    }
 }
 
 static void update_players(double now) {
@@ -461,6 +526,7 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
         }
 
         update_players(xc_now_sec());
+        refresh_csl_status();
 #ifdef _WIN32
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         xconnect_logf("loop crash code=%08x", (unsigned)GetExceptionCode());

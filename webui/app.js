@@ -29,6 +29,7 @@ function handleEvent(ev) {
       break;
     case "flight": updateFlight(ev.data); break;
     case "xconnect": setXconnectState(ev.data); break;
+    case "csl": setCslStatus(ev.data); break;
     case "xplog": addLog("◂ " + JSON.stringify(ev.data), "in"); break;
     case "sys": addLog(`[!] ${ev.data}`, "err"); break;
     case "disconnected":
@@ -53,6 +54,25 @@ function setXconnectState(state) {
         addLog("[xconnect] 无法连接模拟机，请检查 X-Plane 是否运行", "err");
       break;
   }
+}
+
+function setCslStatus(d) {
+  const loaded = d.loaded || [];
+  const missing = d.missing || [];
+  const total = loaded.length + missing.length;
+  el.csl = el.csl || $("st-csl");
+  if (total === 0) {
+    el.csl.textContent = "CSL —";
+    el.csl.className = "pill dim";
+    el.csl.title = "CSL 模型加载情况";
+    return;
+  }
+  el.csl.textContent = `CSL ${loaded.length}/${total}`;
+  el.csl.className = missing.length ? "pill wait" : "pill ok";
+  el.csl.title = "已加载: " + (loaded.join(", ") || "无") +
+                 "\n缺失: " + (missing.join(", ") || "无");
+  if (missing.length)
+    addLog(`CSL 缺失模型: ${missing.join(", ")}（放入 plugins/XConnect/CSL/）`, "err");
 }
 
 async function poll() {

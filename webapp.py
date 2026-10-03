@@ -64,6 +64,7 @@ class Api:
             lambda: self._push("xconnect", "disconnected")
         # 未连线 FSD 也接收并显示飞行数据（连线后由 NetworkModel 接管上报）
         self._xconnect.on_flight_data = lambda fd: self._push("flight", asdict(fd))
+        self._xconnect.on_csl_status = lambda d: self._push("csl", d)
         self._start_xconnect()
 
     def _start_xconnect(self) -> None:
@@ -142,6 +143,7 @@ class Api:
         model.on_xconnect_connected = lambda: self._push("xconnect", "connected")
         model.on_xconnect_disconnected = lambda: self._push("xconnect", "disconnected")
         model.on_plugin_message = self._on_plugin_message
+        model.on_csl_status = lambda d: self._push("csl", d)
 
         sim_type = self._sim_type
         cfg = self._cfg

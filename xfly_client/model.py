@@ -78,6 +78,7 @@ class NetworkModel:
         self.on_xconnect_connected: Optional[Callable[[], None]] = None
         self.on_xconnect_disconnected: Optional[Callable[[], None]] = None
         self.on_plugin_message: Optional[Callable[[dict], None]] = None
+        self.on_csl_status: Optional[Callable[[dict], None]] = None
 
         self._stop = threading.Event()
         self._gc_thread = threading.Thread(
@@ -91,6 +92,7 @@ class NetworkModel:
         self.xconnect.on_connected = self._on_xconnect_connected
         self.xconnect.on_disconnected = self._on_xconnect_disconnected
         self.xconnect.on_message = self._on_plugin_message
+        self.xconnect.on_csl_status = self._on_csl_status
         self.xconnect.on_log = self._log
 
     # ---------- 生命周期 ----------
@@ -111,6 +113,11 @@ class NetworkModel:
         """插件原始报文透传（供调试模式显示）。"""
         if self.on_plugin_message:
             self.on_plugin_message(doc)
+
+    def _on_csl_status(self, doc: dict) -> None:
+        """CSL 加载状态透传。"""
+        if self.on_csl_status:
+            self.on_csl_status(doc)
 
     def _on_xconnect_disconnected(self) -> None:
         self._log("[xconnect] 未发现模拟机")

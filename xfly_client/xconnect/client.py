@@ -88,6 +88,7 @@ class XConnectClient:
         self.on_disconnected: Optional[Callable[[], None]] = None
         self.on_flight_data: Optional[Callable[[FlightData], None]] = None
         self.on_message: Optional[Callable[[dict], None]] = None
+        self.on_csl_status: Optional[Callable[[dict], None]] = None
         self.on_log: Optional[Callable[[str], None]] = None
 
     @property
@@ -161,7 +162,12 @@ class XConnectClient:
             return
         if self.on_message:
             self.on_message(doc)
-        if doc.get("type") != "flight_data":
+        msg_type = doc.get("type", "")
+        if msg_type == "csl_status":
+            if self.on_csl_status:
+                self.on_csl_status(doc)
+            return
+        if msg_type != "flight_data":
             return
         fd = FlightData(**{k: v for k, v in doc.items() if k in _FD_FIELDS})
         if self.on_flight_data:
