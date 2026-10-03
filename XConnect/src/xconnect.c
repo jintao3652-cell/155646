@@ -465,12 +465,14 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
                  sys, XPLMGetDirectorySeparator(),
                  XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
     }
-    xconnect_logf("XPluginStart entry");
+    xconnect_logf("XConnect v2 (built %s %s): entry", __DATE__, __TIME__);
+    xconnect_logf("  params: outName=%p outSig=%p outDesc=%p",
+                  (void*)outName, (void*)outSig, (void*)outDesc);
 
-    /* SDK 430：outName/outSignature/outDescription 允许为 NULL，必须判空 */
-    if (outName) strcpy(outName, XCONNECT_NAME);
-    if (outSig) strcpy(outSig, XCONNECT_SIG);
-    if (outDesc) strcpy(outDesc, XCONNECT_DESC);
+    /* SDK 430：out 参数允许为 NULL，且缓冲区长度未知 → 限长写入 */
+    if (outName) snprintf(outName, 64, "%s", XCONNECT_NAME);
+    if (outSig)  snprintf(outSig, 64, "%s", XCONNECT_SIG);
+    if (outDesc) snprintf(outDesc, 64, "%s", XCONNECT_DESC);
     xconnect_logf("  step: names done");
 
     lock_init();
