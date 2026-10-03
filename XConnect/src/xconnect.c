@@ -456,6 +456,17 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
     (void)host;
     (void)sdk;
 
+    /* 第一件事：初始化日志路径并记录入口，任何后续崩溃都有现场 */
+    {
+        char sys[1024];
+        XPLMGetSystemPath(sys);
+        snprintf(g_log_path, sizeof(g_log_path),
+                 "%sResources%splugins%sXConnect%sxconnect.log",
+                 sys, XPLMGetDirectorySeparator(),
+                 XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
+    }
+    xconnect_logf("XPluginStart entry");
+
     strcpy(outName, XCONNECT_NAME);
     strcpy(outSig, XCONNECT_SIG);
     strcpy(outDesc, XCONNECT_DESC);
@@ -466,16 +477,6 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
         XPLMDebugString(XCONNECT_NAME ": network init failed\n");
         return 1;
     }
-
-    /* 初始化诊断日志路径 */
-    {
-        char sys[1024];
-        XPLMGetSystemPath(sys);
-        snprintf(g_log_path, sizeof(g_log_path), "%sResources%splugins%sXConnect%sxconnect.log",
-                 sys, XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator(),
-                 XPLMGetDirectorySeparator());
-    }
-    xconnect_logf("XPluginStart begin");
 
     for (i = 0; i < DR_COUNT; i++)
         g_drefs[i] = XPLMFindDataRef(kDrefNames[i]);
