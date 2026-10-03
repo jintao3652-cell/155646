@@ -31,7 +31,7 @@
 #define LISTEN_PORT   51001
 #define PLAYER_MAX    256
 #define PLAYER_TIMEOUT 30.0   /* 秒 */
-#define DATA_INTERVAL 0.2f   /* 秒（5Hz） */
+#define DATA_INTERVAL 0.2f   /* 发送间隔：0.2 秒 = 每秒 5 条（5Hz） */
 #define LOOP_INTERVAL 0.05f  /* 主循环节拍 */
 
 /* ---------------- 本机飞行数据 dataref ---------------- */
@@ -169,7 +169,7 @@ static XPLMFlightLoopID g_flight_loop = NULL;
 static double g_last_loop_log = -1.0;
 static double g_last_send_log = -1.0;
 static int g_running = 0;
-static double g_last_send = 0.0;
+static double g_last_send = -1.0;   /* xc_now_sec 绝对时间 */
 static int g_atc_count = 0;
 
 static void* g_players_lock = NULL;   /* pthread_mutex_t / CRITICAL_SECTION */
@@ -439,19 +439,25 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
                           elapsedMe, counter);
         }
         if (counter == 0) xconnect_logf("loop first frame");
-        if (elapsedMe - g_last_send >= DATA_INTERVAL) {
-            int rc;
-            build_flight_data(line, sizeof(line));
-            LOCK_ENTER(g_sock_lock);
-            rc = (g_client_sock != NET_INVALID)
-                 ? net_send_line(g_client_sock, line) : 1;
-            LOCK_LEAVE(g_sock_lock);
-            if (xc_now_sec() - g_last_send_log >= 1.0) {
-                g_last_send_log = xc_now_sec();
-                xconnect_logf("send flight_data rc=%d hasClient=%d",
-                              rc, g_client_sock != NET_INVALID);
+
+        /* 注意：elapsedMe 是"距上次调用间隔"（每次 ~0.1s），不是绝对时间，
+           不可用于节流；用单调时钟 xc_now_sec() 做发送节流。 */
+        {
+            double now = xc_now_sec();
+            if (now - g_last_send >= DATA_INTERVAL) {
+                int rc;
+                build_flight_data(line, sizeof(line));
+                LOCK_ENTER(g_sock_lock);
+                rc = (g_client_sock != NET_INVALID)
+                     ? net_send_line(g_client_sock, line) : 1;
+                LOCK_LEAVE(g_sock_lock);
+                if (now - g_last_send_log >= 0.25) {
+                    g_last_send_log = now;
+                    xconnect_logf("send flight_data rc=%d hasClient=%d",
+                                  rc, g_client_sock != NET_INVALID);
+                }
+                g_last_send = now;
             }
-            g_last_send = elapsedMe;
         }
 
         update_players(xc_now_sec());
