@@ -395,11 +395,6 @@ static void build_flight_data(char* out, int size) {
 
 /* ---------------- CSL 加载状态上报 ---------------- */
 
-static char g_csl_loaded[PLAYER_MAX][8];
-static char g_csl_missing[PLAYER_MAX][8];
-static int g_csl_loaded_n = 0;
-static int g_csl_missing_n = 0;
-
 /* 汇总当前 CSL 加载状态；有变化时向客户端推送 csl_status。 */
 static void refresh_csl_status(void) {
     char loaded[PLAYER_MAX][8];
