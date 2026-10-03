@@ -77,6 +77,7 @@ class NetworkModel:
         self.on_fsd_unexpected_disconnect: Optional[Callable[[], None]] = None
         self.on_xconnect_connected: Optional[Callable[[], None]] = None
         self.on_xconnect_disconnected: Optional[Callable[[], None]] = None
+        self.on_plugin_message: Optional[Callable[[dict], None]] = None
 
         self._stop = threading.Event()
         self._gc_thread = threading.Thread(
@@ -89,6 +90,7 @@ class NetworkModel:
         self.xconnect.on_flight_data = self._on_xconnect_flight_data
         self.xconnect.on_connected = self._on_xconnect_connected
         self.xconnect.on_disconnected = self._on_xconnect_disconnected
+        self.xconnect.on_message = self._on_plugin_message
         self.xconnect.on_log = self._log
 
     # ---------- 生命周期 ----------
@@ -104,6 +106,11 @@ class NetworkModel:
         self._log("[xconnect] 插件已上线，数据通道就绪")
         if self.on_xconnect_connected:
             self.on_xconnect_connected()
+
+    def _on_plugin_message(self, doc: dict) -> None:
+        """插件原始报文透传（供调试模式显示）。"""
+        if self.on_plugin_message:
+            self.on_plugin_message(doc)
 
     def _on_xconnect_disconnected(self) -> None:
         self._log("[xconnect] 插件离线")

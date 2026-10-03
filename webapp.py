@@ -53,6 +53,7 @@ class Api:
         self._model: Optional[NetworkModel] = None
         self._events: deque[tuple[str, object]] = deque()
         self._sim_type = pk.SIM_TYPE_XP12
+        self._debug: bool = self._cfg.debug_mode
 
         # XConnect 插件客户端：应用级生命周期，启动即持续监听插件上线
         self._xconnect = XConnectClient(
@@ -107,6 +108,10 @@ class Api:
     def set_sim(self, version: str) -> None:
         self._sim_type = pk.SIM_TYPE_XP12 if version == "xp12" else pk.SIM_TYPE_XP11
 
+    def set_debug(self, enabled: bool) -> None:
+        """调试模式：开启后前端可查看插件原始报文。"""
+        self._debug = bool(enabled)
+
     # ---------- 连线 / 断开 ----------
 
     def connect(self, callsign: str, aircraft: str, airline: str) -> dict:
@@ -134,6 +139,7 @@ class Api:
         model.on_fsd_unexpected_disconnect = lambda: self._on_fsd_dropped(model)
         model.on_xconnect_connected = lambda: self._push("xconnect", "connected")
         model.on_xconnect_disconnected = lambda: self._push("xconnect", "disconnected")
+        model.on_plugin_message = self._on_plugin_message
 
         sim_type = self._sim_type
         cfg = self._cfg
@@ -172,6 +178,11 @@ class Api:
         threading.Thread(target=worker, daemon=True).start()
         self._push("sys", "FSD 连接意外断开")
         self._push("disconnected", None)
+
+    def _on_plugin_message(self, doc: dict) -> None:
+        """调试模式开启时，把插件原始报文推给前端。"""
+        if self._debug:
+            self._push("xplog", doc)
 
     # ---------- 消息 / METAR / 机型 ----------
 

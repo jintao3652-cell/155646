@@ -29,6 +29,7 @@ function handleEvent(ev) {
       break;
     case "flight": updateFlight(ev.data); break;
     case "xconnect": setXconnectState(ev.data); break;
+    case "xplog": addLog("◂ " + JSON.stringify(ev.data), "in"); break;
     case "sys": addLog(`[!] ${ev.data}`, "err"); break;
     case "disconnected":
       setConnected(false);
@@ -40,20 +41,20 @@ function handleEvent(ev) {
 function setXconnectState(state) {
   switch (state) {
     case "connected":
-      el.xplane.textContent = "PLG OK";
+      el.xplane.textContent = "XP Online";
       el.xplane.className = "pill ok";
       break;
     case "waiting":
-      el.xplane.textContent = "PLG WAIT";
+      el.xplane.textContent = "XP Offline";
       el.xplane.className = "pill wait";
       break;
     case "failed":
-      el.xplane.textContent = "PLG —";
+      el.xplane.textContent = "XP Offline";
       el.xplane.className = "pill dim";
       addLog("[xconnect] 无法连接插件，请检查 X-Plane 是否运行", "err");
       break;
     case "disconnected":
-      el.xplane.textContent = "PLG —";
+      el.xplane.textContent = "XP Offline";
       el.xplane.className = "pill dim";
       break;
   }
@@ -116,8 +117,11 @@ async function statusTick() {
     el.roster.textContent = st.atc > 0 || st.players > 0
       ? `ATC ${st.atc} · PLR ${st.players}` : "";
     if (st.xconnect) {
-      el.xplane.textContent = "PLG OK";
+      el.xplane.textContent = "XP Online";
       el.xplane.className = "pill ok";
+    } else if (el.xplane.textContent !== "XP Offline") {
+      el.xplane.textContent = "XP Offline";
+      el.xplane.className = "pill dim";
     }
   } catch (e) { /* 忽略 */ }
 }
@@ -213,6 +217,7 @@ async function openSettings() {
   $("set-port").value = s.server_port;
   $("set-xphost").value = s.xconnect_host;
   $("set-xpport").value = s.xconnect_port;
+  $("set-debug").checked = !!s.debug_mode;
   el.setOverlay.classList.remove("hidden");
 }
 
@@ -229,13 +234,15 @@ async function saveSettings() {
     server_port: parseInt($("set-port").value, 10),
     xconnect_host: $("set-xphost").value.trim(),
     xconnect_port: parseInt($("set-xpport").value, 10),
+    debug_mode: $("set-debug").checked,
   };
+  api.set_debug(d.debug_mode);
   const r = await api.save_settings(d);
   if (r.ok) {
     el.callsign.value = d.callsign;
     el.aircraft.value = d.aircraft_icao;
     el.airline.value = d.airline_icao;
-    showToast("已保存 (config.json)");
+    showToast(d.debug_mode ? "已保存（调试模式已开启）" : "已保存 (config.json)");
     el.setOverlay.classList.add("hidden");
   } else {
     showToast(r.error || "保存失败", true);

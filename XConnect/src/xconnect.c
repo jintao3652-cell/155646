@@ -26,6 +26,8 @@
 #include "net.h"
 
 #define XCONNECT_NAME "XConnect"
+#define XCONNECT_SIG  "xflysim.xconnect"
+#define XCONNECT_DESC "XFlySim X-Plane bridge: flight data + CSL rendering"
 #define LISTEN_PORT   51001
 #define PLAYER_MAX    256
 #define PLAYER_TIMEOUT 30.0   /* 秒 */
@@ -448,15 +450,13 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
 
 /* ---------------- 插件入口 ---------------- */
 
-/* X-Plane 12.4 (SDK 430) 的 XPluginStart 只传 3 个参数（host, sdk, outName），
- * outSignature/outDescription 输出参数已从 ABI 移除；第 4/5 参数位置读到的是
- * 未初始化寄存器（映像基址，只读），写入必然崩溃、不写则残留旧签名导致
- * "A version of this plugin is already loaded" 冲突。故仅声明并写入 outName。 */
-PLUGIN_API int XPluginStart(const char* host, const char* sdk, char* outName) {
+/* 标准 XPLM 插件入口签名：XPluginStart(char* outName, char* outSig, char* outDesc)
+ * —— 只有 3 个参数（无 host/sdk）。此前误用 5 参数签名导致 x64 寄存器错位：
+ * X-Plane 设置 RCX/RDX/R8 三个输出缓冲，R9 为残留值；
+ * 结果 outSig 从未被写入 → X-Plane 读到残留签名 → "plugin already loaded" 冲突、
+ * 插件名空、无法启用。 */
+PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     int i;
-
-    (void)host;
-    (void)sdk;
 
     /* 第一件事：初始化日志路径并记录入口，任何后续崩溃都有现场 */
     {
@@ -467,10 +467,13 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk, char* outName) {
                  sys, XPLMGetDirectorySeparator(),
                  XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
     }
-    xconnect_logf("XConnect v4 (built %s %s): entry", __DATE__, __TIME__);
-    xconnect_logf("  params: outName=%p", (void*)outName);
+    xconnect_logf("XConnect v5 (built %s %s): entry", __DATE__, __TIME__);
+    xconnect_logf("  params: outName=%p outSig=%p outDesc=%p",
+                  (void*)outName, (void*)outSig, (void*)outDesc);
 
     if (outName) snprintf(outName, 256, "%s", XCONNECT_NAME);
+    if (outSig)  snprintf(outSig, 256, "%s", XCONNECT_SIG);
+    if (outDesc) snprintf(outDesc, 256, "%s", XCONNECT_DESC);
     xconnect_logf("  step: names done");
 
     lock_init();

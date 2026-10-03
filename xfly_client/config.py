@@ -16,6 +16,7 @@ class AppConfig:
     aircraft_icao: str = "A320"
     airline_icao: str = ""
     remember_password: bool = True
+    debug_mode: bool = False
     server_host: str = "fsd.flyisfp.com"
     server_port: int = 6809
     xconnect_host: str = "127.0.0.1"

@@ -87,6 +87,7 @@ class XConnectClient:
         self.on_connected: Optional[Callable[[], None]] = None
         self.on_disconnected: Optional[Callable[[], None]] = None
         self.on_flight_data: Optional[Callable[[FlightData], None]] = None
+        self.on_message: Optional[Callable[[dict], None]] = None
         self.on_log: Optional[Callable[[str], None]] = None
 
     @property
@@ -159,6 +160,8 @@ class XConnectClient:
             doc = json.loads(line)
         except json.JSONDecodeError:
             return
+        if self.on_message:
+            self.on_message(doc)
         if doc.get("type") != "flight_data":
             return
         fd = FlightData(**{k: v for k, v in doc.items() if k in _FD_FIELDS})
