@@ -11,6 +11,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -67,8 +68,30 @@ static const char* kDrefNames[DR_COUNT] = {
 
 static XPLMDataRef g_drefs[DR_COUNT];
 
-/* 安全读取：对空引用/数组类 dataref 也不会崩溃。
- * SDK 430 起 XPLMGetDataf/XPLMGetDatai 改为返回值模式（旧版为 out 指针）。 */
+/* ---------------- 诊断日志 ---------------- */
+
+static char g_log_path[2048] = "";
+
+/* 写诊断日志（插件目录 xconnect.log）。飞行的每一步关键入口都记录，
+ * 崩溃后可从最后一行定位阶段。 */
+static void xconnect_logf(const char* fmt, ...) {
+    FILE* f;
+    char ts[32];
+    va_list ap;
+    if (!g_log_path[0]) return;
+    f = fopen(g_log_path, "a");
+    if (!f) return;
+    snprintf(ts, sizeof(ts), "%.0f", xc_now_sec());
+    fputs(ts, f);
+    fputs(" ", f);
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputs("\n", f);
+    fclose(f);
+}
+
+/* ---------------- dataref 安全读取 ---------------- */
 static float dref_float(XPLMDataRef r) {
     int t;
     if (!r) return 0.0f;
@@ -190,56 +213,54 @@ static void lock_done(void) {
 
 /* ---------------- 网络线程 ---------------- */
 
-static void send_line_nolock(const char* line) {
-    if (g_client_sock != NET_INVALID)
-        net_send_line(g_client_sock, line);
-}
-
 static void handle_client_line(const char* line) {
-    Json* root = json_parse(line);
-    const Json* jt;
-    if (!root) return;
+#ifdef _WIN32
+    __try {
+#endif
+        Json* root = json_parse(line);
+        const Json* jt;
+        if (!root) return;
 
-    jt = json_get(root, "type");
-    if (jt && jt->type == JSON_STR) {
-        if (strcmp(jt->sval, "Send:OPD:FSD9") == 0) {
-            const Json* data = json_get(root, "data");
-            if (data && data->type == JSON_ARR) {
-                int i, n = json_len(data);
-                LOCK_ENTER(g_players_lock);
-                g_atc_count = 0;
-                for (i = 0; i < n; i++) {
-                    const Json* el = json_at(data, i);
-                    const Json* f;
-                    Player* p = NULL;
-                    int slot;
-                    if (!el) continue;
+        jt = json_get(root, "type");
+        if (jt && jt->type == JSON_STR) {
+            if (strcmp(jt->sval, "Send:OPD:FSD9") == 0) {
+                const Json* data = json_get(root, "data");
+                if (data && data->type == JSON_ARR) {
+                    int i, n = json_len(data);
+                    LOCK_ENTER(g_players_lock);
+                    g_atc_count = 0;
+                    for (i = 0; i < n; i++) {
+                        const Json* el = json_at(data, i);
+                        const Json* f;
+                        Player* p = NULL;
+                        int slot;
+                        if (!el) continue;
 
-                    /* 查找或分配玩家槽位 */
-                    f = json_get(el, "callsign");
-                    if (!f || f->type != JSON_STR) continue;
-                    for (slot = 0; slot < PLAYER_MAX; slot++) {
-                        if (g_players[slot].active &&
-                            strcmp(g_players[slot].callsign, f->sval) == 0) {
-                            p = &g_players[slot];
-                            break;
-                        }
-                    }
-                    if (!p) {
+                        /* 查找或分配玩家槽位 */
+                        f = json_get(el, "callsign");
+                        if (!f || f->type != JSON_STR) continue;
                         for (slot = 0; slot < PLAYER_MAX; slot++) {
-                            if (!g_players[slot].active) {
+                            if (g_players[slot].active &&
+                                strcmp(g_players[slot].callsign, f->sval) == 0) {
                                 p = &g_players[slot];
-                                p->active = 1;
-                                p->model.inst = NULL;
-                                p->model.tried = 0;
-                                strncpy(p->callsign, f->sval,
-                                        sizeof(p->callsign) - 1);
-                                p->callsign[sizeof(p->callsign) - 1] = '\0';
                                 break;
                             }
                         }
-                    }
-                    if (!p) continue;
+                        if (!p) {
+                            for (slot = 0; slot < PLAYER_MAX; slot++) {
+                                if (!g_players[slot].active) {
+                                    p = &g_players[slot];
+                                    p->active = 1;
+                                    p->model.inst = NULL;
+                                    p->model.tried = 0;
+                                    strncpy(p->callsign, f->sval,
+                                            sizeof(p->callsign) - 1);
+                                    p->callsign[sizeof(p->callsign) - 1] = '\0';
+                                    break;
+                                }
+                            }
+                        }
+                        if (!p) continue;
 
 #define GETSTR(key, dst) do { \
     const Json* _t = json_get(el, key); \
@@ -252,31 +273,38 @@ static void handle_client_line(const char* line) {
     if (_t && _t->type == JSON_NUM) dst = _t->num; \
 } while (0)
 
-                    GETSTR("aircraft", p->icao);
-                    GETSTR("aircraft_family", p->family);
-                    GETNUM("latitude", p->lat);
-                    GETNUM("longitude", p->lon);
-                    GETNUM("altitude", p->alt_m);
-                    p->alt_m *= 0.3048;          /* ft -> m */
-                    GETNUM("pitch", p->pitch);
-                    GETNUM("bank", p->roll);
-                    GETNUM("heading", p->heading);
-                    GETNUM("ground_speed", p->gs_kt);
-                    p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
+                        GETSTR("aircraft", p->icao);
+                        GETSTR("aircraft_family", p->family);
+                        GETNUM("latitude", p->lat);
+                        GETNUM("longitude", p->lon);
+                        GETNUM("altitude", p->alt_m);
+                        p->alt_m *= 0.3048;          /* ft -> m */
+                        GETNUM("pitch", p->pitch);
+                        GETNUM("bank", p->roll);
+                        GETNUM("heading", p->heading);
+                        GETNUM("ground_speed", p->gs_kt);
+                        p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
+                    }
+                    /* 不在列表中的玩家由超时机制（PLAYER_TIMEOUT）清理 */
+                    LOCK_LEAVE(g_players_lock);
+                    xconnect_logf("players updated (n=%d)", n);
                 }
-                /* 不在列表中的玩家由超时机制（PLAYER_TIMEOUT）清理 */
-                LOCK_LEAVE(g_players_lock);
-            }
-        } else if (strcmp(jt->sval, "Send:ATC") == 0) {
-            const Json* data = json_get(root, "data");
-            if (data && data->type == JSON_ARR) {
-                LOCK_ENTER(g_players_lock);
-                g_atc_count = json_len(data);
-                LOCK_LEAVE(g_players_lock);
+            } else if (strcmp(jt->sval, "Send:ATC") == 0) {
+                const Json* data = json_get(root, "data");
+                if (data && data->type == JSON_ARR) {
+                    LOCK_ENTER(g_players_lock);
+                    g_atc_count = json_len(data);
+                    LOCK_LEAVE(g_players_lock);
+                }
             }
         }
+        json_free(root);
+#ifdef _WIN32
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        xconnect_logf("net: handle_client_line crash code=%08x",
+                      (unsigned)GetExceptionCode());
     }
-    json_free(root);
+#endif
 }
 
 #ifdef _WIN32
@@ -290,7 +318,11 @@ static void handle_client_line(const char* line) {
 static THREAD_RET net_thread(THREAD_ARG arg) {
     (void)arg;
     g_listen_sock = net_listen(LISTEN_PORT);
-    if (g_listen_sock == NET_INVALID) return 0;
+    if (g_listen_sock == NET_INVALID) {
+        xconnect_logf("net: listen %d failed", LISTEN_PORT);
+        return 0;
+    }
+    xconnect_logf("net: listening on %d", LISTEN_PORT);
 
     while (g_running) {
         net_sock_t sock = net_accept(g_listen_sock);
@@ -300,6 +332,7 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
         if (g_client_sock != NET_INVALID) net_close(g_client_sock);
         g_client_sock = sock;
         LOCK_LEAVE(g_sock_lock);
+        xconnect_logf("net: client connected");
 
         net_send_line(sock, "{\"type\":\"connected\",\"version\":1}");
 
@@ -314,6 +347,7 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
         if (g_client_sock == sock) g_client_sock = NET_INVALID;
         LOCK_LEAVE(g_sock_lock);
         net_close(sock);
+        xconnect_logf("net: client disconnected");
     }
     return 0;
 }
@@ -387,19 +421,27 @@ static void update_players(double now) {
 static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
                                   int counter, void* refcon) {
     (void)refcon;
+    (void)elapsedSim;
     char line[4096];
-    int hasClient = 0;
 
-    LOCK_ENTER(g_sock_lock);
-    hasClient = (g_client_sock != NET_INVALID);
-    if (hasClient && (elapsedMe - g_last_send) >= DATA_INTERVAL) {
-        build_flight_data(line, sizeof(line));
-        send_line_nolock(line);
-        g_last_send = elapsedMe;
+#ifdef _WIN32
+    __try {
+#endif
+        if (elapsedMe - g_last_send >= DATA_INTERVAL) {
+            build_flight_data(line, sizeof(line));
+            LOCK_ENTER(g_sock_lock);
+            if (g_client_sock != NET_INVALID)
+                net_send_line(g_client_sock, line);
+            LOCK_LEAVE(g_sock_lock);
+            g_last_send = elapsedMe;
+        }
+
+        update_players(xc_now_sec());
+#ifdef _WIN32
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        xconnect_logf("loop crash code=%08x", (unsigned)GetExceptionCode());
     }
-    LOCK_LEAVE(g_sock_lock);
-
-    update_players(xc_now_sec());
+#endif
     return LOOP_INTERVAL;
 }
 
@@ -422,6 +464,16 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
         XPLMDebugString(XCONNECT_NAME ": network init failed\n");
         return 1;
     }
+
+    /* 初始化诊断日志路径 */
+    {
+        char sys[1024];
+        XPLMGetSystemPath(sys);
+        snprintf(g_log_path, sizeof(g_log_path), "%sResources%splugins%sXConnect%sxconnect.log",
+                 sys, XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator(),
+                 XPLMGetDirectorySeparator());
+    }
+    xconnect_logf("XPluginStart begin");
 
     for (i = 0; i < DR_COUNT; i++)
         g_drefs[i] = XPLMFindDataRef(kDrefNames[i]);
@@ -446,11 +498,13 @@ PLUGIN_API int XPluginStart(const char* host, const char* sdk,
     }
 #endif
 
+    xconnect_logf("XPluginStart end ok");
     return 1;
 }
 
 PLUGIN_API void XPluginStop(void) {
     int i;
+    xconnect_logf("XPluginStop begin");
     g_running = 0;
     if (g_listen_sock != NET_INVALID) {
         net_close(g_listen_sock);
