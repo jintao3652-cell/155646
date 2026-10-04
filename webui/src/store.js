@@ -24,6 +24,7 @@ export const store = reactive({
          callsign: '', airline: '',
          host: '', port: 6809, xphost: '', xpport: 51001, debug: false },
   overlays: { msg: false, set: false, fp: false },
+  newMsg: false,
   _logId: 0,
   _dragging: false,
   _dragX: 0, _dragY: 0,
@@ -151,10 +152,16 @@ export function fmtFreq(milli) {
 export function addLog(msg, cls = '') {
   const t = new Date().toTimeString().slice(0, 8)
   store.log.push({ id: ++store._logId, t, m: msg, cls })
+  store.newMsg = true
 }
 
 export function appendMsg(from, text, sent) {
   store.msgs.push({ from, text, sent })
+  store.newMsg = true
+}
+
+export function clearNewMsg() {
+  store.newMsg = false
 }
 
 /* ---------- 连线 / 断开 ---------- */

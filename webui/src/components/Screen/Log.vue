@@ -1,15 +1,17 @@
 <script setup>
-  import { nextTick, watch } from 'vue'
-  import { store } from "../../store.js";
+  import { nextTick, onMounted, watch } from 'vue'
+  import { store, clearNewMsg } from "../../store.js";
   import router from '@/router'
 
   import ScreenButton from '@/components/RMP/ScreenButton.vue'
   // 日志追加时滚动到底部
   watch(() => store.log.length, async () => {
     await nextTick()
-    const bar = document.querySelector('.log-pane .el-scrollbar__wrap')
+    const bar = document.querySelector('.lcd-body .el-scrollbar__wrap')
     if (bar) bar.scrollTop = bar.scrollHeight
   })
+  // 进入日志页视为已读
+  onMounted(clearNewMsg)
 </script>
 
 <template>
@@ -18,24 +20,29 @@
       <ScreenButton direction="right"></ScreenButton>
       <ScreenButton direction="right"></ScreenButton>
       <ScreenButton direction="right"></ScreenButton>
-      <ScreenButton direction="right"></ScreenButton>
+      <ScreenButton direction="right" :onClick="() => router.push('/main')"></ScreenButton>
     </el-col>
     <el-col :span="20">
       <div class="lcd">
-        <el-scrollbar class="lcd-body">
-          <div class="log-inner">
-            <div v-for="item in store.log" :key="item.id" class="log-line" :class="item.cls">
-              <span class="t">{{ item.t }}</span>{{ item.m }}
+        <div class="lcd-body">
+          <el-scrollbar class="lcd-log">
+            <div class="log-inner">
+              <div v-for="item in store.log" :key="item.id" class="log-line" :class="item.cls">
+                <span class="t">{{ item.t }}</span>{{ item.m }}
+              </div>
             </div>
+          </el-scrollbar>
+          <div class="lcd-row lcd-return">
+            <span>&lt; RETURN</span>
           </div>
-        </el-scrollbar>
+        </div>
       </div>
     </el-col>
     <el-col :span="2" class="screen-right-button">
       <ScreenButton direction="left"></ScreenButton>
       <ScreenButton direction="left"></ScreenButton>
       <ScreenButton direction="left"></ScreenButton>
-      <ScreenButton direction="left" :onClick="() => router.push('/log')"></ScreenButton>
+      <ScreenButton direction="left"></ScreenButton>
     </el-col>
   </el-row>
 </template>
@@ -45,14 +52,40 @@
 
   /* ---------- 日志 ---------- */
 
-
-  .log-inner {
-    padding: 0px 0px;
+  .lcd-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 220px;
   }
+
+  .lcd-log {
+    flex: 3 1 0;
+    min-height: 0;
+    border-bottom: 1px solid #fff;
+  }
+
+  .lcd-return {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: bold;
+    /* color: var(--led-green); */
+    text-shadow: 0 0 6px rgba(53, 255, 154, 0.8);
+    border-bottom: none;
+    cursor: pointer;
+  }
+
+  /* .lcd-return:hover {
+    color: #fff;
+  } */
 
   .log-line {
     font-family: var(--mono);
-    font-size: 9px;
+    font-size: 12px;
     line-height: 1.8;
     color: var(--dim);
     white-space: pre-wrap;

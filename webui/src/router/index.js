@@ -1,11 +1,13 @@
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHashHistory } from "vue-router";
 
+// pywebview 以 file:// 加载构建产物，HTML5 history 模式会抛 SecurityError，
+// 必须使用 hash 模式（如 #/main、#/log）才能兼容。
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(),
   routes: [
     {
-        path: "/",
-        redirect: "/main",
+      path: "/",
+      redirect: "/main",
     },
     {
       path: "/main",
@@ -20,6 +22,10 @@ const router = createRouter({
       components: {
         screen: () => import("../components/Screen/Log.vue"),
       },
+    },
+    {
+      path: "/:pathMatch(.*)*",
+      redirect: "/main",
     },
   ],
 });

@@ -64,8 +64,8 @@
                                 </el-row>
                             </el-col>
                             <el-col :span="4" style="border-right: 1px solid #fff"></el-col>
-                            <el-col :span="8">
-                                <!-- <LogPane></LogPane> -->
+                            <el-col :span="8" class="msg" @click="router.push('/log')">
+                                <span v-if="store.newMsg" class="new-msg">NEW MSG</span>
                             </el-col>
                         </el-row>
                     </el-col>
@@ -104,5 +104,30 @@
         font-size: 20px;
         color: var(--led-green);
         text-shadow: 0 0 6px rgba(53, 255, 154, 0.8);
+    }
+
+    .msg {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+    }
+
+    .new-msg {
+        font-size: 14px;
+        font-weight: bold;
+        letter-spacing: 1px;
+        animation: msg-blink 1s linear infinite;
+    }
+
+    @keyframes msg-blink {
+        0%, 49% {
+            color: var(--led-amber);
+            text-shadow: 0 0 6px rgba(255, 201, 94, 0.8);
+        }
+        50%, 100% {
+            color: #fff;
+            text-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+        }
     }
 </style>
