@@ -2,7 +2,6 @@
   import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop, doConnect, doDisconnect } from '../store.js'
   import { winMin, winClose } from '../store.js'
   import ScreenButton from './RMP/ScreenButton.vue'
-  import Screen from './RMP/Screen.vue'
   import ScreenStatusLight from './RMP/ScreenStatusLight.vue'
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'CLR']
   const knobs = ['VOL', 'BRIGHT', 'FREQ', 'HDG/CRS']
@@ -25,23 +24,9 @@
         </div>
       </el-col>
       <el-col :span="24">
-        <el-row :gutter="10">
-          <el-col :span="2" class="screen-left-button">
-            <ScreenButton direction="right"></ScreenButton>
-            <ScreenButton direction="right"></ScreenButton>
-            <ScreenButton direction="right"></ScreenButton>
-            <ScreenButton direction="right"></ScreenButton>
-          </el-col>
-          <el-col :span="20">
-            <Screen></Screen>
-          </el-col>
-          <el-col :span="2" class="screen-right-button">
-            <ScreenButton direction="left"></ScreenButton>
-            <ScreenButton direction="left"></ScreenButton>
-            <ScreenButton direction="left"></ScreenButton>
-            <ScreenButton direction="left" :onClick="router.push('/log')"></ScreenButton>
-          </el-col>
-        </el-row>
+        <router-view v-slot="{ Component }" name="screen">
+          <component :is="Component" />
+        </router-view>
       </el-col>
       <el-col :span="2"></el-col>
       <el-col :span="20" style="margin-top: 5px">
@@ -93,17 +78,6 @@
 </template>
 
 <style scoped>
-
-  .screen-left-button,
-  .screen-right-button {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    align-items: center;
-    min-height: 220px;
-    padding: 6px 0;
-  }
-
   .rmp-status-light-group {
     display: flex;
     justify-content: space-between;
