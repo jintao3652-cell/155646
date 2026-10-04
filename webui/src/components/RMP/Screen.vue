@@ -1,5 +1,6 @@
 <script setup>
     import { store } from "../../store.js";
+    import LogPane from "../LogPane.vue";
 </script>
 
 <template>
@@ -8,22 +9,22 @@
             <el-col :span="24" class="lcd-row">
                 <el-row>
                     <el-col :span="8"><span class="freq">199.998</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq">VHF1</span></el-col>
-                    <el-col :span="8"><span class="freq">199.998</span></el-col>
+                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">VHF1</span></el-col>
+                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">199.998</span></el-col>
                 </el-row>
             </el-col>
             <el-col :span="24" class="lcd-row">
                 <el-row>
                     <el-col :span="8"><span class="freq">199.998</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq">VHF2</span></el-col>
-                    <el-col :span="8"><span class="freq">199.998</span></el-col>
+                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">VHF2</span></el-col>
+                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">199.998</span></el-col>
                 </el-row>
             </el-col>
             <el-col :span="24" class="lcd-row">
                 <el-row>
                     <el-col :span="8"><span class="freq">DATA</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq">VHF3</span></el-col>
-                    <el-col :span="8"><span class="freq">121.500</span></el-col>
+                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">VHF3</span></el-col>
+                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">121.500</span></el-col>
                 </el-row>
             </el-col>
             <el-col :span="24" class="lcd-row" style="border-bottom: none">
@@ -48,7 +49,9 @@
                         </el-row>
                     </el-col>
                     <el-col :span="4" style="border-right: 1px solid #fff"></el-col>
-                    <el-col :span="8"></el-col>
+                    <el-col :span="8">
+                        <!-- <LogPane></LogPane> -->
+                    </el-col>
                 </el-row>
             </el-col>
         </el-row>
@@ -67,6 +70,7 @@
 
     .lcd {
         height: 100%;
+        min-width: 220px;
         flex: 1 1 auto;
         min-width: 0;
         background: var(--lcd-bg);
@@ -144,9 +148,14 @@
     }
 
     .freq {
-        font-size: 22px;
+        font-size: 27px;
         font-weight: bold;
         color: var(--led-white);
+        text-shadow: 0 0 6px rgba(53, 255, 154, 0.8);
+    }
+
+    .freq.stby {
+        font-size: 20px;
         text-shadow: 0 0 6px rgba(53, 255, 154, 0.8);
     }
 
