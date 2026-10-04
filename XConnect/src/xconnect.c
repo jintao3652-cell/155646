@@ -414,6 +414,7 @@ static void build_flight_data(char* out, int size) {
         "\"com1_freq\":%ld,\"com2_freq\":%ld,"
         "\"transponder\":%d,\"squark\":\"%s\",\"gear_deploy\":%.2f,"
         "\"flaps_ratio\":%.2f,\"throttle_ratio\":%.2f}",
+        icao,
         dref_float(g_drefs[DR_LAT]), dref_float(g_drefs[DR_LON]),
         dref_float(g_drefs[DR_ELEV]) * 3.28084,
         dref_float(g_drefs[DR_AGL]) * 3.28084,
