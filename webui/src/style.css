@@ -129,43 +129,7 @@ html, body, #app.frameless-shell {
   letter-spacing: 1px; padding-top: 4px;
 }
 
-/* --- LCD + 环形导航键 --- */
-.lcd-zone { display: flex; align-items: center; justify-content: center; gap: 10px; }
 
-.lcd {
-  flex: 1 1 auto;
-  min-width: 0;
-  background: var(--lcd-bg);
-  border: 2px solid var(--lcd-border);
-  border-radius: 6px;
-  box-shadow: inset 0 0 14px rgba(0, 0, 0, .9),
-              0 0 10px rgba(30, 160, 90, .15);
-  padding: 8px 10px;
-  font-family: var(--mono);
-}
-.lcd-head {
-  display: flex; justify-content: space-between;
-  font-size: 9px; letter-spacing: 1px;
-  color: var(--led-green-dim);
-  border-bottom: 1px solid #0c1811;
-  padding-bottom: 4px; margin-bottom: 6px;
-}
-.lcd-head .lcd-sub { color: #2a7a4c; }
-.lcd-body { display: flex; flex-direction: column; gap: 8px; }
-.lcd-row { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
-.lcd-row .k { font-size: 9px; color: var(--led-green-dim); letter-spacing: 1px; width: 40px; }
-.lcd-row .dimk { color: #1f6b40; }
-.lcd-row .v {
-  font-size: 16px; color: var(--led-green);
-  text-shadow: 0 0 6px rgba(53, 255, 154, .8);
-}
-.lcd-row .v.big { font-size: 22px; }
-.lcd-row .standby {
-  font-size: 9px; color: var(--led-cyan);
-  border: 1px solid #12404f; border-radius: 2px;
-  padding: 0 4px; margin-left: 2px;
-}
-.lcd-row.alt-row .v { font-size: 14px; }
 
 /* --- 环形导航键（橡胶圆钮） --- */
 .ring { display: grid; grid-template-columns: repeat(2, 34px); gap: 4px; }

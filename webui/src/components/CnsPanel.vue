@@ -1,60 +1,61 @@
 <script setup>
-import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop } from '../store.js'
-
-const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'CLR']
-const knobs = ['VOL', 'BRIGHT', 'FREQ', 'HDG/CRS']
+  import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop } from '../store.js'
+  import ScreenButton from './RMP/ScreenButton.vue'
+  import Screen from './RMP/Screen.vue'
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'CLR']
+  const knobs = ['VOL', 'BRIGHT', 'FREQ', 'HDG/CRS']
 </script>
 
 <template>
   <section class="cns">
+    <el-row>
+      <el-col :span="24"></el-col>
+      <el-col :span="24">
+        <el-row>
+          <el-col :span="2" class="screen-left-button">
+            <el-row>
+              <el-col :span="24">
+                <ScreenButton direction="right" class="screen-left"></ScreenButton>
+              </el-col>
+              <el-col :span="24">
+                <ScreenButton direction="right"></ScreenButton>
+              </el-col>
+              <el-col :span="24">
+                <ScreenButton direction="right"></ScreenButton>
+              </el-col>
+              <el-col :span="24">
+                <ScreenButton direction="right"></ScreenButton>
+              </el-col>
+            </el-row>
+          </el-col>
+          <el-col :span="20">
+            <Screen></Screen>
+          </el-col>
+          <el-col :span="2" class="screen-right-button">
+            <el-row>
+              <el-col :span="24">
+                <ScreenButton direction="left"></ScreenButton>
+              </el-col>
+              <el-col :span="24">
+                <ScreenButton direction="left"></ScreenButton>
+              </el-col>
+              <el-col :span="24">
+                <ScreenButton direction="left"></ScreenButton>
+              </el-col>
+              <el-col :span="24">
+                <ScreenButton direction="left"></ScreenButton>
+              </el-col>
+            </el-row>
+          </el-col>
+        </el-row>
+      </el-col>
+    </el-row>
     <div class="cns-brand"><b>XFLY</b>SIM<span class="ver">CNS</span></div>
 
     <!-- LCD + 环形导航键 -->
     <div class="lcd-zone">
-      <div class="ring ring-left">
-        <button class="rbtn" title="上" @click="scrollLog(-1)"><i class="fa-solid fa-chevron-up"></i></button>
-        <button class="rbtn" title="左" @click="noop"><i class="fa-solid fa-chevron-left"></i></button>
-        <button class="rbtn" title="右" @click="noop"><i class="fa-solid fa-chevron-right"></i></button>
-        <button class="rbtn" title="下" @click="scrollLog(1)"><i class="fa-solid fa-chevron-down"></i></button>
-      </div>
 
-      <div class="lcd">
-        <div class="lcd-head">
-          <span>FREQ CONTROL</span>
-          <span class="lcd-sub">XFLYSIM · {{ store.callsign || 'NO CALLSIGN' }}</span>
-        </div>
-        <div class="lcd-body">
-          <div class="lcd-row">
-            <span class="k">COM1</span>
-            <span class="v big">{{ store.st.com1 }}</span>
-            <span class="standby">STBY</span>
-            <span class="v">{{ store.st.com2 }}</span>
-            <span class="k dimk">VHF1</span>
-          </div>
-          <div class="lcd-row">
-            <span class="k">COM2</span>
-            <span class="v big">{{ store.st.com2 }}</span>
-            <span class="k dimk">XPDR</span>
-            <span class="v">{{ store.st.xpdr }}</span>
-            <span class="k dimk">{{ store.st.gs }}</span>
-          </div>
-          <div class="lcd-row alt-row">
-            <span class="k">ALT</span>
-            <span class="v">{{ store.st.alt }}</span>
-            <span class="k dimk">FLT</span>
-            <span class="v lcd-sm">{{ store.fsd.text }} · {{ store.xplane.text }}</span>
-            <span class="k dimk">CSL</span>
-            <span class="v lcd-sm">{{ store.csl.text }}</span>
-          </div>
-        </div>
-      </div>
 
-      <div class="ring ring-right">
-        <button class="rbtn" title="上" @click="scrollLog(-1)"><i class="fa-solid fa-chevron-up"></i></button>
-        <button class="rbtn" title="左" @click="noop"><i class="fa-solid fa-chevron-left"></i></button>
-        <button class="rbtn" title="右" @click="noop"><i class="fa-solid fa-chevron-right"></i></button>
-        <button class="rbtn" title="下" @click="scrollLog(1)"><i class="fa-solid fa-chevron-down"></i></button>
-      </div>
     </div>
 
     <!-- 功能键行 -->
@@ -81,3 +82,15 @@ const knobs = ['VOL', 'BRIGHT', 'FREQ', 'HDG/CRS']
     </div>
   </section>
 </template>
+
+<style scoped>
+  .screen-left-button .el-row,
+  .screen-right-button .el-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 35px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+</style>
