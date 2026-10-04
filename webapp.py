@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from collections import deque
 from dataclasses import asdict
 from typing import Optional
@@ -22,9 +23,9 @@ from xfly_client.fsd.session import STATE_ONLINE
 from xfly_client.model import NetworkModel
 from xfly_client.xconnect.client import XConnectClient
 
-WEBUI_URL = "file:///" + os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "webui", "index.html"
-).replace("\\", "/")
+WEBUI_DIR = os.path.dirname(os.path.abspath(__file__))
+WEBUI_DIST = os.path.join(WEBUI_DIR, "webui", "dist", "index.html")
+WEBUI_URL = "file:///" + WEBUI_DIST.replace("\\", "/")
 
 
 def _validate(cfg: AppConfig) -> list[str]:
@@ -154,6 +155,17 @@ class Api:
                             cfg.callsign, cfg.cid.strip(), cfg.password,
                             cfg.real_name, sim_type)
             self._push("log", f"[i] 已发送登录请求，呼号 {cfg.callsign}")
+            # 存在已保存的飞行计划 → 连线后自动提交
+            fp = cfg.flight_plan
+            if fp and fp.get("dest") and model.fsd:
+                try:
+                    time.sleep(1.0)  # 等待服务器完成 #AP 认证
+                    self._send_flight_plan(model.fsd, fp)
+                    self._push("log",
+                               f"[i] 已自动提交已保存飞行计划 "
+                               f"({fp.get('dep', '')}→{fp.get('dest', '')})")
+                except Exception as exc:
+                    self._push("sys", f"自动提交飞行计划失败: {exc}")
 
         threading.Thread(target=worker, daemon=True).start()
         return {"ok": True}
@@ -218,32 +230,42 @@ class Api:
             return {"ok": True}
         return {"ok": False, "error": "未连接"}
 
+    _FP_KEYS = ("type", "aircraft", "cruise_speed", "cruise_alt", "dep",
+                "dest", "alt", "plan_time", "actual_time", "enroute_h",
+                "enroute_m", "fuel_h", "fuel_m", "remarks", "route")
+
+    def _send_flight_plan(self, fsd, fp: dict) -> None:
+        fsd.send_flight_plan(
+            flight_type=str(fp.get("type", "I")).upper(),
+            aircraft=str(fp.get("aircraft") or self._cfg.aircraft_icao).upper(),
+            cruise_speed=str(fp.get("cruise_speed", "450")),
+            dep_airport=str(fp.get("dep", "")).upper(),
+            plan_time=str(fp.get("plan_time", "0000")),
+            actual_time=str(fp.get("actual_time", "0000")),
+            cruise_alt=str(fp.get("cruise_alt", "FL350")).upper(),
+            dest_airport=str(fp.get("dest", "")).upper(),
+            enroute_h=int(fp.get("enroute_h", 0)),
+            enroute_m=int(fp.get("enroute_m", 0)),
+            fuel_h=int(fp.get("fuel_h", 0)),
+            fuel_m=int(fp.get("fuel_m", 0)),
+            alt_airport=str(fp.get("alt", "")).upper(),
+            remarks=str(fp.get("remarks", "")),
+            route=str(fp.get("route", "")).upper(),
+        )
+
     def submit_flight_plan(self, d: dict) -> dict:
-        """提交飞行计划（$FP）。"""
+        """提交飞行计划（$FP），并保存到本地配置供下次连线自动提交。"""
         model = self._model
         if not (model and model.fsd):
             return {"ok": False, "error": "未连线"}
         try:
-            model.fsd.send_flight_plan(
-                flight_type=str(d.get("type", "I")).upper(),
-                aircraft=str(d.get("aircraft") or self._cfg.aircraft_icao).upper(),
-                cruise_speed=str(d.get("cruise_speed", "450")),
-                dep_airport=str(d.get("dep", "")).upper(),
-                plan_time=str(d.get("plan_time", "0000")),
-                actual_time=str(d.get("actual_time", "0000")),
-                cruise_alt=str(d.get("cruise_alt", "FL350")).upper(),
-                dest_airport=str(d.get("dest", "")).upper(),
-                enroute_h=int(d.get("enroute_h", 0)),
-                enroute_m=int(d.get("enroute_m", 0)),
-                fuel_h=int(d.get("fuel_h", 0)),
-                fuel_m=int(d.get("fuel_m", 0)),
-                alt_airport=str(d.get("alt", "")).upper(),
-                remarks=str(d.get("remarks", "")),
-                route=str(d.get("route", "")).upper(),
-            )
-            return {"ok": True}
+            self._send_flight_plan(model.fsd, d)
         except ValueError:
             return {"ok": False, "error": "计划字段格式错误（时/分需为数字）"}
+        # 提交成功后保存本地
+        self._cfg.flight_plan = {k: d[k] for k in self._FP_KEYS if k in d}
+        save_config(self._cfg)
+        return {"ok": True, "saved": True}
 
     # ---------- 状态 ----------
 
@@ -265,6 +287,35 @@ class Api:
             "players": players,
         }
 
+    # ---------- 窗口控制（frameless 自绘标题栏） ----------
+
+    def move_by(self, dx: int, dy: int) -> None:
+        """拖拽移动窗口（标题栏拖动）。"""
+        try:
+            w = webview.windows[0]
+            w.move(int(w.x + dx), int(w.y + dy))
+        except Exception:
+            pass
+
+    def win_minimize(self) -> None:
+        try:
+            webview.windows[0].minimize()
+        except Exception:
+            pass
+
+    def win_maximize(self) -> None:
+        """切换最大化/还原。"""
+        try:
+            webview.windows[0].toggle_fullscreen()
+        except Exception:
+            pass
+
+    def win_close(self) -> None:
+        try:
+            webview.windows[0].destroy()
+        except Exception:
+            pass
+
     def close(self) -> None:
         """应用退出：断开 FSD 并停止插件监听。"""
         model, self._model = self._model, None
@@ -276,6 +327,13 @@ class Api:
 def run_web(debug: bool = False) -> None:
     from _noise import suppress_noise
     suppress_noise()
+    if not os.path.exists(WEBUI_DIST):
+        print(f"[!] 未找到前端构建产物：\n    {WEBUI_DIST}\n"
+              "    请先构建：\n"
+              "        cd webui\n"
+              "        npm install\n"
+              "        npm run build")
+        raise SystemExit(1)
     api = Api()
     try:
         webview.create_window(
@@ -283,6 +341,7 @@ def run_web(debug: bool = False) -> None:
             WEBUI_URL,
             width=980, height=460, resizable=True,
             js_api=api, background_color="#16181c",
+            frameless=True,
             confirm_close=True)
         webview.start(debug=debug)
     finally:

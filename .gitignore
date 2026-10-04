@@ -1,0 +1,4 @@
+webui/node_modules/
+webui/dist/
+webui/.kilo/
+.kilo/

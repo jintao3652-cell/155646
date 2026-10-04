@@ -1,0 +1,310 @@
+/* XFlySim-Client — CNS 航空电子面板风格（仿 Winwing GNS430）
+ * 深灰塑料机身、LED 绿字 LCD、黄色背光按键、圆形橡胶键、旋钮 */
+:root {
+  --panel-bg: #2b2d2f;
+  --panel-hi: #34373a;
+  --panel-line: #202224;
+  --btn-face: #3a3d40;
+  --btn-edge: #1c1e20;
+  --led-green: #35ff9a;
+  --led-green-dim: #0f8f52;
+  --led-amber: #ffc95e;
+  --led-cyan: #4fd8ff;
+  --lcd-bg: #040706;
+  --lcd-border: #0e1a14;
+  --text: #e6e9ed;
+  --dim: #8b95a1;
+  --accent: #2d7ff9;
+  --bad: #e2544e;
+  --mono: Consolas, "Cascadia Mono", "Microsoft YaHei", monospace;
+
+  /* Element Plus 暗色变量 */
+  --el-color-primary: #2d7ff9;
+  --el-color-danger: #e2544e;
+  --el-color-success: #4fc17f;
+  --el-color-warning: #e6b450;
+  --el-bg-color: #232528;
+  --el-bg-color-overlay: #2b2e31;
+  --el-fill-color-blank: #232528;
+  --el-fill-color-light: #2b2e31;
+  --el-fill-color-lighter: #303336;
+  --el-fill-color: #2b2e31;
+  --el-border-color: #3c4043;
+  --el-border-color-light: #36393c;
+  --el-border-color-lighter: #2f3235;
+  --el-text-color-primary: #e6e9ed;
+  --el-text-color-regular: #c7cdd5;
+  --el-text-color-secondary: #9aa3af;
+  --el-text-color-placeholder: #6b7681;
+  --el-input-bg-color: #303336;
+  --el-input-text-color: #e6e9ed;
+  --el-input-border-color: #3c4043;
+  --el-input-placeholder-color: #6b7681;
+  --el-mask-color: rgba(8, 10, 11, .7);
+  --el-dialog-bg-color: #232528;
+}
+
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app.frameless-shell {
+  height: 100%;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 13px;
+  background: #16181a;
+  color: var(--text);
+  overflow: hidden;
+}
+
+.mono { font-family: var(--mono); }
+
+/* ---------- 自绘标题栏 ---------- */
+.titlebar {
+  display: flex; align-items: center; gap: 10px;
+  height: 32px; padding: 0 8px 0 10px;
+  background: var(--panel-line);
+  border-bottom: 1px solid #16181a;
+  cursor: default; flex: 0 0 auto;
+}
+.titlebar .brand {
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--accent), #1f5fd0);
+  color: #fff; font-size: 9px; font-weight: 700;
+}
+.titlebar .title { font-size: 11px; color: var(--dim); }
+.win-btns { margin-left: auto; display: flex; gap: 4px; }
+.win-btns .wb {
+  width: 28px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: 3px;
+  color: var(--dim); cursor: pointer; font-size: 11px;
+}
+.win-btns .wb:hover { background: #2f3336; color: var(--text); }
+.win-btns .wb.close:hover { background: #c42f2f; color: #fff; }
+
+/* ---------- 工具栏 ---------- */
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  background: var(--panel-line);
+  border-bottom: 1px solid #16181a;
+  flex: 0 0 auto;
+}
+.fields { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.f-1 { width: 120px; }
+.f-2 { width: 96px; }
+.f-sim { width: 82px; }
+.btn-connect { flex: 0 0 auto; }
+.tb-tags { margin-left: auto; display: flex; gap: 6px; }
+.tb-tags .el-tag { border: none; }
+
+/* ---------- 左右布局 ---------- */
+.workspace {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* ================= CNS 面板 ================= */
+.cns {
+  flex: 0 0 auto;
+  width: 420px;
+  padding: 12px 16px 14px;
+  background:
+    linear-gradient(180deg, var(--panel-hi) 0%, var(--panel-bg) 100%);
+  border-right: 1px solid var(--panel-line);
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto;
+}
+
+.cns-brand {
+  font-size: 13px; letter-spacing: 3px; color: var(--text);
+  text-align: center;
+}
+.cns-brand b { color: #fff; }
+.cns-brand .ver {
+  float: right; font-size: 9px; color: var(--led-amber);
+  letter-spacing: 1px; padding-top: 4px;
+}
+
+/* --- LCD + 环形导航键 --- */
+.lcd-zone { display: flex; align-items: center; justify-content: center; gap: 10px; }
+
+.lcd {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--lcd-bg);
+  border: 2px solid var(--lcd-border);
+  border-radius: 6px;
+  box-shadow: inset 0 0 14px rgba(0, 0, 0, .9),
+              0 0 10px rgba(30, 160, 90, .15);
+  padding: 8px 10px;
+  font-family: var(--mono);
+}
+.lcd-head {
+  display: flex; justify-content: space-between;
+  font-size: 9px; letter-spacing: 1px;
+  color: var(--led-green-dim);
+  border-bottom: 1px solid #0c1811;
+  padding-bottom: 4px; margin-bottom: 6px;
+}
+.lcd-head .lcd-sub { color: #2a7a4c; }
+.lcd-body { display: flex; flex-direction: column; gap: 8px; }
+.lcd-row { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.lcd-row .k { font-size: 9px; color: var(--led-green-dim); letter-spacing: 1px; width: 40px; }
+.lcd-row .dimk { color: #1f6b40; }
+.lcd-row .v {
+  font-size: 16px; color: var(--led-green);
+  text-shadow: 0 0 6px rgba(53, 255, 154, .8);
+}
+.lcd-row .v.big { font-size: 22px; }
+.lcd-row .standby {
+  font-size: 9px; color: var(--led-cyan);
+  border: 1px solid #12404f; border-radius: 2px;
+  padding: 0 4px; margin-left: 2px;
+}
+.lcd-row.alt-row .v { font-size: 14px; }
+
+/* --- 环形导航键（橡胶圆钮） --- */
+.ring { display: grid; grid-template-columns: repeat(2, 34px); gap: 4px; }
+.rbtn {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: radial-gradient(circle at 35% 30%, var(--btn-hi, #4a4e52), var(--btn-face) 70%, var(--btn-edge));
+  color: var(--led-amber);
+  font-size: 12px;
+  box-shadow: 0 3px 0 var(--btn-edge), inset 0 1px 1px rgba(255, 255, 255, .18);
+  cursor: pointer;
+}
+.rbtn:hover { filter: brightness(1.25); }
+.rbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--btn-edge); }
+
+/* --- 功能键行 --- */
+.fn-row { display: flex; gap: 8px; }
+.fn {
+  flex: 1;
+  height: 30px;
+  border-radius: 5px;
+  border: none;
+  background: linear-gradient(180deg, #3e4246, #33363a);
+  color: var(--led-amber);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .5px;
+  box-shadow: 0 2px 0 #1c1e20, inset 0 1px 1px rgba(255, 255, 255, .12);
+  cursor: pointer;
+  text-shadow: 0 0 4px rgba(255, 201, 94, .35);
+}
+.fn:hover { filter: brightness(1.2); }
+.fn:active { transform: translateY(1px); box-shadow: 0 1px 0 #1c1e20; }
+
+/* --- 数字键盘 --- */
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.key {
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: radial-gradient(circle at 35% 30%, #45494d, var(--btn-face) 70%, var(--btn-edge));
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  box-shadow: 0 3px 0 var(--btn-edge), inset 0 1px 1px rgba(255, 255, 255, .15);
+  cursor: pointer;
+}
+.key:hover { filter: brightness(1.2); }
+.key:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--btn-edge); }
+
+/* --- 旋钮行 --- */
+.knob-row { display: flex; justify-content: space-around; padding-top: 4px; }
+.knob-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.knob {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  position: relative;
+  background:
+    repeating-conic-gradient(#3f4347 0deg 8deg, #303335 8deg 16deg);
+  border: 3px solid #222426;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, .6), inset 0 1px 1px rgba(255, 255, 255, .15);
+}
+.knob .tick {
+  position: absolute; top: 2px; left: 50%;
+  width: 2px; height: 8px; margin-left: -1px;
+  background: var(--led-amber);
+  border-radius: 1px;
+}
+.knob-label {
+  font-size: 8px; color: var(--led-amber);
+  letter-spacing: .5px; text-align: center;
+}
+
+/* ---------- 日志 ---------- */
+.log-pane { flex: 1 1 auto; min-width: 0; height: 100%; }
+.log-inner { padding: 8px 14px; }
+.log-line {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.8;
+  color: var(--dim); white-space: pre-wrap; word-break: break-all;
+}
+.log-line .t { color: #3c444c; margin-right: 8px; }
+.log-line.in { color: #7fd6a6; }
+.log-line.out { color: #b9a88e; }
+.log-line.err { color: var(--bad); }
+.log-line.txt { color: #6fd38a; }
+
+/* Element Plus 滚动条 */
+.el-scrollbar__bar.is-vertical { width: 8px; right: 2px; }
+.el-scrollbar__bar.is-horizontal { height: 8px; bottom: 2px; }
+.el-scrollbar__thumb { background: #3d444d; opacity: .8; border-radius: 4px; }
+.el-scrollbar__thumb:hover { background: #4c545f; }
+
+/* ---------- 消息 ---------- */
+.msg-scroll { height: 100%; }
+.msg-list { padding: 0 4px; user-select: text; font-size: 12.5px; line-height: 1.8; }
+.msg-list .m b { color: var(--accent); }
+.msg-list .m.sent b { color: var(--warn); }
+.msg-input-row { display: flex; gap: 8px; }
+.msg-input-row .msg-to { width: 150px; flex: 0 0 auto; }
+.msg-input-row .el-input { flex: 1 1 auto; }
+.el-drawer { background: var(--panel-bg); }
+
+/* ---------- 表单面板 ---------- */
+.fp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px; overflow-y: auto;
+}
+.fp-grid fieldset {
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px; padding: 10px 12px; background: var(--panel-line);
+}
+.fp-grid legend { color: var(--dim); font-size: 11px; padding: 0 6px; }
+.fp-grid label { display: block; margin: 8px 0; font-size: 12px; color: var(--dim); }
+.fp-grid .el-input, .fp-grid .el-select { display: flex; margin-top: 3px; }
+.fp-grid .el-checkbox { display: flex; margin-top: 10px; }
+.fp-grid .hhmm { display: flex; gap: 8px; margin-top: 3px; }
+.fp-grid .hhmm .el-input-number { flex: 1 1 0; }
+.fp-route { margin-top: 10px; }
+.fp-route fieldset {
+  border: 1px solid var(--el-border-color); border-radius: 6px;
+  padding: 10px 12px; background: var(--panel-line);
+}
+.fp-route legend { color: var(--dim); font-size: 11px; padding: 0 6px; }
+.fp-route label { display: block; font-size: 12px; color: var(--dim); }
+.fp-route .el-input { display: flex; margin-top: 3px; }
+.tip { font-size: 11px; color: var(--warn); margin-top: 8px; line-height: 1.5; }
+
+/* ---------- 自适应 ---------- */
+@media (max-width: 900px) {
+  .cns { width: 360px; }
+}
+@media (max-width: 700px) {
+  .workspace { flex-direction: column; }
+  .cns { width: 100%; border-right: none; border-bottom: 1px solid var(--panel-line); }
+  .log-pane { flex: 1 1 auto; }
+}
