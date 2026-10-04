@@ -1,7 +1,7 @@
 """XFlySim-Client pywebview 应用入口：HTML/CSS/JS 界面。
 
 后端：NetworkModel（FSD + X-Plane UDP），通过 pywebview js_api 暴露给前端。
-前端轮询 api.pull() 拉取事件（日志/文本/飞行数据/状态），避免跨线程 evaluate_js。
+前端回调 pollEvent 用 api.pull() 拉取事件（日志/文本/飞行数据/状态），避免跨线程 evaluate_js。
 
 运行：python webapp.py
 """
@@ -72,19 +72,18 @@ class Api:
         self._push("xconnect", "waiting")
         self._xconnect.start()  # 持续重连，直到插件上线
 
-    # ---------- 事件推送（前端轮询） ----------
+    # ---------- 事件推送（前端回调） ----------
 
     def _push(self, event: str, payload) -> None:
         self._events.append((event, payload))
+        if len(webview.windows):
+            webview.windows[0].evaluate_js("pollEvent()")
 
     def pull(self) -> list[dict]:
         out: list[dict] = []
-        try:
-            while self._events:
-                e, p = self._events.popleft()
-                out.append({"event": e, "data": p})
-        except IndexError:
-            pass
+        while self._events:
+            e, p = self._events.popleft()
+            out.append({"event": e, "data": p})
         return out
 
     # ---------- 设置 ----------
@@ -145,6 +144,7 @@ class Api:
         model.on_xconnect_disconnected = lambda: self._push("xconnect", "disconnected")
         model.on_plugin_message = self._on_plugin_message
         model.on_csl_status = lambda d: self._push("csl", d)
+        model.on_fsd_state_changed = lambda _: self._push("fsdstate", self.status())
 
         sim_type = self._sim_type
         cfg = self._cfg
@@ -289,14 +289,6 @@ class Api:
 
     # ---------- 窗口控制（frameless 自绘标题栏） ----------
 
-    def move_by(self, dx: int, dy: int) -> None:
-        """拖拽移动窗口（标题栏拖动）。"""
-        try:
-            w = webview.windows[0]
-            w.move(int(w.x + dx), int(w.y + dy))
-        except Exception:
-            pass
-
     def win_minimize(self) -> None:
         try:
             webview.windows[0].minimize()
@@ -341,7 +333,7 @@ def run_web(debug: bool = False) -> None:
             WEBUI_URL,
             width=980, height=460, resizable=True,
             js_api=api, background_color="#16181c",
-            frameless=True,
+            frameless=True, easy_drag=False,
             confirm_close=True)
         webview.start(debug=debug)
     finally:

@@ -79,6 +79,7 @@ class NetworkModel:
         self.on_xconnect_disconnected: Optional[Callable[[], None]] = None
         self.on_plugin_message: Optional[Callable[[dict], None]] = None
         self.on_csl_status: Optional[Callable[[dict], None]] = None
+        self.on_fsd_state_changed: Optional[Callable[[str], None]] = None
 
         self._stop = threading.Event()
         self._gc_thread = threading.Thread(
@@ -154,6 +155,7 @@ class NetworkModel:
         session.on_metar_received = lambda m: self.on_metar_received and \
             self.on_metar_received(m)
         session.on_socket_down_event = self._on_fsd_socket_down
+        session.on_state_changed = self._on_fsd_state_change
 
         self.fsd = session
         session.connect()
@@ -179,6 +181,10 @@ class NetworkModel:
             self._clear_roster()
             if self.on_fsd_unexpected_disconnect:
                 self.on_fsd_unexpected_disconnect()
+
+    def _on_fsd_state_change(self, state: str) -> None:
+        if self.on_fsd_state_changed is not None:
+            self.on_fsd_state_changed(state)
 
     def _clear_roster(self) -> None:
         with self._gate:
