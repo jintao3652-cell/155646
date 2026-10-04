@@ -1,9 +1,11 @@
 <script setup>
   import { nextTick, onMounted, watch } from 'vue'
+  import { useI18n } from 'vue-i18n'
   import { store, clearNewMsg } from "../../store.js";
   import router from '@/router'
 
   import ScreenButton from '@/components/RMP/ScreenButton.vue'
+  const { t } = useI18n()
   // 日志追加时滚动到底部
   watch(() => store.log.length, async () => {
     await nextTick()
@@ -33,7 +35,7 @@
             </div>
           </el-scrollbar>
           <div class="lcd-row lcd-return">
-            <span>&lt; RETURN</span>
+            <span>&lt; {{ t('settings.lblReturn') }}</span>
           </div>
         </div>
       </div>

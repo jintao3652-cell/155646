@@ -64,7 +64,7 @@
                                 </el-row>
                             </el-col>
                             <el-col :span="4" style="border-right: 1px solid #fff"></el-col>
-                            <el-col :span="8" class="msg" @click="router.push('/log')">
+                            <el-col :span="8" class="msg">
                                 <span v-if="store.newMsg" class="new-msg">NEW MSG</span>
                             </el-col>
                         </el-row>
@@ -110,7 +110,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        cursor: pointer;
     }
 
     .new-msg {

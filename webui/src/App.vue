@@ -14,8 +14,8 @@ onMounted(start)
 
 <template>
   <div id="app" class="frameless-shell">
-    <TitleBar />
-    <Toolbar />
+    <!-- <TitleBar />
+    <Toolbar /> -->
 
     <div class="workspace">
       <CnsPanel />

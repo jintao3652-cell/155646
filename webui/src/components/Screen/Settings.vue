@@ -1,7 +1,9 @@
 <script setup>
+  import { useI18n } from 'vue-i18n'
   import router from '@/router'
 
   import ScreenButton from '@/components/RMP/ScreenButton.vue'
+  const { t } = useI18n()
 </script>
 
 <template>
@@ -16,23 +18,23 @@
       <div class="lcd">
         <div class="lcd-body">
           <div class="lcd-row lcd-item">
-            <span class="lbl"><span class="arrow">&lt;</span>ACCOUNT</span>
-            <span class="lbl">SERVER<span class="arrow">&gt;</span></span>
+            <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblAccount') }}</span>
+            <span class="lbl">{{ t('settings.lblServer') }}<span class="arrow">&gt;</span></span>
           </div>
           <div class="lcd-row lcd-item">
-            <span class="lbl"><span class="arrow">&lt;</span>LOGIN INFO</span>
-            <span class="lbl">LANGUAGE<span class="arrow">&gt;</span></span>
+            <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblLoginInfo') }}</span>
+            <span class="lbl">{{ t('settings.lblLanguage') }}<span class="arrow">&gt;</span></span>
           </div>
           <div class="lcd-row lcd-item" style="border-bottom: 1px solid #fff"></div>
           <div class="lcd-row lcd-item">
-            <span class="lbl"><span class="arrow">&lt;</span>RETURN</span>
+            <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblReturn') }}</span>
           </div>
         </div>
       </div>
     </el-col>
     <el-col :span="2" class="screen-right-button">
       <ScreenButton direction="left" :onClick="() => router.push('/settings/server')"></ScreenButton>
-      <ScreenButton direction="left"></ScreenButton>
+      <ScreenButton direction="left" :onClick="() => router.push('/settings/language')"></ScreenButton>
       <ScreenButton direction="left"></ScreenButton>
       <ScreenButton direction="left"></ScreenButton>
     </el-col>

@@ -38,6 +38,13 @@ const router = createRouter({
       },
     },
     {
+      path: "/settings/language",
+      name: "language",
+      components: {
+        screen: () => import("../components/Screen/Settings/Language.vue"),
+      },
+    },
+    {
       path: "/settings",
       name: "settings",
       components: {

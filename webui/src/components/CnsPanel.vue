@@ -1,5 +1,5 @@
 <script setup>
-  import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop, doConnect, doDisconnect } from '../store.js'
+  import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop, doConnect, doDisconnect, fsdText, fsdTag, xpText, xpTag, cslText, cslTag, cslTitle } from '../store.js'
   import { winMin, winClose } from '../store.js'
   import router from '@/router'
   import ScreenButton from './RMP/ScreenButton.vue'
@@ -10,19 +10,19 @@
 </script>
 
 <template>
-  <section class="cns">
+  <section class="cns pywebview-drag-region">
     <el-row>
       <el-col :span="24">
         <div class="rmp-status-light-group">
-          <ScreenStatusLight text="FSD" :status="store.fsd.tag" :title="store.fsd.text" :onClick="toggleFsdConnection">
+          <ScreenStatusLight text="FSD" :status="fsdTag" :title="fsdText" :onClick="toggleFsdConnection">
           </ScreenStatusLight>
-          <ScreenStatusLight text="XP" :status="store.xplane.tag" :title="store.xplane.text"></ScreenStatusLight>
-          <ScreenStatusLight text="CSL" :status="store.csl.tag" :title="store.csl.title" :onClick="openSettings">
+          <ScreenStatusLight text="XP" :status="xpTag" :title="xpText"></ScreenStatusLight>
+          <ScreenStatusLight text="CSL" :status="cslTag" :title="cslTitle" :onClick="openSettings">
           </ScreenStatusLight>
           <ScreenStatusLight text="FPL" status="success" :onClick="() => router.push('/settings')"></ScreenStatusLight>
           <ScreenStatusLight text="SET" status="success" :onClick="() => router.push('/settings')"></ScreenStatusLight>
-          <ScreenStatusLight text="MIN" status="success" :onClick="winMin"></ScreenStatusLight>
-          <ScreenStatusLight text="EXIT" status="success" :onClick="winClose"></ScreenStatusLight>
+          <ScreenStatusLight text="MIN" status="info" :onClick="winMin"></ScreenStatusLight>
+          <ScreenStatusLight text="EXIT" status="danger" :onClick="winClose"></ScreenStatusLight>
         </div>
       </el-col>
       <el-col :span="24">

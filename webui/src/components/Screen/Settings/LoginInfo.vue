@@ -1,13 +1,13 @@
 <script setup>
     import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+    import { useI18n } from 'vue-i18n'
     import router from '@/router'
     import { store, saveAccountSettings } from '../../../store.js'
 
     import ScreenButton from '@/components/RMP/ScreenButton.vue'
+    const { t } = useI18n()
 
     const buf = ref('')
-
-    const pwdMask = computed(() => '•'.repeat(Math.max(4, store.set.password.length)))
 
     function commitCallsign() {
         if (!buf.value) return
@@ -52,14 +52,14 @@
                 <div class="lcd-body">
                     <div class="lcd-row lcd-form">
                         <div class="field">
-                            <label class="lbl">CALLSIGN</label>
+                            <label class="lbl">{{ t('settings.lblCallsign') }}</label>
                             <div v-if="store.set.callsign" class="val">{{ store.set.callsign }}</div>
                             <div v-else class="cells">
                                 <span v-for="n in 7" :key="n" class="cell"></span>
                             </div>
                         </div>
                         <div class="field right">
-                            <label class="lbl">AIRLINE</label>
+                            <label class="lbl">{{ t('settings.lblAirline') }}</label>
                             <div v-if="store.set.airline" class="val">{{ store.set.airline }}</div>
                             <div v-else class="cells">
                                 <span v-for="n in 3" :key="n" class="cell"></span>
@@ -73,7 +73,7 @@
                         <span class="lbl">{{ buf }}</span>
                     </div>
                     <div class="lcd-row lcd-item" v-else>
-                        <span class="lbl"><span class="arrow">&lt;</span>RETURN</span>
+                        <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblReturn') }}</span>
                     </div>
                 </div>
             </div>

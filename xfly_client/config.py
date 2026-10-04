@@ -17,6 +17,7 @@ class AppConfig:
     airline_icao: str = ""
     remember_password: bool = True
     debug_mode: bool = False
+    language: str = "en"
     flight_plan: dict | None = None
     server_host: str = "ol.xflysim.com"
     server_port: int = 6809

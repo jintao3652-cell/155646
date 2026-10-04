@@ -1,9 +1,11 @@
 <script setup>
     import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+    import { useI18n } from 'vue-i18n'
     import router from '@/router'
     import { store, saveAccountSettings } from '../../../store.js'
 
     import ScreenButton from '@/components/RMP/ScreenButton.vue'
+    const { t } = useI18n()
 
     const buf = ref('')
 
@@ -51,14 +53,14 @@
                 <div class="lcd-body">
                     <div class="lcd-row lcd-form">
                         <div class="field">
-                            <label class="lbl">ADDRESS</label>
+                            <label class="lbl">{{ t('settings.lblAddress') }}</label>
                             <div v-if="store.set.server_host" class="val">{{ store.set.server_host }}</div>
                             <div v-else class="cells">
                                 <span v-for="n in 8" :key="n" class="cell"></span>
                             </div>
                         </div>
                         <div class="field right">
-                            <label class="lbl">PORT</label>
+                            <label class="lbl">{{ t('settings.lblPort') }}</label>
                             <div v-if="store.set.server_port" class="val">{{ store.set.server_port }}</div>
                             <div v-else class="cells">
                                 <span v-for="n in 4" :key="n" class="cell"></span>
@@ -72,7 +74,7 @@
                         <span class="lbl">{{ buf }}</span>
                     </div>
                     <div class="lcd-row lcd-item" v-else>
-                        <span class="lbl"><span class="arrow">&lt;</span>RETURN</span>
+                        <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblReturn') }}</span>
                     </div>
                 </div>
             </div>
