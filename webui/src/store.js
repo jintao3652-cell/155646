@@ -1,6 +1,7 @@
 /* XFlySim-Client 全局状态与逻辑（Vue3 响应式 store）。
  * 数据来源：pywebview → Api（事件轮询 pull / 直接调用）。 */
 import { reactive } from 'vue'
+import { ElMessage } from 'element-plus'
 
 export const store = reactive({
   api: null,
@@ -33,17 +34,24 @@ export const store = reactive({
 let toastTimer = null
 
 export function message(data, isErr = false) {
-  if (store.api && window.ElementPlus && ElementPlus.ElMessage) {
-    ElementPlus.ElMessage({ message: data, type: isErr ? 'error' : 'success', duration: 2600 })
+  if (store.api) {
+    ElMessage({ message: data, type: isErr ? 'error' : 'success', duration: 2600 })
     return
   }
   // 兜底：无 Element Plus 环境
+  /* toast-fallback not exist??
   const el = document.getElementById('toast-fallback')
   if (el) {
     el.textContent = String(data)
     el.classList.add('show')
     clearTimeout(toastTimer)
     toastTimer = setTimeout(() => el.classList.remove('show'), 2600)
+  }
+  */
+  if (isErr) {
+    addLog(`[消息] ${data}`, 'txt')
+  } else {
+    addLog(`[!] ${data}`, 'err')
   }
 }
 
@@ -59,7 +67,7 @@ export async function initStore() {
 }
 
 /* ---------- 事件轮询 ---------- */
-export async function poll() {
+async function pollEvent() {
   if (!store.api) return
   try {
     const events = await store.api.pull()
@@ -67,20 +75,17 @@ export async function poll() {
   } catch (e) { /* 忽略瞬时桥接错误 */ }
 }
 
-export async function statusTick() {
-  if (!store.api) return
-  try {
-    const s = await store.api.status()
-    switch (s.fsd) {
-      case 'Online': store.fsd = { text: 'ONLINE', tag: 'success' }; break
-      case 'Connecting':
-      case 'WaitLogin': store.fsd = { text: s.fsd.toUpperCase(), tag: 'warning' }; break
-      case 'Disconnected': store.fsd = { text: 'OFFLINE', tag: 'info' }; break
-      default: store.fsd = { text: 'ERROR', tag: 'danger' }; break
-    }
-    store.roster = (s.atc > 0 || s.players > 0) ? `ATC ${s.atc} · PLR ${s.players}` : ''
-    if (s.xconnect) store.xplane = { text: '已发现模拟机', tag: 'success' }
-  } catch (e) { /* 忽略 */ }
+export async function updateStatus(s) {
+  switch (s.fsd) {
+    case 'Online': store.fsd = { text: 'ONLINE', tag: 'success' }; break
+    case 'Connecting':
+    case 'WaitLogin': store.fsd = { text: s.fsd.toUpperCase(), tag: 'warning' }; break
+    case 'Disconnected': store.fsd = { text: 'OFFLINE', tag: 'info' }; break
+    default: store.fsd = { text: 'ERROR', tag: 'danger' }; break
+  }
+  store.roster = (s.atc > 0 || s.players > 0) ? `ATC ${s.atc} · PLR ${s.players}` : ''
+  if (s.xconnect) store.xplane = { text: '已发现模拟机', tag: 'success' }
+
 }
 
 function handleEvent(ev) {
@@ -95,6 +100,7 @@ function handleEvent(ev) {
     case 'csl': setCslStatus(ev.data); break
     case 'xplog': addLog('◂ ' + JSON.stringify(ev.data), 'in'); break
     case 'sys': addLog(`[!] ${ev.data}`, 'err'); break
+    case 'fsdstate': updateStatus(ev.data); break
     case 'disconnected':
       store.connected = false
       addLog('已断开连接', 'in')
@@ -307,25 +313,6 @@ export function scrollLog(dir) {
 }
 
 /* ---------- 窗口控制（frameless） ---------- */
-export function dragStart(e) {
-  if (e.button !== 0) return
-  store._dragging = true
-  store._dragX = e.screenX
-  store._dragY = e.screenY
-}
-
-export function dragMove(e) {
-  if (!store._dragging) return
-  const dx = e.screenX - store._dragX
-  const dy = e.screenY - store._dragY
-  if (dx === 0 && dy === 0) return
-  store._dragX = e.screenX
-  store._dragY = e.screenY
-  if (store.api) store.api.move_by(dx, dy)
-}
-
-export function dragEnd() { store._dragging = false }
-
 export function winMin() { if (store.api) store.api.win_minimize() }
 export function winMax() { if (store.api) store.api.win_maximize() }
 export function winClose() { if (store.api) store.api.win_close() }
@@ -347,8 +334,5 @@ export function start() {
     }
   }, 3000)
 
-  window.addEventListener('mousemove', dragMove)
-  window.addEventListener('mouseup', dragEnd)
-  setInterval(poll, 100)
-  setInterval(statusTick, 1000)
+  window.pollEvent = pollEvent;
 }

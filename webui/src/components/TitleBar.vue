@@ -1,9 +1,9 @@
 <script setup>
-import { store, dragStart, winMin, winMax, winClose } from '../store.js'
+import { store, winMin, winMax, winClose } from '../store.js'
 </script>
 
 <template>
-  <div class="titlebar" @mousedown="dragStart">
+  <div class="titlebar pywebview-drag-region">
     <div class="brand">XF</div>
     <span class="title">XShare - XFlySim Client</span>
     <div class="win-btns" @mousedown.stop>
