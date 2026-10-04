@@ -1,6 +1,7 @@
 /* XFlySim-Client 全局状态与逻辑（Vue3 响应式 store）。
  * 数据来源：pywebview → Api（事件轮询 pull / 直接调用）。 */
 import { reactive } from 'vue'
+import { ElMessage } from 'element-plus'
 
 export const store = reactive({
   api: null,
@@ -33,17 +34,24 @@ export const store = reactive({
 let toastTimer = null
 
 export function message(data, isErr = false) {
-  if (store.api && window.ElementPlus && ElementPlus.ElMessage) {
-    ElementPlus.ElMessage({ message: data, type: isErr ? 'error' : 'success', duration: 2600 })
+  if (store.api) {
+    ElMessage({ message: data, type: isErr ? 'error' : 'success', duration: 2600 })
     return
   }
   // 兜底：无 Element Plus 环境
+  /* toast-fallback not exist??
   const el = document.getElementById('toast-fallback')
   if (el) {
     el.textContent = String(data)
     el.classList.add('show')
     clearTimeout(toastTimer)
     toastTimer = setTimeout(() => el.classList.remove('show'), 2600)
+  }
+  */
+  if (isErr) {
+    addLog(`[消息] ${data}`, 'txt')
+  } else {
+    addLog(`[!] ${data}`, 'err')
   }
 }
 
