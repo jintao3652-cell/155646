@@ -33,7 +33,8 @@
 #define PLAYER_MAX    256
 #define PLAYER_TIMEOUT 30.0   /* 秒 */
 #define DATA_INTERVAL 0.2f   /* 发送间隔：0.2 秒 = 每秒 5 条（5Hz） */
-#define LOOP_INTERVAL 0.05f  /* 主循环节拍 */
+#define LOOP_INTERVAL 0.05f  /* 主循环节拍（有客户端时） */
+#define LOOP_IDLE_INTERVAL 0.5f  /* 空闲降频节拍（无客户端时） */
 
 /* ---------------- 本机飞行数据 dataref ---------------- */
 
@@ -495,7 +496,7 @@ static void update_players(double now) {
         Player* p = &g_players[i];
         if (!p->active) continue;
 
-        /* 超时清理 */
+        /* 超时清理：无活跃玩家时循环体为空，遍历开销可忽略 */
         if (now - p->last_seen > PLAYER_TIMEOUT) {
             csl_release_node(&p->model);
             p->active = 0;
@@ -556,19 +557,26 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
 #ifdef _WIN32
     __try {
 #endif
-        /* 节拍日志：确认飞行循环实际被调用的频率 */
-        if (xc_now_sec() - g_last_loop_log >= 1.0) {
+        /* 节拍日志：确认飞行循环实际被调用的频率（仅首个循环与客户端在场时） */
+        if (counter == 0) {
+            xconnect_logf("loop first frame");
+        } else if (xc_now_sec() - g_last_loop_log >= 5.0) {
             g_last_loop_log = xc_now_sec();
             xconnect_logf("loop tick elapsedMe=%.1f counter=%d",
                           elapsedMe, counter);
         }
-        if (counter == 0) xconnect_logf("loop first frame");
 
         /* 注意：elapsedMe 是"距上次调用间隔"（每次 ~0.1s），不是绝对时间，
-           不可用于节流；用单调时钟 xc_now_sec() 做发送节流。 */
+           不可用于节流；用单调时钟 xc_now_sec() 做发送节流。
+           无客户端时不构建飞行数据：XP12 加载界面同样在跑飞行循环，
+           无条件构建 + 写日志会显著拖慢启动。 */
         {
             double now = xc_now_sec();
-            if (now - g_last_send >= DATA_INTERVAL) {
+            int has_client;
+            LOCK_ENTER(g_sock_lock);
+            has_client = (g_client_sock != NET_INVALID);
+            LOCK_LEAVE(g_sock_lock);
+            if (has_client && now - g_last_send >= DATA_INTERVAL) {
                 int rc;
                 build_flight_data(line, sizeof(line));
                 LOCK_ENTER(g_sock_lock);
@@ -585,13 +593,28 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
         }
 
         update_players(xc_now_sec());
-        refresh_csl_status();
+        /* 无客户端时不推送 CSL 状态（省去 JSON 构建与遍历） */
+        {
+            int has_client;
+            LOCK_ENTER(g_sock_lock);
+            has_client = (g_client_sock != NET_INVALID);
+            LOCK_LEAVE(g_sock_lock);
+            if (has_client) refresh_csl_status();
+        }
 #ifdef _WIN32
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         xconnect_logf("loop crash code=%08x", (unsigned)GetExceptionCode());
     }
 #endif
-    return LOOP_INTERVAL;
+    /* 无客户端时降频到 0.5s，降低加载/空闲时 CPU 与日志开销；
+       客户端在场时保持 0.05s（20Hz 平滑 CSL）。 */
+    {
+        int has_client;
+        LOCK_ENTER(g_sock_lock);
+        has_client = (g_client_sock != NET_INVALID);
+        LOCK_LEAVE(g_sock_lock);
+        return has_client ? LOOP_INTERVAL : LOOP_IDLE_INTERVAL;
+    }
 }
 
 /* ---------------- 插件入口 ---------------- */
