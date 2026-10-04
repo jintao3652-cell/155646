@@ -7,7 +7,6 @@
 
     const buf = ref('')
 
-    const pwdMask = computed(() => '•'.repeat(Math.max(4, store.set.password.length)))
 
     function commitServerHost() {
         if (!buf.value) return
@@ -19,13 +18,6 @@
     function commitServerPort() {
         if (!buf.value) return
         store.set.server_port = buf.value
-        buf.value = ''
-        saveAccountSettings()
-    }
-
-    function commitRealName() {
-        if (!buf.value) return
-        store.set.real_name = buf.value
         buf.value = ''
         saveAccountSettings()
     }

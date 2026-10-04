@@ -21,6 +21,7 @@
           </div>
           <div class="lcd-row lcd-item">
             <span class="lbl"><span class="arrow">&lt;</span>LOGIN INFO</span>
+            <span class="lbl">LANGUAGE<span class="arrow">&gt;</span></span>
           </div>
           <div class="lcd-row lcd-item" style="border-bottom: 1px solid #fff"></div>
           <div class="lcd-row lcd-item">
