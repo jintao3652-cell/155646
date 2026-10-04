@@ -364,8 +364,10 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
         net_send_line(sock, "{\"type\":\"connected\",\"version\":1}");
 
         for (;;) {
-            char line[16384];
+            /* 玩家列表单行 JSON 可能很大（数百玩家），放宽到 256KB */
+            static char line[256 * 1024];
             int n = net_read_line(sock, line, sizeof(line));
+            if (n == -2) continue;          /* 超长行已丢弃，继续读下一条 */
             if (n <= 0) break;
             handle_client_line(line);
         }

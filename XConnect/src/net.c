@@ -79,8 +79,13 @@ int net_read_line(net_sock_t sock, char* buf, int size) {
         }
         if (c != '\r') buf[pos++] = c;
     }
-    buf[pos] = '\0';
-    return pos;
+    /* 行超出缓冲：丢弃本行剩余字节直到换行，防止数据流错位。
+     * 返回 -2 表示"超长行被丢弃"，调用方应继续读取下一条。 */
+    while (1) {
+        int n = recv(sock, &c, 1, 0);
+        if (n <= 0) return -2;
+        if (c == '\n') return -2;
+    }
 }
 
 int net_write_all(net_sock_t sock, const char* buf, int len) {
