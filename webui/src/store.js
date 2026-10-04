@@ -10,7 +10,7 @@ export const store = reactive({
   callsign: '', aircraft: '', airline: '',
   sim: 'xp12',
   st: { com1: '———', com2: '———', xpdr: '———', gs: '—', alt: '—' },
-  fsd: { text: 'OFFLINE', tag: 'danger' },
+  fsd: { text: 'OFFLINE', tag: 'info' },
   xplane: { text: '未发现模拟机', tag: 'info' },
   csl: { text: 'CSL —', tag: 'info', title: 'CSL 模型加载情况' },
   roster: '',
@@ -74,7 +74,8 @@ export async function statusTick() {
       case 'Online': store.fsd = { text: 'ONLINE', tag: 'success' }; break
       case 'Connecting':
       case 'WaitLogin': store.fsd = { text: s.fsd.toUpperCase(), tag: 'warning' }; break
-      default: store.fsd = { text: 'OFFLINE', tag: 'danger' }; break
+      case 'Disconnected': store.fsd = { text: 'OFFLINE', tag: 'info' }; break
+      default: store.fsd = { text: 'ERROR', tag: 'danger' }; break
     }
     store.roster = (s.atc > 0 || s.players > 0) ? `ATC ${s.atc} · PLR ${s.players}` : ''
     if (s.xconnect) store.xplane = { text: '已发现模拟机', tag: 'success' }
@@ -103,9 +104,9 @@ function handleEvent(ev) {
 function setXconnectState(state) {
   switch (state) {
     case 'connected': store.xplane = { text: '已发现模拟机', tag: 'success' }; break
-    case 'waiting': store.xplane = { text: '未发现模拟机', tag: 'warning' }; break
+    case 'waiting': store.xplane = { text: '未发现模拟机', tag: 'info' }; break
     case 'failed':
-      store.xplane = { text: '未发现模拟机', tag: 'info' }
+      store.xplane = { text: '连接错误', tag: 'danger' }
       addLog('[xconnect] 无法连接模拟机，请检查 X-Plane 是否运行', 'err')
       break
     case 'disconnected': store.xplane = { text: '未发现模拟机', tag: 'info' }; break
@@ -122,7 +123,7 @@ function setCslStatus(d) {
   }
   store.csl = {
     text: `CSL ${loaded.length}/${total}`,
-    tag: missing.length ? 'warning' : 'success',
+    tag: missing.length ? 'danger' : 'success',
     title: '已加载: ' + (loaded.join(', ') || '无') +
            '\n缺失: ' + (missing.join(', ') || '无'),
   }

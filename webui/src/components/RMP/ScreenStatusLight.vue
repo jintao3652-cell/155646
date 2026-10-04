@@ -1,7 +1,8 @@
 <script setup>
     const props = defineProps({
         text: String,
-        active: Boolean,
+        status: String,
+        title: String,
         onClick: Function
     })
 
@@ -9,7 +10,9 @@
 
 <template>
     <div class="screen-status-wrap">
-        <button class="screen-status" type="button" @click="props.onClick">
+        <button class="screen-status" :class="`status-${props.status || 'info'}`" type="button"
+            :title="props.title || props.text" :aria-label="props.title || props.text"
+            :disabled="!props.onClick" @click="props.onClick">
             <span class="screen-status-text">{{ props.text }}</span>
         </button>
     </div>
@@ -29,17 +32,22 @@
         border-radius: 5px;
         border: none;
         background: radial-gradient(circle at 35% 30%, var(--btn-hi, #4a4e52), var(--btn-face) 70%, var(--btn-edge));
-        color: var(--led-amber);
+        color: #9aa0a6;
         font-size: 12px;
         font-weight: bold;
         display: flex;
         align-items: center;
         justify-content: center;
         box-shadow: 0 3px 0 var(--btn-edge), inset 0 1px 1px rgba(255, 255, 255, .18);
-        cursor: pointer;
+        cursor: default;
         transition: filter .15s ease, box-shadow .15s ease;
         overflow: hidden;
     }
+
+    .screen-status.status-success { color: var(--led-amber); }
+    .screen-status.status-warning { color: var(--led-amber); }
+    .screen-status.status-danger { color: #ff5b62; }
+    .screen-status:not(:disabled) { cursor: pointer; }
 
     .screen-status-text {
         display: inline-block;

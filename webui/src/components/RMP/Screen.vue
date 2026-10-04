@@ -5,56 +5,9 @@
 
 <template>
     <div class="lcd">
-        <el-row class="lcd-body">
-            <el-col :span="24" class="lcd-row">
-                <el-row>
-                    <el-col :span="8"><span class="freq">199.998</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">VHF1</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">199.998</span></el-col>
-                </el-row>
-            </el-col>
-            <el-col :span="24" class="lcd-row">
-                <el-row>
-                    <el-col :span="8"><span class="freq">199.998</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">VHF2</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">199.998</span></el-col>
-                </el-row>
-            </el-col>
-            <el-col :span="24" class="lcd-row">
-                <el-row>
-                    <el-col :span="8"><span class="freq">DATA</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">VHF3</span></el-col>
-                    <el-col :span="8" align="middle" justify="center"><span class="freq stby">121.500</span></el-col>
-                </el-row>
-            </el-col>
-            <el-col :span="24" class="lcd-row" style="border-bottom: none">
-                <el-row>
-                    <el-col :span="4" style="border-right: 1px solid #fff">
-                        <el-row>
-                            <el-col :span="24" align="middle" justify="center"><span
-                                    class="squawk-text">STBY</span></el-col>
-                            <el-col :span="24" align="middle" justify="center"><span
-                                    class="squawk-val">2000</span></el-col>
-                        </el-row>
-                    </el-col>
-                    <el-col :span="8" style="border-right: 1px solid #fff">
-                        <el-row>
-                            <el-col :span="24" align="middle" justify="center"><span
-                                    class="squawk-text">TCAS</span></el-col>
-                            <el-col :span="24" align="middle" justify="center">--------</el-col>
-                            <el-col :span="24" style="display: flex; justify-content: space-around;">
-                                <span class="tcas-val">ABV</span>
-                                <span class="tcas-val">STBY</span>
-                            </el-col>
-                        </el-row>
-                    </el-col>
-                    <el-col :span="4" style="border-right: 1px solid #fff"></el-col>
-                    <el-col :span="8">
-                        <!-- <LogPane></LogPane> -->
-                    </el-col>
-                </el-row>
-            </el-col>
-        </el-row>
+        <router-view v-slot="{ Component }" name="screen">
+            <component :is="Component" />
+        </router-view>
     </div>
 </template>
 

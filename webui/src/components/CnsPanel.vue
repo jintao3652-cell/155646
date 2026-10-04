@@ -1,11 +1,12 @@
 <script setup>
-  import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop } from '../store.js'
+  import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop, doConnect, doDisconnect } from '../store.js'
   import { winMin, winClose } from '../store.js'
   import ScreenButton from './RMP/ScreenButton.vue'
   import Screen from './RMP/Screen.vue'
   import ScreenStatusLight from './RMP/ScreenStatusLight.vue'
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'CLR']
   const knobs = ['VOL', 'BRIGHT', 'FREQ', 'HDG/CRS']
+  const toggleFsdConnection = () => store.connected ? doDisconnect() : doConnect()
 </script>
 
 <template>
@@ -13,13 +14,14 @@
     <el-row>
       <el-col :span="24">
         <div class="rmp-status-light-group">
-          <ScreenStatusLight text="VHF"></ScreenStatusLight>
-          <ScreenStatusLight text="HF"></ScreenStatusLight>
-          <ScreenStatusLight text="FPL" :onClick="openFlightPlan"></ScreenStatusLight>
-          <ScreenStatusLight text="SET" :onClick="openSettings"></ScreenStatusLight>
-          <ScreenStatusLight text=""></ScreenStatusLight>
-          <ScreenStatusLight text="MIN" :onClick="winMin"></ScreenStatusLight>
-          <ScreenStatusLight text="EXIT" :onClick="winClose"></ScreenStatusLight>
+          <ScreenStatusLight text="FSD" :status="store.fsd.tag" :title="store.fsd.text" :onClick="toggleFsdConnection">
+          </ScreenStatusLight>
+          <ScreenStatusLight text="XP" :status="store.xplane.tag" :title="store.xplane.text"></ScreenStatusLight>
+          <ScreenStatusLight text="CSL" :status="store.csl.tag" :title="store.csl.title"></ScreenStatusLight>
+          <ScreenStatusLight text="FPL" status="success" :onClick="openFlightPlan"></ScreenStatusLight>
+          <ScreenStatusLight text="SET" status="success" :onClick="openSettings"></ScreenStatusLight>
+          <ScreenStatusLight text="MIN" status="success" :onClick="winMin"></ScreenStatusLight>
+          <ScreenStatusLight text="EXIT" status="success" :onClick="winClose"></ScreenStatusLight>
         </div>
       </el-col>
       <el-col :span="24">
@@ -37,7 +39,7 @@
             <ScreenButton direction="left"></ScreenButton>
             <ScreenButton direction="left"></ScreenButton>
             <ScreenButton direction="left"></ScreenButton>
-            <ScreenButton direction="left"></ScreenButton>
+            <ScreenButton direction="left" :onClick="router.push('/log')"></ScreenButton>
           </el-col>
         </el-row>
       </el-col>
@@ -86,7 +88,7 @@
       </div>
     </div>
 
-    
+
   </section>
 </template>
 

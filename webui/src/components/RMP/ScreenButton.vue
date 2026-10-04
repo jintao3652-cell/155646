@@ -25,7 +25,7 @@
 
 <template>
     <div class="screen-button-wrap" :style="buttonStyle">
-        <button class="screen-button" type="button">
+        <button class="screen-button" type="button" @click="props.onClick">
             <i class="fa-solid fa-caret-up"></i>
         </button>
     </div>
