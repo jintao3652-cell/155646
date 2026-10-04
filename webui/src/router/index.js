@@ -17,6 +17,34 @@ const router = createRouter({
       },
     },
     {
+      path: "/settings/account",
+      name: "account",
+      components: {
+        screen: () => import("../components/Screen/Settings/Account.vue"),
+      },
+    },
+    {
+      path: "/settings/login_info",
+      name: "login_info",
+      components: {
+        screen: () => import("../components/Screen/Settings/LoginInfo.vue"),
+      },
+    },
+    {
+      path: "/settings/server",
+      name: "server",
+      components: {
+        screen: () => import("../components/Screen/Settings/Server.vue"),
+      },
+    },
+    {
+      path: "/settings",
+      name: "settings",
+      components: {
+        screen: () => import("../components/Screen/Settings.vue"),
+      },
+    },
+    {
       path: "/log",
       name: "log",
       components: {

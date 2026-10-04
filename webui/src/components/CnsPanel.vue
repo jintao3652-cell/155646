@@ -1,6 +1,7 @@
 <script setup>
   import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop, doConnect, doDisconnect } from '../store.js'
   import { winMin, winClose } from '../store.js'
+  import router from '@/router'
   import ScreenButton from './RMP/ScreenButton.vue'
   import ScreenStatusLight from './RMP/ScreenStatusLight.vue'
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'CLR']
@@ -16,9 +17,10 @@
           <ScreenStatusLight text="FSD" :status="store.fsd.tag" :title="store.fsd.text" :onClick="toggleFsdConnection">
           </ScreenStatusLight>
           <ScreenStatusLight text="XP" :status="store.xplane.tag" :title="store.xplane.text"></ScreenStatusLight>
-          <ScreenStatusLight text="CSL" :status="store.csl.tag" :title="store.csl.title"></ScreenStatusLight>
-          <ScreenStatusLight text="FPL" status="success" :onClick="openFlightPlan"></ScreenStatusLight>
-          <ScreenStatusLight text="SET" status="success" :onClick="openSettings"></ScreenStatusLight>
+          <ScreenStatusLight text="CSL" :status="store.csl.tag" :title="store.csl.title" :onClick="openSettings">
+          </ScreenStatusLight>
+          <ScreenStatusLight text="FPL" status="success" :onClick="() => router.push('/settings')"></ScreenStatusLight>
+          <ScreenStatusLight text="SET" status="success" :onClick="() => router.push('/settings')"></ScreenStatusLight>
           <ScreenStatusLight text="MIN" status="success" :onClick="winMin"></ScreenStatusLight>
           <ScreenStatusLight text="EXIT" status="success" :onClick="winClose"></ScreenStatusLight>
         </div>

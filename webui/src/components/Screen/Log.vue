@@ -7,7 +7,7 @@
   // 日志追加时滚动到底部
   watch(() => store.log.length, async () => {
     await nextTick()
-    const bar = document.querySelector('.lcd-body .el-scrollbar__wrap')
+    const bar = document.querySelector('.log-inner .el-scrollbar__wrap')
     if (bar) bar.scrollTop = bar.scrollHeight
   })
   // 进入日志页视为已读
@@ -20,7 +20,7 @@
       <ScreenButton direction="right"></ScreenButton>
       <ScreenButton direction="right"></ScreenButton>
       <ScreenButton direction="right"></ScreenButton>
-      <ScreenButton direction="right" :onClick="() => router.push('/main')"></ScreenButton>
+      <ScreenButton direction="right" :onClick="() => router.back()"></ScreenButton>
     </el-col>
     <el-col :span="20">
       <div class="lcd">

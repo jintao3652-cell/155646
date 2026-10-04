@@ -261,6 +261,32 @@ export async function saveSettings() {
   }
 }
 
+/* ---------- 账号页单独保存（不覆盖服务器等其它设置） ---------- */
+export async function saveAccountSettings() {
+  try {
+    const s = await store.api.get_settings()
+    const d = {
+      real_name: store.set.real_name.trim(),
+      remember_password: !!store.set.remember,
+      callsign: store.set.callsign.trim().toUpperCase(),
+      password: store.set.password,
+      airline_icao: s.airline_icao,
+      server_host: s.server_host,
+      server_port: s.server_port,
+      xconnect_host: s.xconnect_host,
+      xconnect_port: s.xconnect_port,
+      debug_mode: !!s.debug_mode,
+    }
+    const r = await store.api.save_settings(d)
+    if (r.ok) {
+      store.callsign = d.callsign
+      message('账号设置已保存')
+    } else {
+      message(r.error || '保存失败', true)
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
 /* ---------- 飞行计划 ---------- */
 export function openFlightPlan() {
   if (!store.connected) {
