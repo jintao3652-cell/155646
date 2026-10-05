@@ -350,7 +350,7 @@ class NetworkModel:
             for a in self._atc.values():
                 atc_list.append(AtcEntry(
                     callsign=a.callsign,
-                    frequency=pk.fsd_freq_to_display(a.freq_khz),
+                    frequency=pk.khz_to_display(a.freq_khz),
                     type=facility_name(a.facility),
                     latitude=a.lat,
                     longitude=a.lon,
