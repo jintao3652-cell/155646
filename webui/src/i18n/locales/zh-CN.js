@@ -39,10 +39,10 @@ export default {
   },
   msg: {
     title: '消息',
-    toPlaceholder: '呼号 或 @频率',
+    toPlaceholder: "呼号 或 {'@'}频率",
     textPlaceholder: '消息...',
     send: '发送',
-    freqFormatError: '频率格式错误，应为 @121.800',
+    freqFormatError: "频率格式错误，应为 {'@'}121.800",
   },
   flightPlan: {
     title: '飞行计划',

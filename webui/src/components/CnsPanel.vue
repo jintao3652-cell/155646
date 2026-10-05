@@ -1,12 +1,27 @@
 <script setup>
-  import { store, scrollLog, toggleDebug, openFlightPlan, openSettings, noop, doConnect, doDisconnect, fsdText, fsdTag, xpText, xpTag, cslText, cslTag, cslTitle } from '../store.js'
+  import { computed } from 'vue'
+  import { useRoute } from 'vue-router'
+  import { store, openFlightPlan, openSettings, noop, doConnect, doDisconnect, cslTag } from '../store.js'
   import { winMin, winClose } from '../store.js'
   import router from '@/router'
   import ScreenButton from './RMP/ScreenButton.vue'
   import ScreenStatusLight from './RMP/ScreenStatusLight.vue'
+  import ScreenKnobButton from './RMP/ScreenKnobButton.vue'
+  import ScreenStatusButton from './RMP/ScreenStatusButton.vue'
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'CLR']
   const knobs = ['VOL', 'BRIGHT', 'FREQ', 'HDG/CRS']
   const toggleFsdConnection = () => store.connected ? doDisconnect() : doConnect()
+  const route = useRoute()
+
+  /* 下方功能键指示灯 */
+  const fsdActive = computed(() => store.connected)
+  const xplActive = computed(() => store.xpState === 'connected')
+  const cslActive = computed(() => cslTag.value === 'success')
+  const cslDanger = computed(() => cslTag.value === 'danger')
+  const fplActive = computed(() => !!(store.fp.dep && store.fp.dest))
+  const msgActive = computed(() => route.path === '/log')
+  const setActive = computed(() => route.path === '/settings')
+  const mainActive = computed(() => route.path === '/main')
 </script>
 
 <template>
@@ -14,13 +29,11 @@
     <el-row>
       <el-col :span="24">
         <div class="rmp-status-light-group">
-          <ScreenStatusLight text="FSD" :status="fsdTag" :title="fsdText" :onClick="toggleFsdConnection">
-          </ScreenStatusLight>
-          <ScreenStatusLight text="XP" :status="xpTag" :title="xpText"></ScreenStatusLight>
-          <ScreenStatusLight text="CSL" :status="cslTag" :title="cslTitle" :onClick="openSettings">
-          </ScreenStatusLight>
-          <ScreenStatusLight text="FPL" status="success" :onClick="() => router.push('/settings')"></ScreenStatusLight>
-          <ScreenStatusLight text="SET" status="success" :onClick="() => router.push('/settings')"></ScreenStatusLight>
+          <ScreenStatusLight text="VHF" status="success"></ScreenStatusLight>
+          <ScreenStatusLight text="HF" status="success" ></ScreenStatusLight>
+          <ScreenStatusLight text="TEL" status="success" ></ScreenStatusLight>
+          <ScreenStatusLight text="ATC" status="success"></ScreenStatusLight>
+          <ScreenStatusLight text="" status="info"></ScreenStatusLight>
           <ScreenStatusLight text="MIN" status="info" :onClick="winMin"></ScreenStatusLight>
           <ScreenStatusLight text="EXIT" status="danger" :onClick="winClose"></ScreenStatusLight>
         </div>
@@ -30,7 +43,9 @@
           <component :is="Component" />
         </router-view>
       </el-col>
-      <el-col :span="2"></el-col>
+      <el-col :span="2">
+        <ScreenKnobButton></ScreenKnobButton>
+      </el-col>
       <el-col :span="20" style="margin-top: 5px">
         <el-row>
           <el-col :span="4"></el-col>
@@ -38,45 +53,55 @@
             <ScreenButton direction="up"></ScreenButton>
             <ScreenButton direction="up"></ScreenButton>
           </el-col>
-          <el-col :span="4"></el-col>
-          <el-col :span="8"></el-col>
+          <el-col :span="12">
+            <div class="keypad">
+              <button v-for="n in keys" :key="n" class="key" @click="noop">{{ n }}</button>
+            </div>
+          </el-col>
         </el-row>
       </el-col>
       <el-col :span="2"></el-col>
+      <el-col :span="24">
+        <div class="fn-row">
+          <div class="fn-item">
+            <ScreenStatusButton text="FSD" :active="fsdActive" :onClick="toggleFsdConnection"></ScreenStatusButton>
+            <ScreenKnobButton></ScreenKnobButton>
+          </div>
+          <div class="fn-item">
+            <ScreenStatusButton text="XPL" :active="xplActive"></ScreenStatusButton>
+            <ScreenKnobButton></ScreenKnobButton>
+          </div>
+          <div class="fn-item">
+            <ScreenStatusButton text="CSL" :active="cslActive" :danger="cslDanger" :onClick="openSettings">
+            </ScreenStatusButton>
+            <ScreenKnobButton></ScreenKnobButton>
+          </div>
+          <div class="fn-item">
+            <ScreenStatusButton text="FPL" :active="fplActive" :onClick="openFlightPlan"></ScreenStatusButton>
+            <ScreenKnobButton></ScreenKnobButton>
+          </div>
+
+          <div class="fn-item">
+            <ScreenStatusButton text="MAIN" :active="mainActive" :onClick="() => router.push('/main')">
+            </ScreenStatusButton>
+            <ScreenKnobButton></ScreenKnobButton>
+          </div>
+          <div class="fn-item">
+            <ScreenStatusButton text="MSG" :active="msgActive" :onClick="() => router.push('/log')">
+            </ScreenStatusButton>
+            <ScreenKnobButton></ScreenKnobButton>
+          </div>
+          <div class="fn-item">
+            <ScreenStatusButton text="SET" :active="setActive" :onClick="() => router.push('/settings')">
+            </ScreenStatusButton>
+            <ScreenKnobButton></ScreenKnobButton>
+          </div>
+        </div>
+      </el-col>
     </el-row>
-    <div class="cns-brand"><b>XFLY</b>SIM<span class="ver">CNS</span></div>
-
-    <!-- LCD + 环形导航键 -->
-    <div class="lcd-zone">
-
-
-    </div>
-
-    <!-- 功能键行 -->
-    <div class="fn-row">
-      <button class="fn" @click="store.overlays.msg = true">MSG</button>
-      <button class="fn" @click="openFlightPlan">FLT PLAN</button>
-      <button class="fn" @click="openSettings">SET</button>
-      <button class="fn" @click="toggleDebug">DEBUG</button>
-      <button class="fn" @click="noop">NAV</button>
-      <button class="fn" @click="noop">MENU</button>
-    </div>
-
-    <!-- 数字键盘 -->
-    <div class="keypad">
-      <button v-for="n in keys" :key="n" class="key" @click="noop">{{ n }}</button>
-    </div>
-
-    <!-- 旋钮行 -->
-    <div class="knob-row">
-      <div v-for="k in knobs" :key="k" class="knob-item">
-        <div class="knob"><span class="tick"></span></div>
-        <div class="knob-label">{{ k }}</div>
-      </div>
-    </div>
-
-
+    <div class="cns-brand"><b>XFLY</b>SIM<span class="ver">v1.0.0</span></div>
   </section>
+
 </template>
 
 <style scoped>

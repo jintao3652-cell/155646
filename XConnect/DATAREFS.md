@@ -38,13 +38,22 @@
 
 ## 2. 当前已上报字段（`flight_data`，20 项）
 
+实测示例（XP12 地面停机，ZSPD；修复前插件输出见括号注释）：
+
 ```json
-{"type":"flight_data","aircraft_icao":"A20N","latitude":23.37011,"longitude":113.307846,
- "altitude_msl":3010.0,"altitude_agl":0.0,"elevation":17.5,"pitch":-0.59,"bank":0.3,
- "heading":0.0,"true_heading":13.96,"groundspeed":0.0,"indicated_airspeed":0.0,
- "vertical_speed":0.0,"com1_freq":118000,"com2_freq":136000,"transponder":0,
- "squark":"N","gear_deploy":0.0,"flaps_ratio":0.0,"throttle_ratio":0.0}
+{"type":"flight_data","aircraft_icao":"A20N","latitude":31.198351,"longitude":121.328453,
+ "altitude_msl":18.5,"altitude_agl":0.1,"elevation":5.6,"pitch":-0.21,"bank":0.01,
+ "heading":294.46,"true_heading":287.98,"groundspeed":0.0,"indicated_airspeed":14.1,
+ "vertical_speed":-0.7,"com1_freq":133115,"com2_freq":136000,"transponder":450,
+ "squark":"S","gear_deploy":0.0,"flaps_ratio":0.0,"throttle_ratio":0.0}
 ```
+
+> 说明：
+> - `com1_freq` / `com2_freq`：实测该 dataref 在 XP12 返回 **kHz**（133.115 MHz → 133115），
+>   插件 `freq_to_mhz1000` 按量级自动识别 Hz/kHz/MHz 并四舍五入，统一输出 MHz*1000。
+> - `transponder`：实测正确的 dataref 为 `sim/cockpit2/radios/actuators/transponder_code`
+>   （旧路径 `sim/cockpit2/transponders/...` 不存在）。编码为八进制数码整型（0450 → 450）。
+> - `aircraft_icao`：部分机型/时段返回空串，前端仅在非空时触发机型识别。
 
 字段说明：
 
@@ -121,14 +130,20 @@
 
 | # | 数据项 | dataref 路径 | 类型 | 单位 | 示例值 | 当前 |
 |---|--------|-------------|------|------|--------|------|
-| 1 | COM1 活动频率 | sim/cockpit2/radios/actuators/com1_frequency_hz_833 | float | Hz | 118000000 | ✅ |
-| 2 | COM1 待机频率 | sim/cockpit2/radios/actuators/com1_standby_frequency_hz_833 | float | Hz | 121500000 | ○ |
-| 3 | COM2 活动频率 | sim/cockpit2/radios/actuators/com2_frequency_hz_833 | float | Hz | 136000000 | ✅ |
-| 4 | NAV1 频率 | sim/cockpit2/radios/actuators/nav1_frequency_hz | float | Hz | 113000000 | ○ |
-| 5 | 频率显示 | sim/cockpit2/radios/actuators/com1_display_freq | float | MHz | 118.0 | ○ |
-| 6 | 收发发射 | sim/cockpit2/radios/actuators/com1_tx_is_capable | int | 0/1 | 1 | ○ |
-| 7 | 应答机编码 | sim/cockpit2/transponders/transponder_code | int | 0–7777 | 1200 | ✅ |
-| 8 | 应答机模式 | sim/cockpit2/transponders/transponder_mode | int | 0–4 | 3 | ✅ |
+| 1 | COM1 活动频率 | sim/cockpit2/radios/actuators/com1_frequency_hz_833 | float | **kHz**(实测) / Hz(名义) | 自动识别 Hz/kHz/MHz → MHz*1000 | 133115 | ✅ |
+| 2 | COM1 待机频率 | sim/cockpit2/radios/actuators/com1_standby_frequency_hz_833 | float | **kHz**(实测) / Hz(名义) | 同上 | 121500 | ✅ |
+| 3 | COM2 活动频率 | sim/cockpit2/radios/actuators/com2_frequency_hz_833 | float | **kHz**(实测) / Hz(名义) | 同上 | 136000 | ✅ |
+| 4 | COM2 待机频率 | sim/cockpit2/radios/actuators/com2_standby_frequency_hz_833 | float | **kHz**(实测) / Hz(名义) | 同上 | 124850 | ✅ |
+| 5 | COM3 活动频率 | sim/cockpit2/radios/actuators/com3_frequency_hz_833 | float | **kHz**(实测) / Hz(名义) | 同上 | 118000 | ✅ |
+| 6 | COM3 待机频率 | sim/cockpit2/radios/actuators/com3_standby_frequency_hz_833 | float | **kHz**(实测) / Hz(名义) | 同上 | 0(机型无) | ✅ |
+| 7 | NAV1 频率 | sim/cockpit2/radios/actuators/nav1_frequency_hz | float | Hz | 同上 | 113000 | ○ |
+| 8 | 频率显示 | sim/cockpit2/radios/actuators/com1_display_freq | float | MHz | ×1000 | 133.115 | ○ |
+| 9 | 收发发射 | sim/cockpit2/radios/actuators/com1_tx_is_capable | int | 0/1 | — | 1 | ○ |
+| 10 | 应答机编码 | sim/cockpit2/radios/actuators/transponder_code | int[] | 八进制数码整型（0450→450） | 4 位补零显示 | 450 | ✅ |
+| 11 | 应答机模式 | sim/cockpit2/radios/actuators/transponder_mode | int | 0=OFF 1=STBY 2=ON 3=ALT 4=TEST 5=GND(ModeS) 6=TA 7=TA/RA | 原样上报 | 7 | ✅ |
+| 12 | TCAS 高度过滤 | sim/cockpit2/radios/actuators/tcas_filter | int | 0=ALL 1=THRT 2=ABV 3=BLW 4=URSTR | 原样上报 | 0 | ✅ |
+| 13 | TCAS 告警 | sim/cockpit2/tcas/indicators/tcas_alert | int | 0/1 | 原样上报 | 0 | ✅ |
+| 14 | TCAS 活动咨询 | sim/cockpit2/tcas/indicators/tcas_active_advisory | int | 0=None 1=Traffic 2=Resolution | 原样上报 | 0 | ✅ |
 | 9 | 应答机可用 | sim/cockpit2/radios/actuators/transponder_mode_available | int | 0/1 | 1 | ○ |
 | 10 | 高度报告选择 | sim/cockpit2/radios/actuators/transponder_ident | int | 0/1 | 0 | ○ |
 

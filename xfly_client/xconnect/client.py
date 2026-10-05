@@ -41,8 +41,20 @@ class FlightData:
     vertical_speed: float = 0.0    # fpm
     com1_freq: int = 0             # MHz*1000
     com2_freq: int = 0
+    com3_freq: int = 0
+    com1_standby: int = 0          # MHz*1000（不可用的机列为 0）
+    com2_standby: int = 0
+    com3_standby: int = 0
     transponder: int = 0
+    xpdr_mode: int = 0             # 0=OFF 1=STBY 2=ON 3=ALT 4=TEST 5=GND 6=TA 7=TA/RA
     squark: str = "S"
+    tcas_filter: int = 0           # 0=ALL 1=THRT 2=ABV 3=BLW 4=URSTR
+    tcas_alert: int = 0            # 0/1 TCAS 告警
+    tcas_advisory: int = 0         # 0=None 1=Traffic 2=Resolution
+    xpdr_sys: int = -1             # 机型自定义：应答机 1/2 号（-1=该机型无此字段）
+    xpdr_pwr: int = -1             # 机型自定义：电源 OFF/STBY/AUTO/ON
+    xpdr_tcas_mode: int = -1       # 机型自定义：TCAS STBY/TA/TARA
+    xpdr_tcas_alt: int = -1        # 机型自定义：ALL/ABV/BLW/THRT
     gear_deploy: float = 0.0
     flaps_ratio: float = 0.0
     throttle_ratio: float = 0.0

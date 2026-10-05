@@ -16,7 +16,11 @@ export const store = reactive({
   callsign: '', aircraft: '', airline: '',
   sim: 'xp12',
   lang: getLocale(),
-  st: { com1: '———', com2: '———', xpdr: '———', gs: '—', alt: '—' },
+  st: { com1: '———', com2: '———', com3: '———',
+       com1s: '———', com2s: '———', com3s: '———',
+       xpdr: '———', xpdrMode: '', xpdrPwr: '', xpdrSys: '',
+       tcasMode: '', tcasAlt: '',
+       gs: '—', alt: '—' },
   fsdState: 'Disconnected',   // Online / Connecting / WaitLogin / Disconnected / ...
   xpState: 'waiting',          // waiting / connected / failed / disconnected
   cslLoaded: [],
@@ -188,10 +192,42 @@ function setCslStatus(d) {
     addLog(t('status.cslMissing', { list: store.cslMissing.join(', ') }), 'err')
 }
 
+/* X-Plane transponder_mode 枚举（XP12: off=0 stdby=1 on=2 alt=3 test=4
+ * gnd(ModeS)=5 ta_only=6 ta/ra=7） */
+const XPDR_MODES = ['OFF', 'STBY', 'ON', 'ALT', 'TEST', 'GND', 'TA', 'TARA']
+/* TCAS 高度过滤 tcas_filter：0=ALL 1=THRT 2=ABV 3=BLW 4=URSTR */
+const TCAS_ALT_MODES = ['ALL', 'THRT', 'ABV', 'BLW', 'URSTR']
+/* 机型自定义（ToLiss AirbusFBW）：数值语义待旋钮校准，未校准时显示原始值 */
+const AC_XPDR_PWR = ['OFF', 'STBY', 'AUTO', 'ON']
+const AC_TCAS_MODE = ['STBY', 'TA', 'TARA']
+const AC_TCAS_ALT = ['ALL', 'ABV', 'BLW', 'THRT']
+
+function label(map, raw) {
+  if (raw < 0) return '—'
+  return map[raw] !== undefined ? map[raw] : `#${raw}`
+}
+
 function updateFlight(fd) {
   store.st.com1 = fmtFreq(fd.com1_freq)
   store.st.com2 = fmtFreq(fd.com2_freq)
+  store.st.com3 = fmtFreq(fd.com3_freq)
+  store.st.com1s = fmtFreq(fd.com1_standby)
+  store.st.com2s = fmtFreq(fd.com2_standby)
+  store.st.com3s = fmtFreq(fd.com3_standby)
   store.st.xpdr = String(fd.transponder).padStart(4, '0')
+  store.st.xpdrMode = XPDR_MODES[fd.xpdr_mode] || (fd.squark === 'S' ? 'ON' : 'OFF')
+  /* 应答机电源（优先机型自定义 STBY/AUTO/ON，否则通用枚举） */
+  store.st.xpdrPwr = fd.xpdr_pwr >= 0 ? label(AC_XPDR_PWR, fd.xpdr_pwr) : store.st.xpdrMode
+  /* 应答机 1/2 号选择（仅机型自定义可得） */
+  store.st.xpdrSys = fd.xpdr_sys >= 0 ? String(fd.xpdr_sys + 1) : store.st.xpdrMode
+  /* TCAS 工作状态：机型自定义 STBY/TA/TARA；否则由通用 ModeS 枚举推导 */
+  store.st.tcasMode = fd.xpdr_tcas_mode >= 0 ? label(AC_TCAS_MODE, fd.xpdr_tcas_mode)
+    : (fd.xpdr_mode === 1) ? 'STBY'
+      : (fd.xpdr_mode === 6) ? 'TA'
+        : (fd.xpdr_mode === 7) ? 'TARA' : '—'
+  /* TCAS 高度范围：机型自定义 ALL/ABV/BLW/THRT；否则通用 tcas_filter */
+  store.st.tcasAlt = fd.xpdr_tcas_alt >= 0 ? label(AC_TCAS_ALT, fd.xpdr_tcas_alt)
+    : (TCAS_ALT_MODES[fd.tcas_filter] || '—')
   store.st.gs = `${fd.groundspeed.toFixed(0)} kn`
   store.st.alt = `${fd.altitude_msl.toFixed(0)} ft`
   if (fd.aircraft_icao && fd.aircraft_icao !== store.aircraft) {
@@ -201,7 +237,7 @@ function updateFlight(fd) {
 }
 
 export function fmtFreq(milli) {
-  if (milli < 100000) milli += 100000
+  if (milli <= 0) return '———'
   return `${Math.floor(milli / 1000)}.${String(milli % 1000).padStart(3, '0')}`
 }
 

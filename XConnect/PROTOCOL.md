@@ -18,13 +18,20 @@
  "altitude_msl":3010.0,"altitude_agl":2510.0,"elevation":10.0,
  "pitch":1.5,"bank":-2.0,"heading":92.0,"true_heading":92.0,
  "groundspeed":248.0,"indicated_airspeed":250.0,"vertical_speed":0.0,
- "com1_freq":122800,"com2_freq":118050,"transponder":1234,
- "squark":"S","gear_deploy":0.0,"flaps_ratio":0.0,"throttle_ratio":0.3}
+ "com1_freq":122800,"com2_freq":118050,"com3_freq":0,
+ "com1_standby":121500,"com2_standby":124850,"com3_standby":0,
+ "transponder":1234,"xpdr_mode":3,"squark":"S",
+ "tcas_filter":0,"tcas_alert":0,"tcas_advisory":0,
+ "gear_deploy":0.0,"flaps_ratio":0.0,"throttle_ratio":0.3}
 ```
 
 - 频率字段单位：`MHz*1000`（`122800` = 122.800 MHz）
 - 高度/地速单位：ft / kt
 - `squark`：`"S"` 应答机开启、`"N"` 应答机关闭
+- `xpdr_mode`：XP12 应答机模式枚举 `0=OFF 1=STBY 2=ON 3=ALT 4=TEST 5=GND(ModeS) 6=TA 7=TA/RA`
+- `tcas_filter`：TCAS 高度过滤 `0=ALL 1=THRT 2=ABV 3=BLW 4=URSTR`
+- `tcas_alert`：TCAS 告警 0/1；`tcas_advisory`：`0=None 1=Traffic 2=Resolution`
+- `com3_*` / `com*_standby`：机型未提供该台时数值为 `0`（前端显示 `———`）
 
 ## 客户端 → 插件
 
@@ -47,11 +54,13 @@
 - 未在列表中或超过 30s 未更新的玩家，插件移除其模型
 
 > **平滑渲染**：列表中每架飞机的位置按**接收时刻**记入 6 帧环形缓冲；每个
-> 渲染帧用 `now - 2s`（渲染滞后）在历史中找包夹该时刻的相邻两帧线性插值
-> （航向取最短弧 ±180° 回绕）。渲染时刻越过最新帧时按最近两帧匀速外推，
-> 上限为最新帧后 5.5s；超过即停在最新帧。首帧与 >60km 的遥传跳变（重连/
-> 重生）直接吸附，避免长距离滑行。因此**位置更新间隔 5s 与 1s 都能得到连续
-> 运动**，且不受主循环帧率影响。
+> 渲染帧用 `now - 渲染滞后` 在历史中找包夹该时刻的相邻两帧线性插值（航向取
+> 最短弧 ±180° 回绕）。渲染滞后**自适应 ≥ 帧到达间隔**（常规 6s，快速更新
+> 1.5s，上限 8s；等价 Swift 的 6000/1500ms 时间偏移），因此渲染时刻总是落在
+> 已知两帧之间——**纯插值、永不外推、永不回跳**。仅当下一帧迟到（超过
+> 期望间隔）时才沿最近两帧短时外推（≤3s），数据停滞则停在最新帧。首帧与
+> >60km 的遥传跳变（重连/重生）直接吸附。因此 **5s/3s/1s 位置更新都能得到
+> 连续运动**，且不受主循环帧率影响。
 
 ### Send:ATC（管制列表，用于可选标注）
 

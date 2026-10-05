@@ -17,29 +17,29 @@
                 <el-row class="lcd-body">
                     <el-col :span="24" class="lcd-row">
                         <el-row>
-                            <el-col :span="8"><span class="freq">199.998</span></el-col>
+                            <el-col :span="8"><span class="freq">{{ store.st.com1 }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
                                     class="freq stby">VHF1</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
-                                    class="freq stby">199.998</span></el-col>
+                                    class="freq stby">{{ store.st.com1s }}</span></el-col>
                         </el-row>
                     </el-col>
                     <el-col :span="24" class="lcd-row">
                         <el-row>
-                            <el-col :span="8"><span class="freq">199.998</span></el-col>
+                            <el-col :span="8"><span class="freq">{{ store.st.com2 }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
                                     class="freq stby">VHF2</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
-                                    class="freq stby">199.998</span></el-col>
+                                    class="freq stby">{{ store.st.com2s }}</span></el-col>
                         </el-row>
                     </el-col>
                     <el-col :span="24" class="lcd-row">
                         <el-row>
-                            <el-col :span="8"><span class="freq">DATA</span></el-col>
+                            <el-col :span="8"><span class="freq">{{ store.st.com3 }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
                                     class="freq stby">VHF3</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
-                                    class="freq stby">121.500</span></el-col>
+                                    class="freq stby">{{ store.st.com3s }}</span></el-col>
                         </el-row>
                     </el-col>
                     <el-col :span="24" class="lcd-row" style="border-bottom: none">
@@ -47,19 +47,20 @@
                             <el-col :span="4" style="border-right: 1px solid #fff">
                                 <el-row>
                                     <el-col :span="24" align="middle" justify="center"><span
-                                            class="squawk-text">STBY</span></el-col>
+                                            class="squawk-text">{{ store.st.xpdrPwr || 'XPDR' }}</span></el-col>
                                     <el-col :span="24" align="middle" justify="center"><span
-                                            class="squawk-val">2000</span></el-col>
+                                            class="squawk-val">{{ store.st.xpdr }}</span></el-col>
                                 </el-row>
                             </el-col>
                             <el-col :span="8" style="border-right: 1px solid #fff">
                                 <el-row>
                                     <el-col :span="24" align="middle" justify="center"><span
                                             class="squawk-text">TCAS</span></el-col>
-                                    <el-col :span="24" align="middle" justify="center">--------</el-col>
+                                    <el-col :span="24" align="middle" justify="center"><span
+                                            class="tcas-main">{{ store.st.tcasMode }}</span></el-col>
                                     <el-col :span="24" style="display: flex; justify-content: space-around;">
-                                        <span class="tcas-val">ABV</span>
-                                        <span class="tcas-val">STBY</span>
+                                        <span class="tcas-val">{{ store.st.tcasAlt }}</span>
+                                        <span class="tcas-val">{{ store.st.xpdrSys }}</span>
                                     </el-col>
                                 </el-row>
                             </el-col>
@@ -103,6 +104,12 @@
     .squawk-val {
         font-size: 20px;
         color: var(--led-green);
+        text-shadow: 0 0 6px rgba(53, 255, 154, 0.8);
+    }
+
+    .tcas-main {
+        font-size: 18px;
+        color: var(--led-white);
         text-shadow: 0 0 6px rgba(53, 255, 154, 0.8);
     }
 

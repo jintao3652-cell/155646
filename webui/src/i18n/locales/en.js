@@ -39,10 +39,10 @@ export default {
   },
   msg: {
     title: 'Messages',
-    toPlaceholder: 'Callsign or @freq',
+    toPlaceholder: "Callsign or {'@'}freq",
     textPlaceholder: 'Message...',
     send: 'Send',
-    freqFormatError: 'Bad frequency format, expected @121.800',
+    freqFormatError: "Bad frequency format, expected {'@'}121.800",
   },
   flightPlan: {
     title: 'Flight Plan',
