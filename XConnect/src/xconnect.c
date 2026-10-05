@@ -4,6 +4,11 @@
  * - 接收 Send:OPD:FSD9 玩家列表，用 XPLMInstance 渲染 CSL 模型
  * - 接收 Send:ATC 管制列表（预留；当前仅记录数量）
  *
+ * 远程玩家位置平滑（v6，参考 Swift pilotclient 的插件层设计）：
+ *   网络位置帧（含接收时间戳）入环形缓冲 → 渲染时刻 now-RENDER_DELAY
+ *   在历史中插值；越过最新帧后按最近两帧短时外推，数据停滞则停住。
+ *   完全基于时间轴，与帧率无关；首帧/遥传跳变直接吸附。
+ *
  * 编译需 X-Plane SDK（XPLM.h / XPLMInstance.h 等）。
  */
 #ifdef _WIN32
@@ -15,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <math.h>
 
 #include "XPLMDataAccess.h"
 #include "XPLMInstance.h"
@@ -151,16 +157,45 @@ static int dref_int(XPLMDataRef r) {
     return (int)dref_float(r);
 }
 
+/* ---------------- 位置平滑插值参数 ----------------
+ *
+ * 参考 swift-project/pilotclient（Swift）的四层平滑链路中的插件层设计：
+ * 网络位置按时间戳进入历史缓冲，渲染时用「渲染时刻 = now - RENDER_DELAY」
+ * 在历史中找包夹该时刻的相邻两帧做线性插值（航向取最短弧）。
+ *
+ * - RENDER_DELAY：渲染滞后，等价于 Swift 的 position time offset。取 0.4~0.6
+ *   倍位置更新间隔时，既有已知帧可插值，又不产生明显"追不上"感。
+ * - EXTRAP_MAX_SEC：超过最新帧的墙钟时间上限，期间按最近两帧匀速外推；
+ *   超过即停住（Swift 断流后停住的行为），避免长时间失联时飞机飞走。
+ *   取「RENDER_DELAY + 期望更新间隔 + 余量」≈ 5.5s。
+ * - SNAP_DIST_M：新旧两帧距离超过此值判定为网络跳变/重生，直接吸附。
+ *   5s 间隔下 60km 已远超任何真实地速（≈ 23700 km/h），仅网络异常触发。
+ */
+#define RENDER_DELAY    2.0      /* 秒：渲染滞后（渲染时刻 = now - 该值） */
+#define EXTRAP_MAX_SEC  3.5      /* 秒：最新帧之后允许多久继续外推 */
+#define SNAP_DIST_M     60000.0  /* 米：跳变判定阈值 */
+
+/* 位置历史环形缓冲：fixes[fix_head] 为最新帧 */
+#define FIX_MAX 6
+
+typedef struct {
+    double lat, lon;   /* 度（WGS84） */
+    double alt;        /* 米（MSL） */
+    double heading, pitch, roll; /* 度 */
+    double gs;         /* 地速（kt，与协议一致） */
+    double ts;         /* 接收时刻（xc_now_sec） */
+} PositionFix;
+
 /* ---------------- 玩家表 ---------------- */
 
 typedef struct {
     char callsign[24];
     char icao[8];
     char family[64];
-    /* 目标（最新网络数据）与当前显示（平滑插值用） */
-    double tgt_lat, tgt_lon, tgt_alt;
-    double tgt_heading, tgt_pitch, tgt_roll;
-    double tgt_gs;
+    /* 网络位置历史（最新在前）与当前渲染位置（平滑插值输出） */
+    PositionFix fixes[FIX_MAX];
+    int fix_count;   /* 有效帧数（≤ FIX_MAX） */
+    int fix_head;    /* 最新帧下标 */
     double cur_lat, cur_lon, cur_alt;
     double cur_heading, cur_pitch, cur_roll;
     int have_first_fix;
@@ -227,6 +262,158 @@ static void lock_done(void) {
     LOCK_DONE(g_sock_lock);
 }
 
+/* ---------------- 平滑插值助手 ---------------- */
+
+/* 角度归一化到 (-180, 180]，用于航向取最短弧插值（等价 Swift 的
+ * interpolatorlinearpbh.cpp 中 deltaDeg 的 ±360 修正）。 */
+static double angle_delta(double a, double b) {
+    double d = b - a;
+    while (d > 180.0) d -= 360.0;
+    while (d < -180.0) d += 360.0;
+    return d;
+}
+
+static double lerp(double a, double b, double t) { return a + (b - a) * t; }
+
+static double lerp_angle(double a, double b, double t) {
+    return a + angle_delta(a, b) * t;
+}
+
+/* 大圆距离（米），Haversine。用于判定网络跳变。 */
+static double great_circle_m(const PositionFix* a, const PositionFix* b) {
+    const double r = 6371000.0;
+    const double d2r = 3.14159265358979323846 / 180.0;
+    const double lat1 = a->lat * d2r, lat2 = b->lat * d2r;
+    const double dlat = lat2 - lat1;
+    const double dlon = (b->lon - a->lon) * d2r;
+    double s = sin(dlat * 0.5);
+    double x = s * s;
+    s = sin(dlon * 0.5);
+    x += cos(lat1) * cos(lat2) * s * s;
+    if (x > 1.0) x = 1.0;
+    return 2.0 * r * asin(sqrt(x));
+}
+
+/* 取第 i 帧（0 = 最新）；返回 NULL 表示越界。 */
+static const PositionFix* fix_at(const Player* p, int i) {
+    if (i < 0 || i >= p->fix_count) return NULL;
+    return &p->fixes[(p->fix_head - i + FIX_MAX * 2) % FIX_MAX];
+}
+
+/* 追加一帧到环形缓冲（网络线程，持有 g_players_lock）。
+ * 同时间戳的帧直接覆盖（Swift push_frontKeepLatestAdjustedFirst 的行为）。 */
+static void push_fix(Player* p, double lat, double lon, double alt_m,
+                     double heading, double pitch, double roll, double gs,
+                     double now) {
+    const PositionFix* newest = fix_at(p, 0);
+    PositionFix* slot;
+
+    if (newest && fabs(now - newest->ts) < 1e-3) {
+        slot = &p->fixes[p->fix_head];   /* 同刻：就地更新最新帧 */
+    } else {
+        p->fix_head = (p->fix_head + 1) % FIX_MAX;
+        if (p->fix_count < FIX_MAX) p->fix_count++;
+        slot = &p->fixes[p->fix_head];
+    }
+    slot->lat = lat;
+    slot->lon = lon;
+    slot->alt = alt_m;
+    slot->heading = heading;
+    slot->pitch = pitch;
+    slot->roll = roll;
+    slot->gs = gs;
+    slot->ts = now;
+}
+
+/* 将渲染位置直接对齐到某帧（首次定位、网络跳变、失联超时停住时使用）。 */
+static void snap_to(const PositionFix* f, Player* p) {
+    p->cur_lat = f->lat;
+    p->cur_lon = f->lon;
+    p->cur_alt = f->alt;
+    p->cur_heading = f->heading;
+    p->cur_pitch = f->pitch;
+    p->cur_roll = f->roll;
+}
+
+/* 由 a→b 按时间分数 t 插值渲染位置；t 允许 >1（外推）。 */
+static void lerp_fix_to(const PositionFix* a, const PositionFix* b,
+                        double t, Player* p) {
+    p->cur_lat = lerp(a->lat, b->lat, t);
+    p->cur_lon = lerp(a->lon, b->lon, t);
+    p->cur_alt = lerp(a->alt, b->alt, t);
+    p->cur_heading = lerp_angle(a->heading, b->heading, t);
+    p->cur_pitch = lerp(a->pitch, b->pitch, t);
+    p->cur_roll = lerp(a->roll, b->roll, t);
+}
+
+/* 核心：按时间轴计算当前渲染位置。
+ *
+ * 1) 首帧直接定位，避免从 (0,0) 平滑飞过来；
+ * 2) 新旧帧距离超阈值判定为网络跳变/重生 → 直接吸附；
+ * 3) 渲染时刻 t = now - RENDER_DELAY 落在历史窗口内 → 找包夹 t 的相邻
+ *    两帧做线性插值（Swift 的 Spline/Linear 段内插值思想；本插件为 C，
+ *    采用线性，航向走最短弧）；
+ * 4) t 超出最新帧（下一帧尚未到达）→ 沿最近两帧匀速外推，但不超过
+ *    RENDER_DELAY + EXTRAP_MAX_SEC；超过则停住（Swift 失联后的行为）。
+ *
+ * 全程基于绝对时间戳，与主循环帧率无关。
+ */
+static void interpolate_player(Player* p, double now) {
+    const PositionFix* newest;
+    const PositionFix* older;
+    const PositionFix* seg_a;
+    const PositionFix* seg_b;
+    double t_render, seg_dt, t;
+    int i;
+
+    newest = fix_at(p, 0);
+    if (!newest) return;
+
+    if (!p->have_first_fix) {
+        snap_to(newest, p);
+        p->have_first_fix = 1;
+        return;
+    }
+
+    older = fix_at(p, 1);
+    if (older && great_circle_m(older, newest) > SNAP_DIST_M) {
+        snap_to(newest, p);   /* 网络跳变/重生：不做长距离滑行 */
+        return;
+    }
+    if (!older) {
+        snap_to(newest, p);
+        return;
+    }
+
+    /* 渲染时刻（滞后于真实时间，保证区间内已有可插值的历史） */
+    t_render = now - RENDER_DELAY;
+
+    /* 3) 在历史中找包夹 t_render 的相邻两帧（fixes 最新在前 → 时间递增） */
+    for (i = 0; i + 1 < p->fix_count; i++) {
+        seg_b = fix_at(p, i);       /* 较晚 */
+        seg_a = fix_at(p, i + 1);   /* 较早 */
+        seg_dt = seg_b->ts - seg_a->ts;
+        if (seg_dt <= 1e-6) continue;
+        if (t_render >= seg_a->ts && t_render <= seg_b->ts) {
+            t = (t_render - seg_a->ts) / seg_dt;
+            lerp_fix_to(seg_a, seg_b, t, p);
+            return;
+        }
+    }
+
+    /* 4) t_render 越过最新帧：沿最近两帧匀速外推，等待下一帧到达；
+     *    距最新帧超过 RENDER_DELAY + EXTRAP_MAX_SEC（数据停滞）→ 停住 */
+    seg_dt = newest->ts - older->ts;
+    if (seg_dt > 1e-6 && t_render > newest->ts &&
+        now - newest->ts <= RENDER_DELAY + EXTRAP_MAX_SEC) {
+        lerp_fix_to(older, newest, (t_render - older->ts) / seg_dt, p);
+        return;
+    }
+
+    /* 数据停滞：停在最新帧，不做无界外推 */
+    snap_to(newest, p);
+}
+
 /* ---------------- 网络线程 ---------------- */
 
 static void handle_client_line(const char* line) {
@@ -266,8 +453,8 @@ static void handle_client_line(const char* line) {
                             for (slot = 0; slot < PLAYER_MAX; slot++) {
                                 if (!g_players[slot].active) {
                                     p = &g_players[slot];
+                                    memset(p, 0, sizeof(*p));
                                     p->active = 1;
-                                    p->have_first_fix = 0;
                                     p->model.inst = NULL;
                                     p->model.tried = 0;
                                     strncpy(p->callsign, f->sval,
@@ -290,27 +477,25 @@ static void handle_client_line(const char* line) {
     if (_t && _t->type == JSON_NUM) dst = _t->num; \
 } while (0)
 
-                        GETSTR("aircraft", p->icao);
-                        GETSTR("aircraft_family", p->family);
-                        GETNUM("latitude", p->tgt_lat);
-                        GETNUM("longitude", p->tgt_lon);
-                        GETNUM("altitude", p->tgt_alt);
-                        p->tgt_alt *= 0.3048;        /* ft -> m */
-                        GETNUM("pitch", p->tgt_pitch);
-                        GETNUM("bank", p->tgt_roll);
-                        GETNUM("heading", p->tgt_heading);
-                        GETNUM("ground_speed", p->tgt_gs);
-                        /* 首个位置：直接定位，避免从 0 平滑飞过来 */
-                        if (!p->have_first_fix) {
-                            p->cur_lat = p->tgt_lat;
-                            p->cur_lon = p->tgt_lon;
-                            p->cur_alt = p->tgt_alt;
-                            p->cur_heading = p->tgt_heading;
-                            p->cur_pitch = p->tgt_pitch;
-                            p->cur_roll = p->tgt_roll;
-                            p->have_first_fix = 1;
+                        {
+                            /* 新一帧位置入历史缓冲（带接收时间戳），
+                             * 平滑在 update_players / interpolate_player 完成 */
+                            double lat = 0, lon = 0, alt_m = 0;
+                            double pitch = 0, bank = 0, heading = 0, gs = 0;
+                            GETSTR("aircraft", p->icao);
+                            GETSTR("aircraft_family", p->family);
+                            GETNUM("latitude", lat);
+                            GETNUM("longitude", lon);
+                            GETNUM("altitude", alt_m);
+                            alt_m *= 0.3048;        /* ft -> m */
+                            GETNUM("pitch", pitch);
+                            GETNUM("bank", bank);
+                            GETNUM("heading", heading);
+                            GETNUM("ground_speed", gs);
+                            p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
+                            push_fix(p, lat, lon, alt_m, heading, pitch,
+                                     bank, gs, p->last_seen);
                         }
-                        p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
                     }
                     /* 不在列表中的玩家由超时机制（PLAYER_TIMEOUT）清理 */
                     LOCK_LEAVE(g_players_lock);
@@ -496,6 +681,7 @@ static void update_players(double now) {
     LOCK_ENTER(g_players_lock);
     for (i = 0; i < PLAYER_MAX; i++) {
         Player* p = &g_players[i];
+        const PositionFix* f;
         if (!p->active) continue;
 
         /* 超时清理：无活跃玩家时循环体为空，遍历开销可忽略 */
@@ -506,46 +692,28 @@ static void update_players(double now) {
         }
         if (!p->model.inst)
             csl_load(&p->model, p->icao, p->family);
-        if (p->model.inst) {
-            /* 平滑移动：每帧向目标位置/姿态逼近（软追踪，消除瞬移） */
-            if (p->have_first_fix) {
-                const double k = 0.18;      /* 每帧逼近比例（~20Hz 下约 1.5s 收敛） */
-                double dh;
-                p->cur_lat += (p->tgt_lat - p->cur_lat) * k;
-                p->cur_lon += (p->tgt_lon - p->cur_lon) * k;
-                p->cur_alt += (p->tgt_alt - p->cur_alt) * k;
-                p->cur_pitch += (p->tgt_pitch - p->cur_pitch) * k;
-                p->cur_roll += (p->tgt_roll - p->cur_roll) * k;
-                /* 航向取最短路径插值 */
-                dh = p->tgt_heading - p->cur_heading;
-                while (dh > 180.0) dh -= 360.0;
-                while (dh < -180.0) dh += 360.0;
-                p->cur_heading += dh * k;
-            } else {
-                p->cur_lat = p->tgt_lat;
-                p->cur_lon = p->tgt_lon;
-                p->cur_alt = p->tgt_alt;
-                p->cur_heading = p->tgt_heading;
-                p->cur_pitch = p->tgt_pitch;
-                p->cur_roll = p->tgt_roll;
-            }
+        if (!p->model.inst) continue;
 
-            /* 起落架：低高度（<60m MSL）或低地速（<40kt）视为地面/进近，放下 */
-            anim[0] = 0.0f;                 /* flap */
-            anim[1] = (p->tgt_alt < 60.0 || p->tgt_gs < 40.0) ? 1.0f : 0.0f;
-            anim[2] = 0.0f;                 /* throttle */
-            anim[3] = 1.0f;                 /* battery on */
-            anim[4] = 1.0f;                 /* beacon */
-            anim[5] = 1.0f;                 /* nav light */
-            anim[6] = 0.0f;                 /* left brake */
-            anim[7] = 0.0f;                 /* right brake */
-            anim[8] = 1.0f;                 /* xpdr available */
-            anim[9] = 0.0f;                 /* xpdr code */
-            anim[10] = 3.0f;                /* xpdr mode ALT */
-            csl_set_position(p->model.inst, p->cur_lat, p->cur_lon,
-                             p->cur_alt, p->cur_heading, p->cur_pitch,
-                             p->cur_roll, anim, csl_dataref_count());
-        }
+        /* 时间插值：按历史帧与当前时间计算渲染位置（详见 interpolate_player） */
+        interpolate_player(p, now);
+        f = fix_at(p, 0);   /* 最新网络帧，用于动画判断 */
+        if (!f) continue;
+
+        /* 起落架：低高度（<60m MSL）或低地速（<40kt）视为地面/进近，放下 */
+        anim[0] = 0.0f;                 /* flap */
+        anim[1] = (f->alt < 60.0 || f->gs < 40.0) ? 1.0f : 0.0f;   /* <40kt 视为地面 */
+        anim[2] = 0.0f;                 /* throttle */
+        anim[3] = 1.0f;                 /* battery on */
+        anim[4] = 1.0f;                 /* beacon */
+        anim[5] = 1.0f;                 /* nav light */
+        anim[6] = 0.0f;                 /* left brake */
+        anim[7] = 0.0f;                 /* right brake */
+        anim[8] = 1.0f;                 /* xpdr available */
+        anim[9] = 0.0f;                 /* xpdr code */
+        anim[10] = 3.0f;                /* xpdr mode ALT */
+        csl_set_position(p->model.inst, p->cur_lat, p->cur_lon,
+                         p->cur_alt, p->cur_heading, p->cur_pitch,
+                         p->cur_roll, anim, csl_dataref_count());
     }
     LOCK_LEAVE(g_players_lock);
 }
@@ -638,7 +806,7 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
                  sys, XPLMGetDirectorySeparator(),
                  XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
     }
-    xconnect_logf("XConnect v5 (built %s %s): entry", __DATE__, __TIME__);
+    xconnect_logf("XConnect v6 (built %s %s): entry", __DATE__, __TIME__);
     xconnect_logf("  params: outName=%p outSig=%p outDesc=%p",
                   (void*)outName, (void*)outSig, (void*)outDesc);
 
