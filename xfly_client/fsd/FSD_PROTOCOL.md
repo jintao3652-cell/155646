@@ -436,8 +436,8 @@ RatingTooLow、InvalidClient、AuthTimeout。
 | 中间位置 `#SB VI`（1s） | 未实现（只读不报） | 私有网一般不启用 |
 | 视觉位置 `^`/`#SL`/`#ST`/`$SF` | 解析支持、不发送 | XFlySim 服务器未见启用 |
 | `#TM` 私聊/频率 | `send_text` / `send_frequency_text` | 一致（`@%05d` 频率偏移） |
-| `$CQ`/`$CR` | 未实现 | 可后续用于 CAPS/机型协商 |
-| `$FP` 飞行计划 | 未实现 | 预留 |
+| `$CQ`/`$CR` | 解析支持；**`ACC` 机模配置已实现**（`packet.aircraft_config` + `session.notify_aircraft_parts`） | 增量/全量/`@94836` 广播 |
+| `$FP` 飞行计划 | `send_flight_plan`/webapp 自动补交 | 一致 |
 | `$ER` 错误处理 | `session._on_line` 断链 | 行为近似 |
 
 ## 16. 参考资料

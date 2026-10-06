@@ -14,7 +14,7 @@ import json
 import socket
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 DEFAULT_HOST = "127.0.0.1"
@@ -58,6 +58,7 @@ class FlightData:
     gear_deploy: float = 0.0
     flaps_ratio: float = 0.0
     throttle_ratio: float = 0.0
+    parts: dict = field(default_factory=dict)   # 机模部件（ACC 配置），swift 键名
 
 
 @dataclass

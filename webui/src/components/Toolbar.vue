@@ -1,6 +1,7 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { store, doConnect, doDisconnect, onSim, fsdText, fsdTag, xpText, xpTag, cslText, cslTag, cslTitle } from '../store.js'
+import { store, doConnect, doDisconnect, onSim, onCallsignInput,
+         fsdText, fsdTag, xpText, xpTag, cslText, cslTag, cslTitle } from '../store.js'
 const { t } = useI18n()
 </script>
 
@@ -8,11 +9,11 @@ const { t } = useI18n()
   <div class="toolbar">
     <div v-show="!store.connected" class="fields">
       <el-input v-model="store.callsign" :placeholder="t('toolbar.callsign')" maxlength="12"
-                size="small" class="f-1" />
+                size="small" class="f-1" @input="onCallsignInput" />
       <el-input v-model="store.aircraft" :placeholder="t('toolbar.aircraft')" size="small"
                 class="f-2" readonly :title="t('toolbar.aircraftAutoDetected')" />
       <el-input v-model="store.airline" :placeholder="t('toolbar.airline')" maxlength="3"
-                size="small" class="f-2" />
+                size="small" class="f-2" readonly :title="t('toolbar.airlineFromCallsign')" />
       <el-select v-model="store.sim" size="small" class="f-sim" @change="onSim">
         <el-option label="XP12" value="xp12" />
         <el-option label="XP11" value="xp11" />

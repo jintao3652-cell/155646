@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { store } from '../../store.js'
+const { t } = useI18n()
 
 const msg = ref(store.screenMsg)
 let timer = null
@@ -30,7 +32,8 @@ onBeforeUnmount(() => {
 })
 
 const callsign = computed(() => (store.callsign || '---').toUpperCase())
-const airline = computed(() => (store.airline || '---').toUpperCase())
+const aircraft = computed(() => (store.aircraft || '---').toUpperCase())
+const realName = computed(() => (store.set.real_name || '---').toUpperCase())
 </script>
 
 <template>
@@ -39,15 +42,18 @@ const airline = computed(() => (store.airline || '---').toUpperCase())
       <div v-if="msg" :class="['scr-msg', msg.isErr ? 'err' : '']">{{ msg.text }}</div>
       <div v-else-if="store.connected" class="scr-idle">
         <div class="idle-line">
-          <span class="idle-label">CALLSIGN</span><b>{{ callsign }}</b>
+          <span class="idle-label">{{ t('settings.lblCallsign') }}</span><b>{{ callsign }}</b>
         </div>
         <div class="idle-line">
-          <span class="idle-label">AIRLINE</span><b>{{ airline }}</b>
+          <span class="idle-label">{{ t('lcd.lblAircraft') }}</span><b>{{ aircraft }}</b>
         </div>
         <div class="idle-line">
-          <span class="idle-label">PLR</span><b>{{ store.plrCount }}</b>
+          <span class="idle-label">{{ t('settings.lblRealName') }}</span><b>{{ realName }}</b>
+        </div>
+        <div class="idle-line">
+          <span class="idle-label">{{ t('lcd.lblPilots') }}</span><b>{{ store.plrCount }}</b>
           <span class="idle-sep">·</span>
-          <span class="idle-label">ATC</span><b>{{ store.atcCount }}</b>
+          <span class="idle-label">{{ t('lcd.lblAtc') }}</span><b>{{ store.atcCount }}</b>
         </div>
         <div class="idle-clock">{{ utc }}</div>
       </div>

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import threading
 import time
 from typing import Callable, Optional
@@ -20,6 +22,11 @@ STATE_ONLINE = "Online"
 
 POSITION_INTERVAL = 5.0
 KEEPALIVE_INTERVAL = 60.0
+
+# 机模配置 ACC 上报（swift CTokenBucket 同参数）
+ACFG_CAPACITY = 10          # 桶容量（突发上限）
+ACFG_REFILL_INTERVAL = 5.0  # 每 5s 补 1 token（≈1 条/5s）
+ACFG_BROADCAST_TO = "@94836"
 
 
 class FsdSession:
@@ -73,6 +80,13 @@ class FsdSession:
             [str, str, list[str], str], None]] = None
         self.on_position_packet: Optional[Callable[[ParsedPacket], None]] = None
         self.on_socket_down_event: Optional[Callable[[], None]] = None
+        self.on_aircraft_config_received: Optional[Callable[[str, dict], None]] = None
+
+        # 机模配置 ACC：上次发送（全量基准）、令牌桶、全量快照
+        self._acfg_last_sent: Optional[dict] = None
+        self._acfg_full: Optional[dict] = None
+        self._acfg_tokens = ACFG_CAPACITY
+        self._acfg_refill_at = time.monotonic()
 
     # ---------- 生命周期 ----------
 
@@ -82,6 +96,11 @@ class FsdSession:
         self._link.connect(timeout)
         self._log(f"[fsd] connected {self._link.host}:{self._link.port}")
         self._set_state(STATE_WAIT_LOGIN)
+        # 复位机模配置上报状态（新会话重新累计）
+        self._acfg_last_sent = None
+        self._acfg_full = None
+        self._acfg_tokens = ACFG_CAPACITY
+        self._acfg_refill_at = time.monotonic()
         self._send(pk.add_pilot(self.callsign, self.cid, self.credential,
                                 pk.NETWORK_RATING, pk.PROTOCOL_REVISION,
                                 self.simulator_type, self.real_name))
@@ -136,6 +155,11 @@ class FsdSession:
     def send_plane_info_request(self, to: str) -> None:
         self._send(pk.plane_info_request(self.callsign, to))
 
+    def send_aircraft_info(self, to: str = "SERVER") -> None:
+        """机型/设备信息推送（#SB PI:GEN），模拟器机型变化时向服务器更新 equipment。"""
+        self._send(pk.plane_info(self.callsign, to, self.aircraft_icao,
+                                 self.airline_icao, self.livery_icao))
+
     # ---------- 飞行计划 ----------
 
     def send_flight_plan(self, flight_type: str = "I",
@@ -171,6 +195,78 @@ class FsdSession:
         self._xpdr_mode = xpdr_mode
         self._squawk = squawk
         self._has_fix = True
+
+    # ---------- 机模配置 ACC 上报（swift 机制） ----------
+
+    def _acfg_take_token(self) -> bool:
+        """令牌桶限速：容量 10、每 5s 补 1 token（懒补充）。"""
+        now = time.monotonic()
+        self._acfg_tokens = min(
+            ACFG_CAPACITY,
+            self._acfg_tokens
+            + int((now - self._acfg_refill_at) / ACFG_REFILL_INTERVAL))
+        self._acfg_refill_at = now
+        if self._acfg_tokens <= 0:
+            return False
+        self._acfg_tokens -= 1
+        return True
+
+    @staticmethod
+    def _norm_parts(parts) -> dict:
+        """规范化机模部件：浮点四舍五入到 1 位、丢弃 NaN/Inf（保证 JSON 合法、
+        消除 5Hz 帧间 N1 抖动导致的无效 diff）。"""
+        out: dict = {}
+        for k, v in parts.items():
+            if isinstance(v, dict):
+                out[k] = FsdSession._norm_parts(v)
+            elif isinstance(v, float):
+                if math.isfinite(v):
+                    out[k] = round(v, 1)
+                # 非有限值丢弃，不进入 diff
+            else:
+                out[k] = v
+        return out
+
+    @staticmethod
+    def _acfg_dump(payload: dict) -> Optional[str]:
+        try:
+            return json.dumps(payload, separators=(",", ":"), allow_nan=False)
+        except ValueError:
+            return None
+
+    def notify_aircraft_parts(self, parts: Optional[dict]) -> None:
+        """飞行数据中的机模部件变化 → 增量 ACC 上报（$CQ:@94836）。
+
+        与 swift sendIncrementalAircraftConfig() 对应：先比较、再令牌桶限速、
+        只发变化字段，末次值作为增量基准。规范化后比较/发送，NaN 帧不产生上报。"""
+        if not parts or not self._link.connected or self.state != STATE_ONLINE:
+            return
+        norm = self._norm_parts(parts)
+        if not norm or norm == self._acfg_last_sent:
+            return
+        if not self._acfg_take_token():
+            return
+        prev = self._acfg_last_sent or {}
+        diff = {k: v for k, v in norm.items() if prev.get(k) != v}
+        if not diff:
+            return
+        payload = self._acfg_dump({"config": diff})
+        if payload is None:
+            return
+        self._acfg_last_sent = norm
+        self._acfg_full = norm
+        self._send(pk.aircraft_config(self.callsign, ACFG_BROADCAST_TO, payload))
+
+    def _send_full_aircraft_config(self, to: str) -> None:
+        """对端请求全量（{"request":"full"}）→ 应答完整配置（is_full_data=true）。"""
+        if not self._acfg_full:
+            return
+        full = dict(self._acfg_full)
+        full["is_full_data"] = True
+        payload = self._acfg_dump({"config": full})
+        if payload is None:
+            return
+        self._send(pk.aircraft_config(self.callsign, to, payload))
 
     # ---------- 接收 ----------
 
@@ -221,8 +317,25 @@ class FsdSession:
             if self.on_flight_plan_received:
                 self.on_flight_plan_received(p.from_, p.type, p.flds, p.raw)
 
+        elif p.kind == "$CQ" and p.type == "ACC":
+            # 机模配置：JSON 可能被冒号切开，重拼后解析
+            self._on_aircraft_config_query(p.from_, ":".join(p.flds))
+
         if self.on_position_packet:
             self.on_position_packet(p)
+
+    def _on_aircraft_config_query(self, sender: str, raw_json: str) -> None:
+        try:
+            obj = json.loads(raw_json)
+        except ValueError:
+            return
+        if obj == {"request": "full"}:
+            # 请求全量（对端希望拿到我方完整机模配置）
+            self._send_full_aircraft_config(sender)
+        elif isinstance(obj, dict) and self.on_aircraft_config_received:
+            cfg = obj.get("config", obj)
+            if isinstance(cfg, dict):
+                self.on_aircraft_config_received(sender, cfg)
 
     def _on_socket_down(self) -> None:
         self._stop.set()

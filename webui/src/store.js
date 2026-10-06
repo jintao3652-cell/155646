@@ -121,6 +121,11 @@ export function message(data, isErr = false) {
   addLog(`[${isErr ? '!' : 'i'}] ${data}`, isErr ? 'err' : 'txt')
 }
 
+/** 航司由呼号前三位自动派生（如 CCA1501 → CCA）。 */
+export function onCallsignInput() {
+  store.airline = (store.callsign || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase()
+}
+
 /* ---------- 初始化 ---------- */
 export async function initStore() {
   try {
@@ -128,6 +133,8 @@ export async function initStore() {
     if (!store.callsign) store.callsign = s.callsign
     if (!store.aircraft) store.aircraft = s.aircraft_icao
     if (!store.airline) store.airline = s.airline_icao
+    onCallsignInput()
+    store.set.real_name = s.real_name || ''
     store.api.set_debug(!!s.debug_mode)
     const loc = setLocale(normalizeLocale(s.language))
     store.lang = loc
@@ -258,6 +265,7 @@ export async function doConnect() {
   if (store.connected || store.busy) return
   store.busy = true
   try {
+    onCallsignInput()
     const r = await store.api.connect(store.callsign, store.aircraft, store.airline)
     if (!r.ok) { message(errText(r) || t('actions.connectFailed'), true); return }
     store.connected = true
@@ -339,6 +347,7 @@ export async function saveSettings() {
   if (r.ok) {
     store.callsign = d.callsign
     store.airline = d.airline_icao
+    onCallsignInput()
     applyLanguage(d.language)
     message(store.set.debug ? t('actions.savedDebug') : t('actions.saved'))
     store.overlays.set = false

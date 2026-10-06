@@ -1,7 +1,9 @@
 <script setup>
+    import { useI18n } from 'vue-i18n'
     import { store } from "../../store.js";
     import router from '@/router'
     import ScreenButton from '@/components/RMP/ScreenButton.vue'
+    const { t } = useI18n()
 </script>
 
 <template>
@@ -19,7 +21,7 @@
                         <el-row>
                             <el-col :span="8"><span class="freq">{{ store.st.com1 }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
-                                    class="freq stby">VHF1</span></el-col>
+                                    class="freq stby">{{ t('lcd.lblVhf1') }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
                                     class="freq stby">{{ store.st.com1s }}</span></el-col>
                         </el-row>
@@ -28,7 +30,7 @@
                         <el-row>
                             <el-col :span="8"><span class="freq">{{ store.st.com2 }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
-                                    class="freq stby">VHF2</span></el-col>
+                                    class="freq stby">{{ t('lcd.lblVhf2') }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
                                     class="freq stby">{{ store.st.com2s }}</span></el-col>
                         </el-row>
@@ -37,7 +39,7 @@
                         <el-row>
                             <el-col :span="8"><span class="freq">{{ store.st.com3 }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
-                                    class="freq stby">VHF3</span></el-col>
+                                    class="freq stby">{{ t('lcd.lblVhf3') }}</span></el-col>
                             <el-col :span="8" align="middle" justify="center"><span
                                     class="freq stby">{{ store.st.com3s }}</span></el-col>
                         </el-row>
@@ -47,7 +49,7 @@
                             <el-col :span="4" style="border-right: 1px solid #fff">
                                 <el-row>
                                     <el-col :span="24" align="middle" justify="center"><span
-                                            class="squawk-text">{{ store.st.xpdrPwr || 'XPDR' }}</span></el-col>
+                                            class="squawk-text">{{ store.st.xpdrPwr || t('lcd.lblXpdr') }}</span></el-col>
                                     <el-col :span="24" align="middle" justify="center"><span
                                             class="squawk-val">{{ store.st.xpdr }}</span></el-col>
                                 </el-row>
@@ -55,7 +57,7 @@
                             <el-col :span="8" style="border-right: 1px solid #fff">
                                 <el-row>
                                     <el-col :span="24" align="middle" justify="center"><span
-                                            class="squawk-text">TCAS</span></el-col>
+                                            class="squawk-text">{{ t('lcd.lblTcas') }}</span></el-col>
                                     <el-col :span="24" align="middle" justify="center"><span
                                             class="tcas-main">{{ store.st.tcasMode }}</span></el-col>
                                     <el-col :span="24" style="display: flex; justify-content: space-around;">
@@ -66,7 +68,7 @@
                             </el-col>
                             <el-col :span="4" style="border-right: 1px solid #fff"></el-col>
                             <el-col :span="8" class="msg">
-                                <span v-if="store.newMsg" class="new-msg">NEW MSG</span>
+                                <span v-if="store.newMsg" class="new-msg">{{ t('lcd.lblNewMsg') }}</span>
                             </el-col>
                         </el-row>
                     </el-col>

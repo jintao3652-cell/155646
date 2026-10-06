@@ -397,6 +397,14 @@ class NetworkModel:
                 fd.latitude, fd.longitude, round(fd.altitude_msl),
                 round(fd.groundspeed), fd.pitch, fd.bank, fd.true_heading,
                 corr_ft, mode, squawk, fd.gear_deploy > 0)
+            # 模拟器机型变化 → 向服务器更新 equipment（#SB PI:GEN）
+            icao = (fd.aircraft_icao or "").strip().upper()
+            if icao and icao != self.aircraft_icao:
+                self.aircraft_icao = icao
+                fsd.aircraft_icao = icao
+                fsd.send_aircraft_info()
+            # 机模部件变化 → 增量机模配置 ACC 上报（$CQ:@94836）
+            fsd.notify_aircraft_parts(fd.parts)
 
     # ---------- 工具 ----------
 

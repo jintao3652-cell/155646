@@ -14,10 +14,10 @@ const { t } = useI18n()
             <legend>{{ t('flightPlan.basic') }}</legend>
             <label>{{ t('flightPlan.rule') }}
               <el-select v-model="store.fp.type" size="small">
-                <el-option label="IFR" value="I" />
-                <el-option label="VFR" value="V" />
-                <el-option label="SVFR" value="S" />
-                <el-option label="DVFR" value="D" />
+            <el-option :label="t('flightPlan.rules.I')" value="I" />
+            <el-option :label="t('flightPlan.rules.V')" value="V" />
+            <el-option :label="t('flightPlan.rules.S')" value="S" />
+            <el-option :label="t('flightPlan.rules.D')" value="D" />
               </el-select>
             </label>
             <label>{{ t('flightPlan.aircraft') }} <el-input v-model="store.fp.aircraft" size="small" /></label>

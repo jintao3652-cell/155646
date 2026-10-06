@@ -24,6 +24,7 @@
 
 #include "XPLMDataAccess.h"
 #include "XPLMInstance.h"
+#include "XPLMPlanes.h"
 #include "XPLMProcessing.h"
 #include "XPLMPlugin.h"
 #include "XPLMUtilities.h"
@@ -58,7 +59,12 @@ typedef enum {
     DR_XPDR_ALTITUDE, DR_TCAS_STATUS,
     DR_CKPT_XPDR_SYS, DR_CKPT_XPDR_PWR, DR_CKPT_XPDR_ALT, DR_CKPT_XPDR_MODE,
     DR_GEAR, DR_ONGROUND, DR_FLAPS, DR_THROTTLE,
-    DR_AC_ICAO,   /* 当前航空器机型 ICAO（字符串） */
+    /* 机模部件（机模配置 ACC 上报用：灯光用开关布尔，可靠性高于亮度比） */
+    DR_LANDING_LT, DR_TAXI_LT, DR_NAV_LT, DR_BEACON_LT, DR_STROBE_LT, DR_N1,
+    DR_SPLR,
+    DR_AC_ICAO,      /* 机型 ICAO 首选：sim/aircraft/view/acf_icao */
+    DR_AC_ICAO2,     /* 回退：sim/cockpit2/aircraft/view/acf_icao */
+    DR_AC_DESCRIP,   /* 兜底：sim/aircraft/view/acf_descrip（提取 ICAO 词元） */
     DR_COUNT
 } DrIndex;
 
@@ -103,10 +109,27 @@ static const char* kDrefNames[DR_COUNT] = {
     "sim/flightmodel/failures/onground_any",
     "sim/cockpit2/flight/indicators/flaps_ratio",
     "sim/cockpit2/engine/indicators/throttle_ratio",
+    "sim/cockpit/electrical/landing_lights_on",
+    "sim/flightmodel2/lights/taxi_lights_brightness_ratio",
+    "sim/cockpit/electrical/nav_lights_on",
+    "sim/cockpit/electrical/beacon_lights_on",
+    "sim/cockpit/electrical/strobe_lights_on",
+    "sim/cockpit2/engine/indicators/N1_percent",
+    "sim/flightmodel/controls/splr_def",
+    "sim/aircraft/view/acf_icao",
     "sim/cockpit2/aircraft/view/acf_icao",
+    "sim/aircraft/view/acf_descrip",
 };
 
 static XPLMDataRef g_drefs[DR_COUNT];
+
+/* 机模部件（ACC 配置上报）当前值，build_flight_data 每帧刷新 */
+static int g_parts_nav = 0, g_parts_strobe = 0, g_parts_landing = 0;
+static int g_parts_taxi = 0, g_parts_beacon = 0;
+static int g_parts_gear = 1, g_parts_flaps = 0, g_parts_onground = 1;
+static int g_parts_spoilers = 0;
+static int g_parts_eng_on[4] = { 0, 0, 0, 0 };
+static float g_parts_eng_n1[4] = { 0, 0, 0, 0 };
 
 /* ---------------- 诊断日志 ---------------- */
 
@@ -650,6 +673,96 @@ static long freq_to_mhz1000(double raw) {
     return (long)(raw * 1000.0 + 0.5);                   /* MHz */
 }
 
+/* 机型 ICAO 识别（实测两个 acf_icao dataref 在此环境恒为空）。
+ * 优先级：XPLMGetNthAircraftModel 模型文件名 → 两个 acf_icao dataref →
+ * acf_descrip 提取 ICAO 词元。 */
+static void read_aircraft_icao(char* out, int cap) {
+    char tmp[128];
+    int n, i;
+    out[0] = '\0';
+    if (cap < 1) return;
+
+#define READ_RAW(dr) do { \
+    if (g_drefs[(dr)]) { \
+        n = XPLMGetDatab(g_drefs[(dr)], tmp, 0, (int)sizeof(tmp) - 1); \
+        if (n < 0) n = 0; \
+        if (n > (int)sizeof(tmp) - 1) n = (int)sizeof(tmp) - 1; \
+        tmp[n] = '\0'; \
+    } else { tmp[0] = '\0'; } \
+} while (0)
+
+#if kXPLM_Version >= 210
+    /* 1) 模型文件名：B738.acf → B738；A321_CFM.acf → A321；C172SP.acf → C172。
+     *    词元规则：3~4 字符直接用；更长则取前 4，但要求含数字（防 "CESSNA" 误取）。 */
+    {
+        char fn[256], pth[2048];
+        int len;
+        XPLMGetNthAircraftModel(0, fn, pth);
+        for (i = 0; fn[i]; i++) {
+            if (fn[i] == '.') { fn[i] = '\0'; break; }
+        }
+        len = (int)strlen(fn);
+        for (i = 0; i < len && i < (int)sizeof(fn) - 1; i++) {
+            if (isalnum((unsigned char)fn[i])) fn[i] = (char)toupper((unsigned char)fn[i]);
+            else fn[i] = ' ';
+        }
+        for (i = 0; fn[i];) {
+            char tok[16];
+            int j = 0, k, has_digit = 0;
+            while (fn[i] == ' ') i++;
+            while (fn[i] && fn[i] != ' ' && j < (int)sizeof(tok) - 1) {
+                tok[j++] = fn[i++];
+            }
+            tok[j] = '\0';
+            if (j < 3 || !isalpha((unsigned char)tok[0])) continue;
+            if (j <= 4) {
+                memcpy(out, tok, (size_t)j);
+                out[j] = '\0';
+                return;
+            }
+            /* 长词元：取前 4，需含数字（ICAO 常在第二位起带数字） */
+            for (k = 0; k < 4 && tok[k]; k++)
+                if (isdigit((unsigned char)tok[k])) has_digit = 1;
+            if (has_digit) {
+                memcpy(out, tok, 4);
+                out[4] = '\0';
+                return;
+            }
+            /* 否则继续看下一个词元（如 "Nolinor B737" 之类） */
+        }
+    }
+#endif
+
+    /* 2) / 3) 两个 acf_icao dataref */
+    READ_RAW(DR_AC_ICAO);
+    if (!tmp[0]) READ_RAW(DR_AC_ICAO2);
+    for (i = 0; tmp[i] && i < cap - 1; i++) {
+        const unsigned char c = (unsigned char)tmp[i];
+        if (isalnum(c) || c == '-') out[i] = (char)toupper(c);
+        else break;
+    }
+    out[i] = '\0';
+    if (out[0]) return;
+
+    /* 4) acf_descrip 兜底：取首个 4 字符、首字符为字母的词元（如 "A321"） */
+    READ_RAW(DR_AC_DESCRIP);
+    for (i = 0; tmp[i];) {
+        char tok[16];
+        int j = 0;
+        while (tmp[i] && !isalnum((unsigned char)tmp[i])) i++;
+        while (tmp[i] && isalnum((unsigned char)tmp[i]) && j < (int)sizeof(tok) - 1) {
+            tok[j++] = (char)toupper((unsigned char)tmp[i++]);
+        }
+        tok[j] = '\0';
+        if (j == 4 && isalpha((unsigned char)tok[0])) {
+            memcpy(out, tok, 4);
+            out[4] = '\0';
+            return;
+        }
+    }
+#undef READ_RAW
+}
+
 static void build_flight_data(char* out, int size) {
     long com1 = freq_to_mhz1000(dref_float(g_drefs[DR_COM1]));
     long com2 = freq_to_mhz1000(dref_float(g_drefs[DR_COM2]));
@@ -668,22 +781,42 @@ static void build_flight_data(char* out, int size) {
     int xpdr_tcas_alt = g_drefs[DR_XPDR_TCAS_ALT] ? dref_int(g_drefs[DR_XPDR_TCAS_ALT]) : -1;
     const char* squark = xpdr_mode >= 2 ? "S" : "N";
     char icao[16];
-    int n, i;
 
-    icao[0] = '\0';
-    if (g_drefs[DR_AC_ICAO]) {
-        n = XPLMGetDatab(g_drefs[DR_AC_ICAO], icao, 0, (int)sizeof(icao) - 1);
-        if (n < 0) n = 0;
-        if (n > (int)sizeof(icao) - 1) n = (int)sizeof(icao) - 1;
-        icao[n] = '\0';
-        /* 仅保留字母数字（JSON 安全） */
-        for (i = 0; icao[i]; i++) {
-            if (!isalnum((unsigned char)icao[i]) && icao[i] != '-') {
-                icao[i] = '\0';
-                break;
+    /* 机模部件（机模配置 ACC 上报，与 swift CAircraftParts JSON 键一致） */
+    {
+        float n1[4] = { 0, 0, 0, 0 };
+        int i;
+        if (g_drefs[DR_N1]) XPLMGetDatavf(g_drefs[DR_N1], n1, 0, 4);
+        g_parts_nav = dref_int(g_drefs[DR_NAV_LT]) > 0;
+        g_parts_strobe = dref_int(g_drefs[DR_STROBE_LT]) > 0;
+        g_parts_landing = dref_int(g_drefs[DR_LANDING_LT]) > 0;
+        g_parts_taxi = dref_float(g_drefs[DR_TAXI_LT]) > 0.0;
+        g_parts_beacon = dref_int(g_drefs[DR_BEACON_LT]) > 0;
+        g_parts_gear = dref_float(g_drefs[DR_GEAR]) > 0.5;
+        g_parts_flaps = (int)(dref_float(g_drefs[DR_FLAPS]) * 100.0 + 0.5);
+        if (g_parts_flaps < 0) g_parts_flaps = 0;
+        if (g_parts_flaps > 100) g_parts_flaps = 100;
+        g_parts_onground = dref_int(g_drefs[DR_ONGROUND]) > 0;
+        /* 扰流板：splr_def 偏转度（deg），任一 >2° 视为伸出 */
+        g_parts_spoilers = 0;
+        if (g_drefs[DR_SPLR]) {
+            float def[8];
+            XPLMGetDatavf(g_drefs[DR_SPLR], def, 0, 8);
+            for (i = 0; i < 8; i++) {
+                if (def[i] > 2.0f) { g_parts_spoilers = 1; break; }
             }
         }
+        /* N1 可能为 NaN（引擎未启动等）：消毒为 0，否则 JSON 输出 "NaN" 非法，
+         * 服务器解析失败导致后续配置更新全部被丢弃 */
+        for (i = 0; i < 4; i++) {
+            float v = n1[i];
+            if (!(v > 0.0f && v < 100.0f)) v = 0.0f;   /* NaN / 负数 / 越界 → 0 */
+            g_parts_eng_n1[i] = v;
+            g_parts_eng_on[i] = v > 5.0f;
+        }
     }
+
+    read_aircraft_icao(icao, sizeof(icao));
 
     snprintf(out, size,
         "{\"type\":\"flight_data\","
@@ -698,7 +831,13 @@ static void build_flight_data(char* out, int size) {
         "\"tcas_filter\":%d,\"tcas_alert\":%d,\"tcas_advisory\":%d,"
         "\"xpdr_sys\":%d,\"xpdr_pwr\":%d,\"xpdr_tcas_mode\":%d,\"xpdr_tcas_alt\":%d,"
         "\"gear_deploy\":%.2f,"
-        "\"flaps_ratio\":%.2f,\"throttle_ratio\":%.2f}",
+        "\"flaps_ratio\":%.2f,\"throttle_ratio\":%.2f,"
+        "\"parts\":{\"lights\":{\"strobe_on\":%d,\"landing_on\":%d,\"taxi_on\":%d,"
+        "\"beacon_on\":%d,\"nav_on\":%d},\"gear_down\":%d,\"flaps_pct\":%d,"
+        "\"spoilers_out\":%d,"
+        "\"engines\":[{\"on\":%d,\"rpm_pct\":%.1f},{\"on\":%d,\"rpm_pct\":%.1f},"
+        "{\"on\":%d,\"rpm_pct\":%.1f},{\"on\":%d,\"rpm_pct\":%.1f}],"
+        "\"on_ground\":%d}}",
         icao,
         dref_float(g_drefs[DR_LAT]), dref_float(g_drefs[DR_LON]),
         dref_float(g_drefs[DR_ELEV]) * 3.28084,
@@ -713,10 +852,47 @@ static void build_flight_data(char* out, int size) {
         tcas_filter, tcas_alert, tcas_advisory,
         xpdr_sys, xpdr_pwr, xpdr_tcas_mode, xpdr_tcas_alt,
         dref_float(g_drefs[DR_GEAR]),
-        dref_float(g_drefs[DR_FLAPS]), dref_float(g_drefs[DR_THROTTLE]));
+        dref_float(g_drefs[DR_FLAPS]), dref_float(g_drefs[DR_THROTTLE]),
+        g_parts_strobe, g_parts_landing, g_parts_taxi, g_parts_beacon, g_parts_nav,
+        g_parts_gear, g_parts_flaps, g_parts_spoilers,
+        g_parts_eng_on[0], g_parts_eng_n1[0],
+        g_parts_eng_on[1], g_parts_eng_n1[1],
+        g_parts_eng_on[2], g_parts_eng_n1[2],
+        g_parts_eng_on[3], g_parts_eng_n1[3],
+        g_parts_onground);
 }
 
 /* ---------------- CSL 加载状态上报 ---------------- */
+
+/* 机型 ICAO 诊断转储（前缀 "acf:"）。每秒输出各识别源的原始字符串，
+ * 用于确诊机型识别失败的具体环节（dataref 空 / 描述串 / 模型文件名）。 */
+static void dump_acf_values(void) {
+    static double last_acf = -1.0;
+    const double now = xc_now_sec();
+    char a[32] = "", b[32] = "", d[80] = "", fn[256] = "", pth[1024] = "";
+    int n;
+    if (now - last_acf < 1.0) return;
+    last_acf = now;
+    if (g_drefs[DR_AC_ICAO]) {
+        n = XPLMGetDatab(g_drefs[DR_AC_ICAO], a, 0, (int)sizeof(a) - 1);
+        if (n < 0) n = 0;
+        a[n] = '\0';
+    }
+    if (g_drefs[DR_AC_ICAO2]) {
+        n = XPLMGetDatab(g_drefs[DR_AC_ICAO2], b, 0, (int)sizeof(b) - 1);
+        if (n < 0) n = 0;
+        b[n] = '\0';
+    }
+    if (g_drefs[DR_AC_DESCRIP]) {
+        n = XPLMGetDatab(g_drefs[DR_AC_DESCRIP], d, 0, (int)sizeof(d) - 1);
+        if (n < 0) n = 0;
+        d[n] = '\0';
+    }
+#if kXPLM_Version >= 210
+    XPLMGetNthAircraftModel(0, fn, pth);
+#endif
+    xconnect_logf("acf: view='%s' cockpit2='%s' descrip='%s' model='%s'", a, b, d, fn);
+}
 
 /* ToLiss/机型自定义应答机校准转储（前缀 "xpdrv:"）。
  * 每秒输出全部候选 dataref 的原始值（浮点，%.3g），不依赖"变化检测"——
@@ -905,6 +1081,8 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
 
         /* 应答机自定义旋钮值周期转储（每秒一次，校准用） */
         dump_xpdr_values();
+        /* 机型 ICAO 识别源周期转储（每秒一次，诊断用） */
+        dump_acf_values();
 
         /* 注意：elapsedMe 是"距上次调用间隔"（每次 ~0.1s），不是绝对时间，
            不可用于节流；用单调时钟 xc_now_sec() 做发送节流。

@@ -4,9 +4,9 @@ import { store, saveSettings } from '../store.js'
 const { t } = useI18n()
 
 const LANGS = [
-  { value: 'en', label: 'English' },
-  { value: 'zh-CN', label: '简体中文' },
-  { value: 'zh-TW', label: '繁體中文' },
+  { value: 'en', label: t('settings.languages.en') },
+  { value: 'zh-CN', label: t('settings.languages.zh-CN') },
+  { value: 'zh-TW', label: t('settings.languages.zh-TW') },
 ]
 </script>
 

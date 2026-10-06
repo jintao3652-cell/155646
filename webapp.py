@@ -127,9 +127,13 @@ class Api:
             return {"ok": False, "code": "already_connected"}
         if not self._xconnect.connected:
             return {"ok": False, "code": "plugin_offline"}
-        self._cfg.callsign = callsign.strip().upper()
-        self._cfg.aircraft_icao = aircraft.strip().upper()
-        self._cfg.airline_icao = airline.strip().upper()
+        # 航司由呼号前三位决定（如 CCA1501 → CCA），覆盖手动填写
+        callsign = callsign.strip().upper()
+        aircraft = aircraft.strip().upper()
+        airline = callsign[:3] or airline.strip().upper()
+        self._cfg.callsign = callsign
+        self._cfg.aircraft_icao = aircraft
+        self._cfg.airline_icao = airline
         missing = _validate(self._cfg)
         if missing:
             return {"ok": False, "code": "missing_fields", "fields": missing}

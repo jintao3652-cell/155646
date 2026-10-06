@@ -113,6 +113,16 @@ def auth_response(callsign: str, to: str, hex_response: str) -> str:
     return f"$ZR{callsign}:{to}:{hex_response}"
 
 
+def aircraft_config(callsign: str, to: str, config_json: str) -> str:
+    """$CQ ... :ACC 机模配置（swift：增量广播给 @94836；全量应答给请求方）。"""
+    return f"$CQ{callsign}:{to}:ACC:{config_json}"
+
+
+def aircraft_config_request(callsign: str, to: str) -> str:
+    """请求对方全量机模配置。"""
+    return aircraft_config(callsign, to, '{"request":"full"}')
+
+
 def flight_plan(callsign: str, flight_type: str, aircraft: str,
                 cruise_speed: str, dep_airport: str, plan_time: str,
                 actual_time: str, cruise_alt: str, dest_airport: str,

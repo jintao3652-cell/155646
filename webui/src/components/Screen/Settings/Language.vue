@@ -1,14 +1,16 @@
 <script setup>
     import { computed, onBeforeUnmount, onMounted } from 'vue'
+    import { useI18n } from 'vue-i18n'
     import router from '@/router'
     import { store, setLanguageAndSave } from '../../../store.js'
 
     import ScreenButton from '@/components/RMP/ScreenButton.vue'
+    const { t } = useI18n()
 
     const LANGS = [
-        { code: 'en', lbl: 'ENGLISH', native: 'English' },
-        { code: 'zh-CN', lbl: '简体中文', native: '简体中文' },
-        { code: 'zh-TW', lbl: '繁體中文', native: '繁體中文' },
+        { code: 'en', lbl: t('settings.languages.en'), native: t('settings.languages.en') },
+        { code: 'zh-CN', lbl: t('settings.languages.zh-CN'), native: t('settings.languages.zh-CN') },
+        { code: 'zh-TW', lbl: t('settings.languages.zh-TW'), native: t('settings.languages.zh-TW') },
     ]
 
     const current = computed(() => store.lang || 'en')
@@ -50,7 +52,7 @@
                     </div>
                     <div class="lcd-row" style="border-bottom: 1px solid #fff;"></div>
                     <div class="lcd-row lcd-item">
-                        <span class="lbl"><span class="arrow">&lt;</span>RETURN</span>
+                        <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblReturn') }}</span>
                     </div>
                 </div>
             </div>
