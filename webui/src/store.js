@@ -3,7 +3,6 @@
  * 界面文本统一走 vue-i18n（en / zh-CN / zh-TW，语言保存在 config.json）。
  * 状态标签用 computed 从原始状态派生，切换语言即时刷新。 */
 import { reactive, computed } from 'vue'
-import { ElMessage } from 'element-plus'
 import i18n, { normalizeLocale, setLocale, getLocale } from './i18n'
 
 const t = (k, p) => i18n.global.t(k, p)
@@ -26,6 +25,7 @@ export const store = reactive({
   cslLoaded: [],
   cslMissing: [],
   roster: '',
+  atcCount: 0, plrCount: 0,
   log: [],
   msgs: [],
   msgTo: '', msgText: '',
@@ -38,6 +38,7 @@ export const store = reactive({
          language: getLocale() },
   overlays: { msg: false, set: false, fp: false },
   newMsg: false,
+  screenMsg: null,
   _logId: 0,
   _dragging: false,
   _dragX: 0, _dragY: 0,
@@ -116,16 +117,8 @@ export function errText(r) {
 }
 
 export function message(data, isErr = false) {
-  if (store.api) {
-    ElMessage({ message: data, type: isErr ? 'error' : 'success', duration: 2600 })
-    return
-  }
-  // 兜底：无 Element Plus 环境
-  if (isErr) {
-    addLog(`[!] ${data}`, 'err')
-  } else {
-    addLog(`[消息] ${data}`, 'txt')
-  }
+  store.screenMsg = { text: data, isErr: !!isErr, id: Date.now() }
+  addLog(`[${isErr ? '!' : 'i'}] ${data}`, isErr ? 'err' : 'txt')
 }
 
 /* ---------- 初始化 ---------- */
@@ -154,6 +147,8 @@ async function pollEvent() {
 
 export async function updateStatus(s) {
   store.fsdState = s.fsd || 'Disconnected'
+  store.atcCount = s.atc || 0
+  store.plrCount = s.players || 0
   store.roster = (s.atc > 0 || s.players > 0) ? `ATC ${s.atc} · PLR ${s.players}` : ''
   if (s.xconnect) store.xpState = 'connected'
 }
@@ -173,6 +168,8 @@ function handleEvent(ev) {
     case 'fsdstate': updateStatus(ev.data); break
     case 'disconnected':
       store.connected = false
+      store.atcCount = 0
+      store.plrCount = 0
       addLog(t('log.disconnected'), 'in')
       break
   }

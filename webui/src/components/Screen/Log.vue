@@ -1,16 +1,16 @@
 <script setup>
-  import { nextTick, onMounted, watch } from 'vue'
+  import { nextTick, onMounted, ref, watch } from 'vue'
   import { useI18n } from 'vue-i18n'
   import { store, clearNewMsg } from "../../store.js";
   import router from '@/router'
 
   import ScreenButton from '@/components/RMP/ScreenButton.vue'
   const { t } = useI18n()
+  const logBar = ref()
   // 日志追加时滚动到底部
   watch(() => store.log.length, async () => {
     await nextTick()
-    const bar = document.querySelector('.log-inner .el-scrollbar__wrap')
-    if (bar) bar.scrollTop = bar.scrollHeight
+    if (logBar.value) logBar.value.setScrollTop(logBar.value.wrapRef.scrollHeight)
   })
   // 进入日志页视为已读
   onMounted(clearNewMsg)
@@ -27,7 +27,7 @@
     <el-col :span="20">
       <div class="lcd">
         <div class="lcd-body">
-          <el-scrollbar class="lcd-log">
+          <el-scrollbar ref="logBar" class="lcd-log">
             <div class="log-inner">
               <div v-for="item in store.log" :key="item.id" class="log-line" :class="item.cls">
                 <span class="t">{{ item.t }}</span>{{ item.m }}
