@@ -8,6 +8,8 @@
   import ScreenStatusLight from './RMP/ScreenStatusLight.vue'
   import ScreenKnobButton from './RMP/ScreenKnobButton.vue'
   import ScreenStatusButton from './RMP/ScreenStatusButton.vue'
+  import ScreenPageButton from './RMP/ScreenPageButton.vue'
+  import Screen from './RMP/Screen.vue'
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'CLR']
   const knobs = ['VOL', 'BRIGHT', 'FREQ', 'HDG/CRS']
   const toggleFsdConnection = () => store.connected ? doDisconnect() : doConnect()
@@ -30,8 +32,8 @@
       <el-col :span="24">
         <div class="rmp-status-light-group">
           <ScreenStatusLight text="VHF" status="success"></ScreenStatusLight>
-          <ScreenStatusLight text="HF" status="success" ></ScreenStatusLight>
-          <ScreenStatusLight text="TEL" status="success" ></ScreenStatusLight>
+          <ScreenStatusLight text="HF" status="success"></ScreenStatusLight>
+          <ScreenStatusLight text="TEL" status="success"></ScreenStatusLight>
           <ScreenStatusLight text="ATC" status="success"></ScreenStatusLight>
           <ScreenStatusLight text="" status="info"></ScreenStatusLight>
           <ScreenStatusLight text="MIN" status="info" :onClick="winMin"></ScreenStatusLight>
@@ -43,24 +45,37 @@
           <component :is="Component" />
         </router-view>
       </el-col>
-      <el-col :span="2">
-        <ScreenKnobButton></ScreenKnobButton>
-      </el-col>
-      <el-col :span="20" style="margin-top: 5px">
+      <el-col :span="22" style="padding: 5px 0px">
         <el-row>
-          <el-col :span="4"></el-col>
-          <el-col :span="8" style="display: flex; justify-content: space-around;">
-            <ScreenButton direction="up"></ScreenButton>
-            <ScreenButton direction="up"></ScreenButton>
+          <el-col :span="14">
+            <div style="display: flex; flex-direction: column; height: 100%;">
+              <el-row>
+                <el-col :span="4">
+                  <ScreenKnobButton></ScreenKnobButton>
+                </el-col>
+                <el-col :span="6"></el-col>
+                <el-col :span="14" style="display: flex; justify-content: space-around;">
+                  <ScreenButton direction="up"></ScreenButton>
+                  <ScreenButton direction="up"></ScreenButton>
+                </el-col>
+              </el-row>
+              <Screen style="margin-top: 5px;"></Screen>
+            </div>
           </el-col>
-          <el-col :span="12">
+
+          <el-col :span="10">
             <div class="keypad">
               <button v-for="n in keys" :key="n" class="key" @click="noop">{{ n }}</button>
             </div>
           </el-col>
         </el-row>
       </el-col>
-      <el-col :span="2"></el-col>
+      <el-col :span="2">
+        <div class="page-button-group">
+          <ScreenPageButton direction="up"></ScreenPageButton>
+          <ScreenPageButton direction="down"></ScreenPageButton>
+        </div>
+      </el-col>
       <el-col :span="24">
         <div class="fn-row">
           <div class="fn-item">
@@ -110,5 +125,13 @@
     justify-content: space-between;
     padding: 0 35px;
     margin-bottom: 5px;
+  }
+
+  .page-button-group {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 5px 0;
+    gap: 10px;
   }
 </style>
