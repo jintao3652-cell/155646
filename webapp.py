@@ -335,7 +335,7 @@ def run_web(debug: bool = False) -> None:
         webview.create_window(
             "XShare - XFlySim Client",
             WEBUI_URL,
-            width=404, height=623, resizable=False,
+            width=420, height=577.5, resizable=False,
             js_api=api, background_color="#16181c",
             frameless=True, easy_drag=False,
             confirm_close=True)

@@ -19,7 +19,7 @@ onMounted(start)
 
     <div class="workspace">
       <CnsPanel />
-      <LogPane />
+      <!-- <LogPane /> -->
     </div>
 
     <MsgDrawer />
