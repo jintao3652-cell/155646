@@ -48,9 +48,6 @@
 extern void* g_players_lock;   /* 玩家表锁（网络线程 / 主循环共用） */
 extern void* g_sock_lock;      /* 客户端 socket 锁 */
 
-void lock_init(void);
-void lock_done(void);
-
 #ifdef _WIN32
 #include <windows.h>
 #define LOCK_TYPE CRITICAL_SECTION
@@ -59,8 +56,9 @@ void lock_done(void);
 #define LOCK_ENTER(l) EnterCriticalSection((CRITICAL_SECTION*)(l))
 #define LOCK_LEAVE(l) LeaveCriticalSection((CRITICAL_SECTION*)(l))
 
-/* 单调时钟（秒）。网络线程与主循环共用，避免在非主线程调用 XPLM API。 */
-static double xc_now_sec(void) {
+/* 单调时钟（秒）。网络线程与主循环共用，避免在非主线程调用 XPLM API。
+ * static inline：头文件多处包含会产生重复 static 定义。 */
+static inline double xc_now_sec(void) {
     return (double)GetTickCount64() / 1000.0;
 }
 
@@ -76,7 +74,7 @@ static double xc_now_sec(void) {
 #define LOCK_ENTER(l) pthread_mutex_lock((pthread_mutex_t*)(l))
 #define LOCK_LEAVE(l) pthread_mutex_unlock((pthread_mutex_t*)(l))
 
-static double xc_now_sec(void) {
+static inline double xc_now_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;

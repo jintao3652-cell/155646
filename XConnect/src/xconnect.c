@@ -356,8 +356,6 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
  * 结果 outSig 从未被写入 → X-Plane 读到残留签名 → "plugin already loaded" 冲突、
  * 插件名空、无法启用。 */
 PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
-    int i;
-
     /* 第一件事：初始化日志路径并记录入口，任何后续崩溃都有现场 */
     {
         char sys[1024];
