@@ -31,6 +31,7 @@ from xfly_client.xconnect.client import XConnectClient
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 WEBUI_DIST = os.path.join(BASE_DIR, "webui", "dist", "index.html")
 WEBUI_URL = "file:///" + WEBUI_DIST.replace("\\", "/")
+ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.ico")
 
 
 def _validate(cfg: AppConfig) -> list[str]:
@@ -104,8 +105,11 @@ class Api:
         try:
             cfg = self._cfg
             for k, v in d.items():
-                if hasattr(cfg, k):
-                    setattr(cfg, k, v)
+                if not hasattr(cfg, k):
+                    continue
+                if k in ("server_port", "xconnect_port"):
+                    v = int(v)      # 前端键盘输入可能为字符串
+                setattr(cfg, k, v)
             cfg.server_host = cfg.server_host.strip() or "ol.xflysim.com"
             cfg.xconnect_host = cfg.xconnect_host.strip() or "127.0.0.1"
             if not (1 <= cfg.server_port <= 65535) or \
@@ -328,6 +332,80 @@ class Api:
         self._xconnect.stop()
 
 
+def _find_windows_by_pid(pid: int) -> list:
+    """按进程 PID 枚举顶层窗口（frameless 无标题，不能用标题查找）。
+    返回 (hwnd, visible, width, height) 列表。"""
+    import ctypes
+    from ctypes import wintypes
+
+    out = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(hwnd, _lparam):
+        wp = wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wp))
+        if wp.value == pid:
+            r = wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r))
+            out.append({
+                "hwnd": hwnd,
+                "vis": bool(ctypes.windll.user32.IsWindowVisible(hwnd)),
+                "w": r.right - r.left,
+                "h": r.bottom - r.top,
+            })
+        return True
+
+    ctypes.windll.user32.EnumWindows(cb, 0)
+    return out
+
+
+def _set_window_icon_hwnd(hwnd, ico: str) -> None:
+    """WM_SETICON 直接写窗柄图标（绕过后端差异；任务管理器按窗口图标显示）。
+
+    - x64 下必须显式声明 argtypes/restype，否则句柄被 32 位截断失效；
+    - WinForms 显示/主题变化时会重建窗口句柄，需调用方周期性重设。"""
+    import ctypes
+    from ctypes import wintypes
+    try:
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SendMessageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = [
+            wintypes.HWND, wintypes.UINT, ctypes.c_void_p, ctypes.c_void_p]
+        # IMAGE_ICON=1, LR_LOADFROMFILE=0x10
+        big = ctypes.c_void_p(user32.LoadImageW(None, ico, 1, 32, 32, 0x10))
+        small = ctypes.c_void_p(user32.LoadImageW(None, ico, 1, 16, 16, 0x10))
+        # WM_SETICON=0x0080, ICON_SMALL=0, ICON_BIG=1
+        if small.value:
+            user32.SendMessageW(hwnd, 0x0080, ctypes.c_void_p(0), small)
+        if big.value:
+            user32.SendMessageW(hwnd, 0x0080, ctypes.c_void_p(1), big)
+    except Exception:
+        pass
+
+
+def _apply_window_icon_async(ico: str) -> None:
+    """运行期间持续把图标写到本进程窗口（幂等）。
+
+    webview.start 阻塞；WinForms 会重建句柄，故每 2s 重设一次，
+    覆盖句柄重建与后端差异。daemon 线程随进程退出。
+    """
+
+    def worker() -> None:
+        while True:
+            wins = _find_windows_by_pid(os.getpid())
+            if wins:
+                order = [w for w in wins
+                         if w["vis"] and w["w"] >= 400 and w["h"] >= 500]
+                for w in (order or wins):
+                    _set_window_icon_hwnd(w["hwnd"], ico)
+            time.sleep(2.0)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def run_web(debug: bool = False) -> None:
     from _noise import suppress_noise
     suppress_noise()
@@ -347,7 +425,10 @@ def run_web(debug: bool = False) -> None:
             js_api=api, background_color="#16181c",
             frameless=True, easy_drag=False,
             confirm_close=True)
-        webview.start(debug=debug)
+        if os.path.exists(ICON_PATH):
+            _apply_window_icon_async(ICON_PATH)
+        webview.start(debug=debug,
+                      icon=ICON_PATH if os.path.exists(ICON_PATH) else None)
     finally:
         api.close()
 

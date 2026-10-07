@@ -2,7 +2,7 @@
     import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
     import { useI18n } from 'vue-i18n'
     import router from '@/router'
-    import { store, saveAccountSettings } from '../../../store.js'
+    import { store, saveServerPatch } from '../../../store.js'
 
     import ScreenButton from '@/components/RMP/ScreenButton.vue'
     const { t } = useI18n()
@@ -10,18 +10,18 @@
     const buf = ref('')
 
 
-    function commitServerHost() {
+    async function commitServerHost() {
         if (!buf.value) return
-        store.set.server_host = buf.value
+        store.set.server_host = buf.value.trim()
         buf.value = ''
-        saveAccountSettings()
+        await saveServerPatch()
     }
 
-    function commitServerPort() {
+    async function commitServerPort() {
         if (!buf.value) return
-        store.set.server_port = buf.value
+        store.set.server_port = Number(buf.value) || store.set.server_port
         buf.value = ''
-        saveAccountSettings()
+        await saveServerPatch()
     }
 
     function onKey(e) {

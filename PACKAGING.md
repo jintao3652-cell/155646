@@ -37,6 +37,8 @@ cd webui; npm ci; npm run build; cd ..
 python -m PyInstaller --onefile --noconfirm --clean --windowed `
   --name XFlySimClient --distpath dist `
   --add-data "webui\dist;webui\dist" `
+  --add-data "assets;assets" `
+  --icon "assets\icon.ico" `
   --hidden-import webview.platforms.edgechromium `
   --collect-all webview `
   webapp.py
@@ -47,16 +49,23 @@ python -m PyInstaller --onefile --noconfirm --clean --windowed `
 | 参数 | 作用 |
 |---|---|
 | `--add-data "webui\dist;webui\dist"` | 前端产物随包；`webapp.py` 用 `sys._MEIPASS` 定位 |
+| `--add-data "assets;assets"` | 图标等资源随包（运行时窗口图标） |
+| `--icon "assets\icon.ico"` | exe 内嵌图标：资源管理器/任务栏/任务管理器显示 |
 | `--hidden-import webview.platforms.edgechromium` | Windows pywebview 的 Edge/Chromium 后端 |
 | `--collect-all webview` | 收集 pywebview 全部子模块（含各平台后端与依赖 DLL） |
 | `--windowed` | 无控制台窗口（GUI 应用） |
 
 ## 4. 产物说明
 
-- **config.json**：打包后自动读写 **exe 同目录**（`sys.executable` 旁），首次
-  运行生成；源码运行时仍在仓库根目录。升级 exe 不会丢配置。
+- **配置文件（自 v9 起为二进制）**：位于用户目录
+  `%APPDATA%\XFlySim-Client\config.bin`（其它平台 `~/.config/xflysim-client/`），
+  与 exe 位置无关——升级/分发不带走配置，也防止把整个软件目录拷贝给他人。
+  - 格式：`pickle` 序列化后按**本机 MachineGuid** 做 XOR 混淆（前缀魔数 `XFC1`），
+    复制到其它机器无法解密 → 自动回退默认配置（防共享/盗用，属混淆非加密）。
+  - 首次运行发现旧版 `config.json`（仓库根 / exe 同目录）自动迁移并删除。
+  - 写入为原子操作（临时文件 + `os.replace`），强杀进程不产生损坏配置。
 - **webui/dist**：内嵌于 exe（onefile 运行时解包到临时目录 `_MEIPASS`）。
-- **无数据库**：状态全在内存，仅 config.json 持久化。
+- **无数据库**：状态全在内存，仅配置文件持久化。
 - **运行时依赖**：目标机需 **WebView2 Runtime**（Windows 10/11 自带；Server
   版需微软官网安装）。缺失时启动报错"WebView2 not found"。
 
@@ -71,6 +80,7 @@ python -m PyInstaller --onefile --noconfirm --clean --windowed `
 | 现象 | 原因 / 处理 |
 |---|---|
 | 双击无反应 | 缺 WebView2；或改用 `gui.py` 打包 |
+| 任务管理器显示 "python" | 说明正在**源码运行**（`python webapp.py`）；打包成 exe 后进程名即为 `XFlySimClient`，图标为 `assets\icon.ico` |
 | 杀软误报 | onefile 自解压特征，加白名单或改 `--onedir` |
 | 首次启动慢 | onefile 每次解包；改 `--onedir` |
 | 前端改动不生效 | 必须先 `npm run build`，`webui/dist` 才会被 `--add-data` 收进包 |

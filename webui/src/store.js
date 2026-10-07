@@ -357,10 +357,10 @@ export async function saveSettings() {
 }
 
 /* ---------- 账号页单独保存（不覆盖服务器等其它设置） ---------- */
-async function saveAccountPatch(extra = {}) {
-  const s = await store.api.get_settings()
-  const d = {
+function saveAccountPayload(s) {
+  return {
     real_name: store.set.real_name.trim(),
+    cid: store.set.cid.trim(),
     remember_password: !!store.set.remember,
     callsign: store.set.callsign.trim().toUpperCase(),
     password: store.set.password,
@@ -371,8 +371,12 @@ async function saveAccountPatch(extra = {}) {
     xconnect_port: s.xconnect_port,
     debug_mode: !!s.debug_mode,
     language: normalizeLocale(s.language),
-    ...extra,
   }
+}
+
+async function saveAccountPatch(extra = {}) {
+  const s = await store.api.get_settings()
+  const d = { ...saveAccountPayload(s), ...extra }
   const r = await store.api.save_settings(d)
   if (r.ok) {
     store.callsign = d.callsign
@@ -385,6 +389,20 @@ async function saveAccountPatch(extra = {}) {
 
 export async function saveAccountSettings() {
   try { await saveAccountPatch() } catch (e) { /* 忽略 */ }
+}
+
+/* 服务器地址/端口单独保存（LCD 设置 → Server 屏）：
+   必须以 store.set 中的最新值覆盖保存的旧值，且端口转数字。 */
+export async function saveServerPatch() {
+  const s = await store.api.get_settings()
+  const d = {
+    ...saveAccountPayload(s),
+    server_host: store.set.server_host.trim(),
+    server_port: Number(store.set.server_port) || s.server_port,
+  }
+  const r = await store.api.save_settings(d)
+  if (!r.ok) message(errText(r) || t('actions.saveFailed'), true)
+  return r.ok
 }
 
 /* ---------- 语言（LCD 设置页调用：切换并持久化） ---------- */

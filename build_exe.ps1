@@ -28,6 +28,8 @@ $mode = if ($OneDir) { "--onedir" } else { "--onefile" }
 $pyArgs = @(
     $mode, "--noconfirm", "--clean",
     "--add-data", "$root\webui\dist;webui\dist",
+    "--add-data", "$root\assets;assets",
+    "--icon", "$root\assets\icon.ico",
     "--hidden-import", "webview.platforms.edgechromium",
     "--collect-all", "webview",
     "--name", "XFlySimClient",
@@ -41,5 +43,6 @@ Pop-Location
 Write-Host ""
 Write-Host "Done. Output:"
 Write-Host "  $root\dist\XFlySimClient.exe"
-Write-Host "config.json is created next to the exe on first run."
+Write-Host "Config: binary file under %APPDATA%\XFlySim-Client\config.bin"
+Write-Host "(machine-bound; auto-migrates legacy config.json on first run)"
 Write-Host "Requires WebView2 Runtime (built into Windows 10/11)."
