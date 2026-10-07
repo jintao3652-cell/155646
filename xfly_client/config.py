@@ -1,9 +1,16 @@
-"""配置读写：软件根目录 config.json（含密码，勿外传）。"""
+"""配置读写：config.json（含密码，勿外传）。
+
+路径规则：
+- PyInstaller 打包后（sys.frozen）：exe 同目录 —— 该目录可写且持久，
+  不会随 onefile 临时解包目录（sys._MEIPASS）被丢弃；
+- 源码运行：仓库根目录。
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, fields
 
 
@@ -32,8 +39,11 @@ class AppConfig:
 
 
 def config_path() -> str:
-    """软件根目录 config.json（与 main.py 同目录）。"""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """config.json 完整路径（打包后位于 exe 同目录，源码运行时在仓库根）。"""
+    if getattr(sys, "frozen", False):
+        root = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(root, "config.json")
 
 

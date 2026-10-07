@@ -49,6 +49,21 @@ def facility_name(facility: int) -> str:
     return _FACILITY_NAMES.get(facility, "OBS")
 
 
+def _clean_plan_aircraft(raw: str) -> str:
+    """清洗飞行计划机型字段：去尾流后缀（A350/H → A350）、去空白/非法字符、
+    大写，仅保留字母数字与连字符，限 2~6 字符。"""
+    acc = []
+    for ch in (raw or "").upper():
+        if ch == "/":
+            break            # /H /M /L 尾流类别直接截断
+        if ch.isalnum() or ch == "-":
+            acc.append(ch)
+    s = "".join(acc)
+    if 2 <= len(s) <= 6:
+        return s
+    return ""
+
+
 class NetworkModel:
     def __init__(self, xconnect: XConnectClient | None = None) -> None:
         self._gate = threading.Lock()
@@ -56,6 +71,7 @@ class NetworkModel:
         self._players: dict[str, PlayerTrack] = {}
         self._atc_last_seen: dict[str, float] = {}
         self._pl_last_seen: dict[str, float] = {}
+        self._model_req_at: dict[str, float] = {}   # 远程机型 PIR 请求节流
 
         self.fsd: Optional[FsdSession] = None
         # 插件客户端可注入共享实例（应用级监听插件上线，生命周期由调用方管理）
@@ -150,6 +166,7 @@ class NetworkModel:
         session.on_position_packet = self._on_fsd_packet
         session.on_plane_info_requested = self._on_plane_info_requested
         session.on_plane_info_received = self._on_plane_info_received
+        session.on_flight_plan_received = self._on_flight_plan_received
         session.on_text_received = lambda f, m: self.on_text_received and \
             self.on_text_received(f, m)
         session.on_metar_received = lambda m: self.on_metar_received and \
@@ -311,6 +328,29 @@ class NetworkModel:
                 self._pl_last_seen[from_callsign] = time.monotonic()
         self._log(f"[fsd] plane info from {from_callsign}: {equipment} ({family or '-'})")
 
+    def _on_flight_plan_received(self, from_callsign: str, fp_type: str,
+                                 flds: list[str], raw: str) -> None:
+        """远程客户端飞行计划（$FP，服务器转发）→ 机型兜底匹配。
+
+        仅当 PIR 请求未返回（机型仍是默认 A320 未知态）时使用计划中的
+        aircraft 字段做 CSL 匹配；已有 PIR 结果则保留（更准确）。"""
+        try:
+            aircraft = (flds[0] or "").strip().upper()
+        except (IndexError, AttributeError):
+            return
+        aircraft = _clean_plan_aircraft(aircraft)
+        if not aircraft:
+            return
+        with self._gate:
+            tr = self._players.get(from_callsign)
+            if tr is None:
+                return
+            if tr.aircraft != "A320":
+                return  # 已有机型信息（PIR 应答），不覆盖
+            tr.aircraft = aircraft
+            self._pl_last_seen[from_callsign] = time.monotonic()
+        self._log(f"[fsd] flight plan aircraft from {from_callsign}: {aircraft}")
+
     # ---------- 后台循环 ----------
 
     def _gc_loop(self) -> None:
@@ -380,6 +420,37 @@ class NetworkModel:
 
         self.xconnect.send_atc(atc_list)
         self.xconnect.send_players(self.my_cid, player_list)
+        # 机型未知（保持默认 A320）的玩家：主动请求机型信息（#SB PIR），
+        # 收到 PI 应答后 aircraft 更新，下一轮 roster 携带正确机型供插件选 CSL
+        self._request_unknown_models()
+
+    def _request_unknown_models(self, limit: int = 5) -> None:
+        """远程玩家机型识别（FSD 位置包不带机型，默认 A320 需外部补齐）：
+        1) 服务器飞行计划查询 $CQ:...:SERVER:FP:<呼号> → $FP 应答含机型
+           （swift 同款做法，对任意 FSD 服务器通用，依赖服务器缓存了计划）；
+        2) 客户端机型请求 #SB ... :PIR → PI:GEN EQUIPMENT 应答（同为本客户端的
+           对端才会应答，精确度最高）；
+        3) 两者都无 → 收到 $FP 广播时由 _on_flight_plan_received 兜底。
+        每目标 30s 节流，每轮最多 limit 个，避免刷屏。"""
+        fsd = self.fsd
+        if fsd is None or fsd.state != STATE_ONLINE:
+            return
+        now = time.monotonic()
+        with self._gate:
+            items = list(self._players.values())
+        req = 0
+        for tr in items:
+            if req >= limit:
+                break
+            if tr.aircraft != "A320":
+                continue
+            if now - self._model_req_at.get(tr.callsign, 0.0) < 30.0:
+                continue  # 30s 内已请求过，不重复骚扰
+            self._model_req_at[tr.callsign] = now
+            tr.model_requested = True
+            req += 1
+            fsd.request_flight_plan(tr.callsign)
+            fsd.send_plane_info_request(tr.callsign)
 
     # ---------- 插件飞行数据 → FSD 上报 ----------
 

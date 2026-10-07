@@ -160,6 +160,11 @@ class FsdSession:
         self._send(pk.plane_info(self.callsign, to, self.aircraft_icao,
                                  self.airline_icao, self.livery_icao))
 
+    def request_flight_plan(self, target: str) -> None:
+        """向服务器查询某呼号的缓存飞行计划（$CQ ...:SERVER:FP:<target>），
+        服务器以 $FP 应答（含机型），用于远程玩家机型识别兜底。"""
+        self._send(pk.client_query_fp(self.callsign, target))
+
     # ---------- 飞行计划 ----------
 
     def send_flight_plan(self, flight_type: str = "I",

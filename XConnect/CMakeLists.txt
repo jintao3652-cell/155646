@@ -28,7 +28,9 @@ else()
     message(FATAL_ERROR "未找到 X-Plane SDK（应在 ${XPlaneSDK}，或 cmake -DXPlaneSDK=<路径> 覆盖）")
 endif()
 
-add_library(XConnect MODULE src/xconnect.c src/json.c src/net.c src/csl.c)
+add_library(XConnect MODULE
+    src/xconnect.c src/datarefs.c src/players.c src/labels.c src/json.c
+    src/net.c src/csl.c)
 target_include_directories(XConnect PRIVATE "${XPLM_BASE}" "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 # SDK 430 起不再自动定义 XPLM200 系列版本宏，须由插件显式声明，

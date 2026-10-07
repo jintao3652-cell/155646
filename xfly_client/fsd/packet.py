@@ -123,6 +123,12 @@ def aircraft_config_request(callsign: str, to: str) -> str:
     return aircraft_config(callsign, to, '{"request":"full"}')
 
 
+def client_query_fp(callsign: str, target: str) -> str:
+    """$CQ 飞行计划查询：向服务器请求某呼号的缓存飞行计划（应答 $FP 含机型）。
+    用于远程玩家机型识别（位置包不带机型，PIR 无人应答时的兜底）。"""
+    return f"$CQ{callsign}:SERVER:FP:{target}"
+
+
 def flight_plan(callsign: str, flight_type: str, aircraft: str,
                 cruise_speed: str, dep_airport: str, plan_time: str,
                 actual_time: str, cruise_alt: str, dest_airport: str,

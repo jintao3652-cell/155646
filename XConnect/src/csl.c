@@ -18,19 +18,47 @@
 #include "XPLMGraphics.h"   /* XPLMWorldToLocal（XPLMDrawInfo_t 在 XPLMScenery.h，经 XPLMInstance.h 引入） */
 #endif
 
-/* XPMP2 / X-CSL 约定的动画 dataref（顺序与 X-CSL obj 一致） */
+/* 实例动画 dataref（libxplanemp 命名空间，XPMP2 约定）。
+ *
+ * XPLMInstance 按「精确字符串」把实例 dataref 名与 OBJ 的 ANIM 键匹配，
+ * 因此必须包含模型实际使用的全部形态（含 gear_ratio[0..2]、tire_*[0..2]、
+ * engine_rotation_angle_deg[0] 等数组索引形式）。形态核对见
+ * CSL动画dataref核对.md（242 个模型实扫，29 个键全覆盖）。 */
 static const char* kCslDataRefs[CSL_MAX_DATAREFS] = {
-    "sim/cockpit2/controls/flap_ratio",
-    "sim/flightmodel/controls/gear_deploy_ratio",
-    "sim/cockpit2/engine/actuator_throttle_ratio_all",
-    "sim/cockpit2/electrical/battery_on[0]",
-    "sim/flightmodel/engine/ENGN_beacon_lite[0]",
-    "sim/flightmodel/engine/ENGN_nav_lite[0]",
-    "sim/cockpit2/controls/left_brake_ratio",
-    "sim/cockpit2/controls/right_brake_ratio",
-    "sim/cockpit2/radios/actuators/transponder_mode_available",
-    "sim/cockpit2/radios/actuators/transponder_code",
-    "sim/cockpit2/radios/actuators/transponder_mode",
+    "libxplanemp/controls/gear_ratio",              /* 0  */
+    "libxplanemp/controls/gear_ratio[0]",           /* 1  */
+    "libxplanemp/controls/gear_ratio[1]",           /* 2  */
+    "libxplanemp/controls/gear_ratio[2]",           /* 3  */
+    "libxplanemp/controls/flap_ratio",              /* 4  */
+    "libxplanemp/controls/spoiler_ratio",           /* 5  */
+    "libxplanemp/controls/speed_brake_ratio",       /* 6  */
+    "libxplanemp/controls/slat_ratio",              /* 7  */
+    "libxplanemp/controls/wing_sweep_ratio",        /* 8  */
+    "libxplanemp/controls/thrust_ratio",            /* 9  */
+    "libxplanemp/controls/yoke_pitch_ratio",        /* 10 */
+    "libxplanemp/controls/yoke_heading_ratio",      /* 11 */
+    "libxplanemp/controls/yoke_roll_ratio",         /* 12 */
+    "libxplanemp/controls/thrust_revers",           /* 13 */
+    "libxplanemp/controls/taxi_lites_on",           /* 14 */
+    "libxplanemp/controls/landing_lites_on",        /* 15 */
+    "libxplanemp/controls/beacon_lites_on",         /* 16 */
+    "libxplanemp/controls/strobe_lites_on",         /* 17 */
+    "libxplanemp/controls/nav_lites_on",            /* 18 */
+    "libxplanemp/controls/nws_ratio",               /* 19 */
+    "libxplanemp/engines/thrust_reverser_deploy_ratio", /* 20 */
+    "libxplanemp/engines/prop_rotation_angle_deg",  /* 21 */
+    "libxplanemp/engines/engine_rotation_angle_deg",/* 22 */
+    "libxplanemp/engines/engine_rotation_angle_deg[0]", /* 23 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec", /* 24 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[0]", /* 25 */
+    "libxplanemp/gear/tire_rotation_angle_deg",     /* 26 */
+    "libxplanemp/gear/tire_rotation_angle_deg[0]",  /* 27 */
+    "libxplanemp/gear/tire_rotation_angle_deg[1]",  /* 28 */
+    "libxplanemp/gear/tire_rotation_angle_deg[2]",  /* 29 */
+    "libxplanemp/gear/tire_vertical_deflection_mtr[0]", /* 30 */
+    "libxplanemp/gear/tire_vertical_deflection_mtr[1]", /* 31 */
+    "libxplanemp/gear/tire_vertical_deflection_mtr[2]", /* 32 */
+    "libxplanemp/misc/touch_down",                  /* 33 */
 };
 #define CSL_DATAREF_COUNT ((int)(sizeof(kCslDataRefs) / sizeof(kCslDataRefs[0])))
 

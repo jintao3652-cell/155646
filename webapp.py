@@ -4,11 +4,13 @@
 前端回调 pollEvent 用 api.pull() 拉取事件（日志/文本/飞行数据/状态），避免跨线程 evaluate_js。
 
 运行：python webapp.py
+打包：见 PACKAGING.md（PyInstaller，webui/dist 作为数据文件附带）。
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from collections import deque
@@ -24,8 +26,10 @@ from xfly_client.i18n import translate
 from xfly_client.model import NetworkModel
 from xfly_client.xconnect.client import XConnectClient
 
-WEBUI_DIR = os.path.dirname(os.path.abspath(__file__))
-WEBUI_DIST = os.path.join(WEBUI_DIR, "webui", "dist", "index.html")
+# 资源根：PyInstaller 打包后在 sys._MEIPASS 临时解包目录（webui/dist 经
+# --add-data 随包附带）；源码运行时为 webapp.py 所在目录。
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+WEBUI_DIST = os.path.join(BASE_DIR, "webui", "dist", "index.html")
 WEBUI_URL = "file:///" + WEBUI_DIST.replace("\\", "/")
 
 

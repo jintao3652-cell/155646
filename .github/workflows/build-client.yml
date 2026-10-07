@@ -1,0 +1,75 @@
+name: Build XFlySim Client
+
+on:
+  workflow_dispatch:        # 手动触发
+  push:
+    paths:
+      - 'webui/**'
+      - 'xfly_client/**'
+      - 'tools/**'
+      - 'webapp.py'
+      - 'main.py'
+      - 'gui.py'
+      - 'config.json'
+      - 'requirements.txt'
+      - 'package-lock.json'
+      - 'build_exe.ps1'
+      - '.github/workflows/build-client.yml'
+  pull_request:
+    paths:
+      - 'webui/**'
+      - 'xfly_client/**'
+      - 'tools/**'
+      - 'webapp.py'
+      - 'main.py'
+      - 'gui.py'
+      - 'config.json'
+      - 'requirements.txt'
+      - 'package-lock.json'
+      - 'build_exe.ps1'
+
+jobs:
+  build:
+    # PyInstaller onefile + --windowed + `;` 路径分隔符均为 Windows 专属
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      # build_exe.ps1 内部会做 webui 的 npm ci / vite build，再跑 PyInstaller
+      - name: Build executable
+        shell: pwsh
+        run: |
+          .\build_exe.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify artifact
+        shell: bash
+        run: |
+          ls -la dist/
+          if [ ! -f dist/XFlySimClient.exe ]; then
+            echo "::error::dist/XFlySimClient.exe not found"
+            exit 1
+          fi
+          python -c "raw=open('dist/XFlySimClient.exe','rb').read(); assert raw[:2]==b'MZ','not PE'; assert b'pywebview' in raw.lower(),'pywebview not bundled'; print('PE OK: MZ header + pywebview bundled')"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XFlySimClient-windows-x86_64
+          path: dist/XFlySimClient.exe
+          if-no-files-found: error

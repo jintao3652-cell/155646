@@ -13,7 +13,7 @@
 
 #include "XPLMInstance.h"
 
-#define CSL_MAX_DATAREFS 12
+#define CSL_MAX_DATAREFS 48  /* XPMP2 标准动画 dataref 全集（libxplanemp/...）*/
 
 /* 玩家渲染实例（由主程序持有） */
 typedef struct {
