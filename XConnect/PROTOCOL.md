@@ -41,7 +41,8 @@
 {"type":"Send:OPD:FSD9","mycid":"1001",
  "data":[{"callsign":"CCA999","latitude":23.1,"longitude":113.0,
           "altitude":3000,"pitch":1.0,"bank":-5.0,"heading":90.0,
-          "ground_speed":250,"aircraft":"B738","aircraft_family":""}]}
+          "ground_speed":250,"aircraft":"B738","aircraft_family":"",
+          "airline":"CCA"}]}
 ```
 
 - `callsign`：玩家呼号（主键）
@@ -49,9 +50,17 @@
 - `altitude`：真高 ft（MSL）
 - `pitch/bank/heading`：度
 - `ground_speed`：kt
-- `aircraft`：机型 ICAO，用于查找 `CSL/{ICAO}.obj`
-- `aircraft_family`：CSL 包名（可选，优先使用 `CSL/{family}/{icao}.obj`）
+- `aircraft`：机型 ICAO，用于查找 `CSL/{ICAO}/xsb_aircraft.txt`
+- `airline`：涂装/航司码（呼号前三位大写，或用对方 `#SB PI` 上报的 `AIRLINE`），
+  对应 xsb 中的 `AIRLINE`/`LIVERY` 变体码，选 `CSL/{ICAO}/{ICAO}_{airline}.obj`
+- `aircraft_family`：CSL 包名（可选回退，用 `CSL/{family}/{icao}.obj`）
 - 未在列表中或超过 30s 未更新的玩家，插件移除其模型
+
+> **复合模型与地面钳制**：X-CSL 的一架飞机由多个 OBJ 组成（机身涂装 + 发动机/
+> 风扇等），插件解析 `CSL/{ICAO}/xsb_aircraft.txt` 的 `OBJ8_AIRCRAFT` 块逐个实例化，
+> 并按 `AIRLINE`/`LIVERY` 行选中涂装变体（无匹配时回退 `ANY`/首个变体）。渲染时
+> 对近地目标用 `XPLMProbeTerrainXYZ` 把模型落到地形高度（等价 XPMP2
+> `clampToGround`），避免整机悬空、轮子离地。
 
 > **平滑渲染**：列表中每架飞机的位置按**接收时刻**记入 6 帧环形缓冲；每个
 > 渲染帧用 `now - 渲染滞后` 在历史中找包夹该时刻的相邻两帧线性插值（航向取

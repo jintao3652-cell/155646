@@ -77,6 +77,17 @@ def run_all() -> int:
     check(er.kind == "$ER" and er.type == "006" and len(er.flds) == 2
           and er.flds[1] == "Invalid CID/password.", "parse $ER")
 
+    # $ER 错误码：数字/名称均可解析；NoFlightPlan(8) 非致命，不断链
+    check(pk.resolve_error_code("8") == pk.ERR_NO_FLIGHT_PLAN
+          and pk.resolve_error_code("NoFlightPlan") == pk.ERR_NO_FLIGHT_PLAN,
+          "resolve NoFlightPlan")
+    check(pk.ERR_NO_FLIGHT_PLAN not in pk.FATAL_ERROR_CODES
+          and pk.ERR_NO_SUCH_CALLSIGN not in pk.FATAL_ERROR_CODES,
+          "NoFlightPlan not fatal")
+    check(pk.ERR_CALLSIGN_IN_USE in pk.FATAL_ERROR_CODES
+          and pk.ERR_AUTH_TIMEOUT in pk.FATAL_ERROR_CODES,
+          "fatal codes listed")
+
     ar = ps.parse("$ARSERVER:ZGGG_GND:ZGGG 041600Z 05003MPS CAVOK 22/20 Q1009 NOSIG $")
     check(ar.kind == "$AR" and ar.from_ == "SERVER" and ar.to == "ZGGG_GND"
           and ar.type.startswith("ZGGG"), "parse $AR")

@@ -205,36 +205,50 @@ void update_players(double now) {
             p->active = 0;
             continue;
         }
-        if (!p->model.inst) {
+        if (p->model.inst_count <= 0) {
             if (!p->model.tried) {
-                csl_load(&p->model, p->icao, p->family);
-                if (p->model.inst) {
+                csl_load(&p->model, p->icao, p->family, p->airline);
+                if (p->model.inst_count > 0) {
                     strncpy(p->model_icao, p->icao, sizeof(p->model_icao) - 1);
-                    xconnect_logf("csl: %s loaded icao=%s family=%s",
-                                  p->callsign, p->icao, p->family);
+                    p->model_icao[sizeof(p->model_icao) - 1] = '\0';
+                    strncpy(p->model_airline, p->airline,
+                            sizeof(p->model_airline) - 1);
+                    p->model_airline[sizeof(p->model_airline) - 1] = '\0';
+                    xconnect_logf("csl: %s loaded icao=%s airline=%s variant=%s objs=%d",
+                                  p->callsign, p->icao, p->airline,
+                                  p->model.variant, p->model.inst_count);
                 } else {
-                    xconnect_logf("csl: %s LOAD FAILED icao=%s family=%s",
-                                  p->callsign, p->icao, p->family);
+                    xconnect_logf("csl: %s LOAD FAILED icao=%s airline=%s",
+                                  p->callsign, p->icao, p->airline);
                 }
             }
         } else if (strncmp(p->model_icao, p->icao,
-                           sizeof(p->model_icao)) != 0) {
-            /* 机型变化：释放旧模型并重载（此前仅首次加载，换型永不生效） */
-            xconnect_logf("csl: %s icao %s -> %s (reload)",
-                          p->callsign, p->model_icao, p->icao);
+                           sizeof(p->model_icao)) != 0 ||
+                   (p->airline[0] &&
+                    strncmp(p->model_airline, p->airline,
+                            sizeof(p->model_airline)) != 0)) {
+            /* 机型或涂装变化：释放旧模型并重载 */
+            xconnect_logf("csl: %s icao %s->%s airline %s->%s (reload)",
+                          p->callsign, p->model_icao, p->icao,
+                          p->model_airline, p->airline);
             csl_release_node(&p->model);
             p->model_icao[0] = '\0';
-            csl_load(&p->model, p->icao, p->family);
-            if (p->model.inst) {
+            p->model_airline[0] = '\0';
+            csl_load(&p->model, p->icao, p->family, p->airline);
+            if (p->model.inst_count > 0) {
                 strncpy(p->model_icao, p->icao, sizeof(p->model_icao) - 1);
-                xconnect_logf("csl: %s loaded icao=%s (reloaded)",
-                              p->callsign, p->icao);
+                p->model_icao[sizeof(p->model_icao) - 1] = '\0';
+                strncpy(p->model_airline, p->airline,
+                        sizeof(p->model_airline) - 1);
+                p->model_airline[sizeof(p->model_airline) - 1] = '\0';
+                xconnect_logf("csl: %s loaded icao=%s airline=%s variant=%s (reloaded)",
+                              p->callsign, p->icao, p->airline, p->model.variant);
             } else {
                 xconnect_logf("csl: %s RELOAD FAILED icao=%s",
                               p->callsign, p->icao);
             }
         }
-        if (!p->model.inst) continue;
+        if (p->model.inst_count <= 0) continue;
 
         /* 时间插值：按历史帧与当前时间计算渲染位置（详见 interpolate_player） */
         interpolate_player(p, now);
@@ -257,9 +271,25 @@ void update_players(double now) {
             anim[18] = 1.0f;  /* nav_lites_on    */
         }
         /* 4-13 操纵面/推力/反推、19-33 轮胎/风扇/触地：保持 0 */
-        csl_set_position(p->model.inst, p->cur_lat, p->cur_lon,
-                         p->cur_alt, p->cur_heading, p->cur_pitch,
-                         p->cur_roll, anim, csl_dataref_count());
+
+        /* 地面钳制：远程上报的高度是飞机参考点（重心）海拔，而 X-CSL 模型原点
+         * 在轮胎接地点。近地时把模型落到该点地形高度，避免整机悬空、轮子离地
+         * （XPMP2 的 clampToGround 语义；地形探针仅主线程调用）。 */
+        {
+            double alt = p->cur_alt;
+            /* 仅对近地/低速目标探测地形（巡航目标跳过，避免每帧探针开销） */
+            if (f->gs < 60.0 || p->cur_alt < 200.0) {
+                int hit = 0;
+                double terrain = csl_terrain_msl(p->cur_lat, p->cur_lon, alt, &hit);
+                if (hit) {
+                    double agl = alt - terrain;
+                    if (agl <= GROUND_CLAMP_AGL_M && agl > -20.0) alt = terrain;
+                }
+            }
+            csl_set_position(&p->model, p->cur_lat, p->cur_lon, alt,
+                             p->cur_heading, p->cur_pitch, p->cur_roll,
+                             anim, csl_dataref_count());
+        }
     }
     LOCK_LEAVE(g_players_lock);
 }

@@ -71,6 +71,7 @@ class FsdSession:
         self.on_log: Optional[Callable[[str], None]] = None
         self.on_state_changed: Optional[Callable[[str], None]] = None
         self.on_error_text: Optional[Callable[[str], None]] = None
+        self.on_no_flight_plan: Optional[Callable[[], None]] = None
         self.on_text_received: Optional[Callable[[str, str], None]] = None
         self.on_metar_received: Optional[Callable[[str], None]] = None
         self.on_plane_info_requested: Optional[Callable[[str, str], None]] = None
@@ -285,11 +286,17 @@ class FsdSession:
                 self._send(pk.auth_response(self.callsign, SERVER_CALLSIGN, resp))
 
         elif p.kind == "$ER":
-            code = p.type if p.type else (p.flds[0] if p.flds else "")
+            raw = p.type if p.type else (p.flds[0] if p.flds else "")
             desc = ":".join(p.flds[1:]) if len(p.flds) > 1 else ""
+            code = pk.resolve_error_code(raw)
             if self.on_error_text:
-                self.on_error_text(f"服务器错误 {code}: {desc}")
-            self._link.close()
+                self.on_error_text(f"服务器错误 {raw}: {desc}")
+            # 仅致命错误断链；NoFlightPlan(8)/NoSuchCallsign(7) 等非致命保持连接
+            if code < 0 or code in pk.FATAL_ERROR_CODES:
+                self._link.close()
+            elif code == pk.ERR_NO_FLIGHT_PLAN:
+                if self.on_no_flight_plan:
+                    self.on_no_flight_plan()
 
         elif p.kind == "$PI":
             ts = p.flds[0] if p.flds else "0"

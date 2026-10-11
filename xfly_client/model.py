@@ -40,6 +40,7 @@ class PlayerTrack:
     model_requested: bool = False
     aircraft: str = "A320"
     family: str = ""
+    airline: str = ""   # 涂装/航司码（PI AIRLINE 优先，否则取呼号前三位）
 
 
 _FACILITY_NAMES = {1: "FSS", 2: "DEL", 3: "GND", 4: "TWR", 5: "APP", 6: "CTR"}
@@ -91,6 +92,7 @@ class NetworkModel:
         self.on_text_received: Optional[Callable[[str, str], None]] = None
         self.on_metar_received: Optional[Callable[[str], None]] = None
         self.on_fsd_unexpected_disconnect: Optional[Callable[[], None]] = None
+        self.on_fsd_error: Optional[Callable[[str], None]] = None
         self.on_xconnect_connected: Optional[Callable[[], None]] = None
         self.on_xconnect_disconnected: Optional[Callable[[], None]] = None
         self.on_plugin_message: Optional[Callable[[dict], None]] = None
@@ -173,6 +175,7 @@ class NetworkModel:
             self.on_metar_received(m)
         session.on_socket_down_event = self._on_fsd_socket_down
         session.on_state_changed = self._on_fsd_state_change
+        session.on_error_text = self._on_fsd_error_text
 
         self.fsd = session
         session.connect()
@@ -202,6 +205,12 @@ class NetworkModel:
     def _on_fsd_state_change(self, state: str) -> None:
         if self.on_fsd_state_changed is not None:
             self.on_fsd_state_changed(state)
+
+    def _on_fsd_error_text(self, text: str) -> None:
+        """服务器 $ER 提示（非致命错误不再断链，仅显示）。"""
+        self._log(f"[fsd] {text}")
+        if self.on_fsd_error is not None:
+            self.on_fsd_error(text)
 
     def _clear_roster(self) -> None:
         with self._gate:
@@ -293,6 +302,7 @@ class NetworkModel:
                                 fields: list[str], raw: str) -> None:
         equipment = ""
         family = ""
+        airline = ""
         try:
             if resp_type == "PI" and fields:
                 # Fields=[GEN, EQUIPMENT=A320, AIRLINE=..., ...]
@@ -304,10 +314,15 @@ class NetworkModel:
                     val = val.strip()
                     if key == "EQUIPMENT" and len(val) >= 3:
                         equipment = val.upper()
+                    elif key == "AIRLINE" and len(val) >= 3:
+                        airline = val.upper()[:3]
                     elif key == "CSL":
                         family = val
             elif resp_type == "FSIPI" and len(fields) >= 9:
                 # Fields=[0, airline, equipment, ..., model串]
+                al = fields[1].strip().upper()[:3]
+                if len(al) >= 3:
+                    airline = al
                 eq = fields[2].strip()
                 if len(eq) >= 3:
                     equipment = eq.upper()
@@ -325,8 +340,11 @@ class NetworkModel:
                 tr.aircraft = equipment
                 if family:
                     tr.family = family
+                if airline:
+                    tr.airline = airline
                 self._pl_last_seen[from_callsign] = time.monotonic()
-        self._log(f"[fsd] plane info from {from_callsign}: {equipment} ({family or '-'})")
+        self._log(f"[fsd] plane info from {from_callsign}: {equipment} "
+                  f"({family or '-'}, {airline or '-'})")
 
     def _on_flight_plan_received(self, from_callsign: str, fp_type: str,
                                  flds: list[str], raw: str) -> None:
@@ -416,6 +434,7 @@ class NetworkModel:
                     ground_speed=float(tr.gs_kt),
                     aircraft=tr.aircraft,
                     aircraft_family=tr.family,
+                    airline=_derive_airline(tr),
                 ))
 
         self.xconnect.send_atc(atc_list)
@@ -482,6 +501,14 @@ class NetworkModel:
     def _log(self, msg: str) -> None:
         if self.on_log:
             self.on_log(msg)
+
+
+def _derive_airline(tr: PlayerTrack) -> str:
+    """涂装/航司码：优先用对方 PI 上报的 AIRLINE，否则取呼号前三位（大写）。"""
+    if tr.airline:
+        return tr.airline[:3].upper()
+    cs = (tr.callsign or "")[:3].upper()
+    return cs if cs.isalpha() else ""
 
 
 def _update_from_pbh(tr: PlayerTrack, pp: PilotPositionData,

@@ -74,10 +74,12 @@ make SDK=SDK
 1. 将编译产物 `XConnect.xpl` 拷贝到
    `X-Plane 目录/Resources/plugins/XConnect/`
    （Windows 上目录名任意，`.xpl` 为 64 位插件文件）
-2. 将 CSL 模型包放入 `Resources/plugins/XConnect/CSL/`，
-   目录结构支持两种格式：
-   - `CSL/{ICAO}.obj`（如 `CSL/B738.obj`）
-   - `CSL/{包名}/{ICAO}.obj`（如 `CSL/X-CSL/CSL_B738/B738.obj`）
+2. 将 CSL 模型包放入 `Resources/plugins/XConnect/CSL/`，目录结构（X-CSL 风格）：
+   - `CSL/{ICAO}/xsb_aircraft.txt` + `CSL/{ICAO}/*.obj`
+     （一架飞机为**复合模型**，一个 `OBJ8_AIRCRAFT` 变体由多个 OBJ 组成，
+     如 A346 = `A346fan.obj`（发动机/风扇）+ `A346_{涂装}.obj`（机身）；
+     涂装由 `AIRLINE`/`LIVERY` 行标识，按呼号前三位匹配）
+   - 回退：`CSL/{family}/{ICAO}.obj` 或 `CSL/{ICAO}.obj` 单文件
 3. 启动 X-Plane，插件自动监听 TCP 端口 **51001**
 4. 启动客户端并连接
 

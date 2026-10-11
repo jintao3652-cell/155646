@@ -83,6 +83,7 @@ class PlayerEntry:
     ground_speed: float = 0.0
     aircraft: str = "A320"
     aircraft_family: str = ""
+    airline: str = ""              # 涂装/航司码（呼号前三位或 PI AIRLINE）
 
 
 _FD_FIELDS = set(FlightData.__dataclass_fields__)

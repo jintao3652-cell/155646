@@ -19,6 +19,67 @@ AUTH_KEY = "ImuL1WbbhVuD8d3MuKpWn2rrLZRa9iVP"
 
 SERVER_CALLSIGN = "SERVER"
 
+# 服务器错误码（enums.h ServerErrorCode，见 FSD_PROTOCOL.md §11）
+NO_ERROR = 0
+ERR_CALLSIGN_IN_USE = 1
+ERR_INVALID_CALLSIGN = 2
+ERR_ALREADY_REGISTERED = 3
+ERR_SYNTAX = 4
+ERR_INVALID_SRC_CALLSIGN = 5
+ERR_INVALID_CID_PASSWORD = 6
+ERR_NO_SUCH_CALLSIGN = 7
+ERR_NO_FLIGHT_PLAN = 8         # 查询无计划的呼号时返回（非致命）
+ERR_NO_WEATHER_PROFILE = 9
+ERR_INVALID_REVISION = 10
+ERR_REQUESTED_LEVEL_TOO_HIGH = 11
+ERR_SERVER_FULL = 12
+ERR_CID_SUSPENDED = 13
+ERR_INVALID_CTRL = 14
+ERR_RATING_TOO_LOW = 15
+ERR_INVALID_CLIENT = 16
+ERR_AUTH_TIMEOUT = 17
+
+# 致命错误（收到即断开，swift isFatalError()）。其余（含 NoFlightPlan）不断线。
+FATAL_ERROR_CODES = frozenset({
+    ERR_CALLSIGN_IN_USE, ERR_INVALID_CALLSIGN, ERR_ALREADY_REGISTERED,
+    ERR_INVALID_CID_PASSWORD, ERR_INVALID_REVISION,
+    ERR_REQUESTED_LEVEL_TOO_HIGH, ERR_SERVER_FULL, ERR_CID_SUSPENDED,
+    ERR_RATING_TOO_LOW, ERR_INVALID_CLIENT, ERR_AUTH_TIMEOUT,
+})
+
+# 错误码名称（部分服务器以名字而非数字下发时兜底解析）
+ERROR_CODE_NAMES = {
+    "NoError": NO_ERROR,
+    "CallsignInUse": ERR_CALLSIGN_IN_USE,
+    "InvalidCallsign": ERR_INVALID_CALLSIGN,
+    "AlreadyRegistered": ERR_ALREADY_REGISTERED,
+    "SyntaxError": ERR_SYNTAX,
+    "InvalidSrcCallsign": ERR_INVALID_SRC_CALLSIGN,
+    "InvalidCidPassword": ERR_INVALID_CID_PASSWORD,
+    "NoSuchCallsign": ERR_NO_SUCH_CALLSIGN,
+    "NoFlightPlan": ERR_NO_FLIGHT_PLAN,
+    "NoWeatherProfile": ERR_NO_WEATHER_PROFILE,
+    "InvalidRevision": ERR_INVALID_REVISION,
+    "RequestedLevelTooHigh": ERR_REQUESTED_LEVEL_TOO_HIGH,
+    "ServerFull": ERR_SERVER_FULL,
+    "CidSuspended": ERR_CID_SUSPENDED,
+    "InvalidCtrl": ERR_INVALID_CTRL,
+    "RatingTooLow": ERR_RATING_TOO_LOW,
+    "InvalidClient": ERR_INVALID_CLIENT,
+    "AuthTimeout": ERR_AUTH_TIMEOUT,
+}
+
+
+def resolve_error_code(raw: str) -> int:
+    """把服务器下发的错误码（数字或名称）解析成整型；未知返回 -1。"""
+    s = (raw or "").strip()
+    if not s:
+        return -1
+    try:
+        return int(s)
+    except ValueError:
+        return ERROR_CODE_NAMES.get(s, -1)
+
 
 def encode_pbh(pitch_deg: float, bank_deg: float, heading_deg: float,
                on_ground: bool = False) -> int:

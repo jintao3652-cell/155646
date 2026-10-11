@@ -17,6 +17,7 @@
 #define RENDER_DELAY_RESERVE 1.0  /* 秒：期望间隔之外的余量 */
 #define EXTRAP_MAX_SEC      3.0   /* 秒：越过最新帧后继续外推的秒数 */
 #define SNAP_DIST_M         60000.0 /* 米：跳变判定阈值 */
+#define GROUND_CLAMP_AGL_M  6.0   /* 米：AGL 低于此值视为地面，模型贴地（消除悬空） */
 
 /* 位置历史环形缓冲：fixes[fix_head] 为最新帧 */
 #define FIX_MAX 6
@@ -32,8 +33,10 @@ typedef struct {
 typedef struct {
     char callsign[24];
     char icao[8];
+    char airline[8];       /* 航司/涂装码（呼号前三位），用于选 X-CSL 涂装变体 */
     char family[64];
     char model_icao[8];    /* 当前已加载 CSL 模型的机型（icao 变化时换型重载） */
+    char model_airline[8]; /* 当前已加载 CSL 涂装码（airline 变化时换漆重载） */
     /* 网络位置历史（最新在前）与当前渲染位置（平滑插值输出） */
     PositionFix fixes[FIX_MAX];
     int fix_count;   /* 有效帧数（≤ FIX_MAX） */

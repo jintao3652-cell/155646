@@ -1,7 +1,12 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.15)
 project(XConnect C)
 
 set(CMAKE_C_STANDARD 99)
+
+# X-Plane 插件必须无动态 MSVC 运行库依赖（否则加载 .xpl 前需解依赖，
+# 目标机可能缺少 VCRUNTIME140.dll / UCRT）。使用静态 CRT（/MT）。
+# 需 CMake >= 3.15（CMP0091 新行为）方能生效。
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # X-Plane SDK 路径。默认使用仓库内置 SDK（XConnect/SDK，XPSDK 43.0）。
 # 也可覆盖：cmake -DXPlaneSDK=<路径>
@@ -45,7 +50,10 @@ set_target_properties(XConnect PROPERTIES
 
 if(WIN32)
     target_compile_definitions(XConnect PRIVATE _CRT_SECURE_NO_WARNINGS IBM)
-    target_compile_options(XConnect PRIVATE /O2 /W3)
+    # /utf-8：源码为 UTF-8。否则在中文 Windows（代码页 936）下 MSVC 按 GBK
+    # 解析，中文注释的尾字节会被当作前导字节吞掉换行，导致行号错乱/编译失败
+    # （en-US 的 CI 用 cp1252 不触发，故此前只在本地中文系统复现）。
+    target_compile_options(XConnect PRIVATE /O2 /W3 /utf-8)
     # 导入库：SDK 430 为 XPLM_64.lib；旧版为 XPLM.lib
     find_library(XPLM_LIB NAMES XPLM_64 XPLM
         HINTS "${XPLM_LIB_HINTS}" "${XPlaneSDK}/lib")

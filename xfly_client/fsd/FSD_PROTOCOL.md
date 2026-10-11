@@ -346,7 +346,9 @@ CallsignInUse、InvalidCallsign、AlreadyRegistered、InvalidCidPassword、
 InvalidRevision、RequestedLevelTooHigh、ServerFull、CidSuspended、
 RatingTooLow、InvalidClient、AuthTimeout。
 
-> XFlySim-Client `session.py` 收到 `$ER` 时展示错误并直接断链（等价于全部视为致命）。
+> XFlySim-Client `session.py` 收到 `$ER` 时展示错误；仅当错误码属于上述**致命集合**
+> 时断链，其余（含 `NoFlightPlan(8)`、`NoSuchCallsign(7)`）保持连接。飞机计划查询
+> `$CQ...:SERVER:FP:<呼号>` 对无计划的目标会返回 `NoFlightPlan`，属正常应答。
 
 ## 12. 其他扩展报文
 

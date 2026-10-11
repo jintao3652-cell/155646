@@ -102,10 +102,8 @@ static void handle_client_line(const char* line) {
                             for (slot = 0; slot < PLAYER_MAX; slot++) {
                                 if (!g_players[slot].active) {
                                     p = &g_players[slot];
-                                    memset(p, 0, sizeof(*p));
+                                    memset(p, 0, sizeof(*p));   /* 含 model（inst_count=0/tried=0） */
                                     p->active = 1;
-                                    p->model.inst = NULL;
-                                    p->model.tried = 0;
                                     strncpy(p->callsign, f->sval,
                                             sizeof(p->callsign) - 1);
                                     p->callsign[sizeof(p->callsign) - 1] = '\0';
@@ -132,6 +130,7 @@ static void handle_client_line(const char* line) {
                             double lat = 0, lon = 0, alt_m = 0;
                             double pitch = 0, bank = 0, heading = 0, gs = 0;
                             GETSTR("aircraft", p->icao);
+                            GETSTR("airline", p->airline);
                             GETSTR("aircraft_family", p->family);
                             GETNUM("latitude", lat);
                             GETNUM("longitude", lon);
@@ -223,7 +222,7 @@ static void refresh_csl_status(void) {
     for (i = 0; i < PLAYER_MAX; i++) {
         Player* p = &g_players[i];
         if (!p->active || !p->icao[0]) continue;
-        if (p->model.inst) {
+        if (p->model.inst_count > 0) {
             if (ln < PLAYER_MAX)
                 snprintf(loaded[ln++], 8, "%s", p->icao);
         } else if (p->model.tried) {
