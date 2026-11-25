@@ -27,6 +27,9 @@
 
 - 服务器不支持 `^` 视觉位置时返回 `$ER 004 Syntax error` 刷屏：按最近发送的
   `^`/`#SB VI` 自动关闭对应报文（保留 `@`），并节流其它 004 日志。
+- ACC 部件规范化：只发送服务器认识的 6 个灯光键（去掉 recognition/cabin/wing），
+  并把 gear_down/on_ground/lights/engines.on 统一为 true/false。修复服务端
+  `engines=null`、`gearDown=false`、灯光全空的问题。
 
 - 远端呼号标签：改用 `xplm_Phase_Window`，修正 FOV dataref
   （`vertical_field_of_view_deg`）与航向/横滚基向量。

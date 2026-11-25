@@ -342,18 +342,49 @@ class FsdSession:
         self._acfg_tokens -= 1
         return True
 
+    # XFlySim 服务器的 ACC schema 只认这 6 个灯光键；多发
+    # recognition_on/cabin_on/wing_on 会让整块 aircraft 配置解析失败。
+    _SERVER_LIGHT_KEYS = frozenset({
+        "strobe_on", "landing_on", "taxi_on",
+        "beacon_on", "nav_on", "logo_on",
+    })
+    _BOOL_KEYS = frozenset({
+        "gear_down", "spoilers_out", "on_ground", "is_full_data",
+    })
+
     @staticmethod
     def _norm_parts(parts) -> dict:
-        """规范化机模部件：浮点四舍五入到 1 位、丢弃 NaN/Inf（保证 JSON 合法、
-        消除 5Hz 帧间 N1 抖动导致的无效 diff）。"""
+        """规范化机模部件：浮点四舍五入、丢弃 NaN/Inf、布尔化、过滤未知灯光。
+
+        服务器对 ACC 的解析很严格（多一个未知键就可能整块丢弃），所以这里
+        只保留它认识的灯光键，并把 1/0 转成 true/false。
+        """
         out: dict = {}
         for k, v in parts.items():
             if isinstance(v, dict):
-                out[k] = FsdSession._norm_parts(v)
+                if k == "lights":
+                    out[k] = {
+                        lk: bool(lv)
+                        for lk, lv in v.items()
+                        if lk in FsdSession._SERVER_LIGHT_KEYS
+                    }
+                else:
+                    out[k] = FsdSession._norm_parts(v)
+            elif isinstance(v, bool):
+                out[k] = v
+            elif isinstance(v, int):
+                if k in FsdSession._BOOL_KEYS or k == "on" or k.endswith("_on"):
+                    out[k] = bool(v)
+                else:
+                    out[k] = v
             elif isinstance(v, float):
-                if math.isfinite(v):
+                if not math.isfinite(v):
+                    continue          # NaN/Inf 丢弃，不进入 diff
+                if (k in FsdSession._BOOL_KEYS or k == "on"
+                        or k.endswith("_on")):
+                    out[k] = bool(v)
+                else:
                     out[k] = round(v, 1)
-                # 非有限值丢弃，不进入 diff
             else:
                 out[k] = v
         return out
