@@ -67,6 +67,9 @@ static const char* kCslDataRefs[CSL_MAX_DATAREFS] = {
     "libxplanemp/gear/tire_vertical_deflection_mtr[1]", /* 31 */
     "libxplanemp/gear/tire_vertical_deflection_mtr[2]", /* 32 */
     "libxplanemp/misc/touch_down",                  /* 33 */
+    /* 很多 X-CSL（如 A321）的风扇/螺旋桨用全局运行时间驱动旋转，
+     * thrust_ratio 只负责切换静态/高速扇叶层。不提供这个值 → 扇叶恒 0 不转。 */
+    "sim/time/total_running_time_sec",              /* 34 */
 };
 #define CSL_DATAREF_COUNT ((int)(sizeof(kCslDataRefs) / sizeof(kCslDataRefs[0])))
 

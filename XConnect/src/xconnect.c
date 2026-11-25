@@ -229,6 +229,14 @@ static void handle_client_line(const char* line) {
                                             p->engines_on = (int)emask;
                                         }
                                     }
+                                    if (!p->logged_parts) {
+                                        p->logged_parts = 1;
+                                        xconnect_logf("parts: %s gear=%d(has=%d) "
+                                                      "flaps=%d eng=%d lights=%u",
+                                                      p->callsign, p->gear_down,
+                                                      p->has_gear, p->flaps_pct,
+                                                      p->engines_on, p->lights);
+                                    }
                                 }
                             }
                             p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */

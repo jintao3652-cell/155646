@@ -1,6 +1,8 @@
 /* XConnect — 玩家表与位置时间插值平滑。 */
 #include "players.h"
 
+#include "XPLMDataAccess.h"   /* XPLMFindDataRef / XPLMGetDataf */
+
 Player g_players[PLAYER_MAX];
 
 /* ---------------- 平滑插值助手 ---------------- */
@@ -194,7 +196,12 @@ void interpolate_player(Player* p, double now) {
 
 void update_players(double now) {
     float anim[CSL_MAX_DATAREFS];
+    double sim_time;
     int i;
+    static XPLMDataRef s_sim_time_ref = NULL;
+    if (!s_sim_time_ref)
+        s_sim_time_ref = XPLMFindDataRef("sim/time/total_running_time_sec");
+    sim_time = s_sim_time_ref ? (double)XPLMGetDataf(s_sim_time_ref) : now;
     LOCK_ENTER(g_players_lock);
     for (i = 0; i < PLAYER_MAX; i++) {
         Player* p = &g_players[i];
@@ -324,16 +331,19 @@ void update_players(double now) {
                     any_engine = (!f->on_ground || f->gs > 10.0);
                 if (any_engine) {
                     const float fan_deg = (float)fmod(now * 1200.0, 360.0);
-                    anim[9] = 0.5f;              /* thrust_ratio */
+                    anim[9] = 0.8f;              /* thrust_ratio：选中 0.5-1.0 高速扇叶层 */
                     anim[21] = fan_deg;          /* prop_rotation_angle_deg */
                     anim[22] = fan_deg;          /* engine_rotation_angle_deg */
                     anim[23] = fan_deg;          /* ...[0] */
                     anim[24] = 20.0f;            /* speed rad/s */
                     anim[25] = 20.0f;            /* speed rad/s [0] */
+                    /* A321 等 CSL 的风扇直接由全局运行时间驱动 */
+                    anim[34] = (float)sim_time;  /* sim/time/total_running_time_sec */
                 } else {
                     anim[9] = 0.0f;
                     anim[21] = anim[22] = anim[23] = 0.0f;
                     anim[24] = anim[25] = 0.0f;
+                    anim[34] = 0.0f;
                 }
             }
         }
