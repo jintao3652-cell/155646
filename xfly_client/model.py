@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -34,6 +35,13 @@ PLAYER_TIMEOUT = 30.0  # 玩家位置包通常 5s 一次
 # 避免 3s 重复帧把插值速度拆成“零速→跳变→零速”，滑行看起来一卡一卡。
 ROSTER_PUSH_INTERVAL = 1.0
 
+# 远端 ACC 全量轮询：只靠增量广播会漏包，导致灯光/起落架/襟翼长期陈旧。
+# 50km 内每架每 2s 一次（全部请求）；50km 外 30s 一次，每轮最多 10 个。
+ACC_FULL_POLL_NEAR_S = 2.0
+ACC_FULL_POLL_FAR_S = 30.0
+ACC_FULL_NEAR_RADIUS_M = 50000.0
+ACC_FULL_FAR_PER_TICK = 10
+
 
 @dataclass
 class PlayerTrack:
@@ -56,6 +64,18 @@ class PlayerTrack:
     registration: str = ""  # 尾号（PI LIVERY/REG；本客户端把尾号放 LIVERY，swift 不提供）
     # 远端 ACC 机模配置（增量合并后的灯光/襟翼/起落架/扰流板等），下发给插件渲染
     parts: dict = field(default_factory=dict)
+
+
+def _dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Haversine 距离（米）。"""
+    r = 6371000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lon2 - lon1)
+    a = (math.sin(dp * 0.5) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(dl * 0.5) ** 2)
+    return 2.0 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
 def _merge_parts(dst: dict, src: dict) -> None:
@@ -565,6 +585,55 @@ class NetworkModel:
         # 机型与涂装供插件选 CSL
         self._request_unknown_models()
 
+    def _poll_aircraft_configs(self, items, now: float) -> int:
+        """50km 内每架每 2s 请求全量 ACC；50km 外 30s 一次（本轮最多 10 个）。
+
+        近距离全部请求，不做本轮限流（用户要求 50km 内都是 2s）。
+        分开成独立方法便于单测；调用方已确认 FSD online。
+        """
+        fsd = self.fsd
+        if fsd is None or fsd.state != STATE_ONLINE:
+            return 0
+        own_lat = float(getattr(fsd, "_lat", 0.0) or 0.0)
+        own_lon = float(getattr(fsd, "_lon", 0.0) or 0.0)
+        have_pos = abs(own_lat) > 1e-6 or abs(own_lon) > 1e-6
+
+        near = []
+        far = []
+        for tr in items:
+            if have_pos and _dist_m(own_lat, own_lon,
+                                    tr.lat, tr.lon) <= ACC_FULL_NEAR_RADIUS_M:
+                near.append(tr)
+            else:
+                far.append(tr)
+
+        def send(tr) -> None:
+            self._parts_req_at[tr.callsign] = now
+            try:
+                fsd.request_aircraft_config(tr.callsign)
+            except Exception:
+                pass
+
+        sent = 0
+        for tr in near:
+            if (now - self._parts_req_at.get(tr.callsign, 0.0)
+                    < ACC_FULL_POLL_NEAR_S):
+                continue
+            send(tr)
+            sent += 1
+
+        far_sent = 0
+        for tr in far:
+            if far_sent >= ACC_FULL_FAR_PER_TICK:
+                break
+            if (now - self._parts_req_at.get(tr.callsign, 0.0)
+                    < ACC_FULL_POLL_FAR_S):
+                continue
+            send(tr)
+            far_sent += 1
+            sent += 1
+        return sent
+
     def _request_unknown_models(self, limit: int = 5) -> None:
         """远程玩家机型/涂装识别（FSD 位置包不带机型，需外部补齐）：
         1) #SB ...:PIR → PI:GEN EQUIPMENT/AIRLINE/LIVERY 应答（swift/xPilot 系，
@@ -579,16 +648,7 @@ class NetworkModel:
         now = time.monotonic()
         with self._gate:
             items = list(self._players.values())
-        # 远端 ACC：只靠增量广播会漏包，导致灯光/起落架/襟翼长期停在旧值。
-        # 每 30s 主动请求一次全量（对方回 is_full_data=true），保证最终一致。
-        for tr in items:
-            if now - self._parts_req_at.get(tr.callsign, 0.0) < 30.0:
-                continue
-            self._parts_req_at[tr.callsign] = now
-            try:
-                fsd.request_aircraft_config(tr.callsign)
-            except Exception:
-                pass
+        self._poll_aircraft_configs(items, now)
         req = 0
         for tr in items:
             if req >= limit:

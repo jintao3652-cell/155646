@@ -18,6 +18,7 @@
 
 ### Changed
 
+- 远端全量 ACC 轮询：50km 内每 2s（全部请求），50km 外 30s（每轮最多 10 个）。
 - `fsd.log` 10MB×3、`xconnect.log` 8MB×3 滚动；`#AP` 密码统一替换为 `***`。
 - XConnect 降低高频日志（`send flight_data` 30s、`players updated` 仅变化时）。
 - 桥接握手信息写入客户端状态，便于诊断版本/能力不一致。
