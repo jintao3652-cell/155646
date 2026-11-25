@@ -21,7 +21,8 @@
 #define LABEL_PHASE           xplm_Phase_Window
 #define LABEL_BEFORE          1
 
-static XPLMDataRef s_fov_ref = NULL;
+static XPLMDataRef s_fov_ref = NULL;    /* vertical_field_of_view_deg */
+static XPLMDataRef s_hfov_ref = NULL;   /* field_of_view_deg（水平） */
 
 /* 诊断：确认绘制回调在外部视角也会被调用，以及第一个标签的屏幕位置。
  * 每次插件启动只在日志里各记一次。 */
@@ -99,21 +100,33 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
     int i;
     (void)refcon;
 
-    if (!s_fov_ref)
-        s_fov_ref = XPLMFindDataRef("sim/graphics/view/field_of_view_vertical_deg");
+    if (!s_fov_ref) {
+        /* 注意：field_of_view_vertical_deg 是"多显示器俯仰偏移"，默认 0，
+         * 不是垂直 FOV。真正的垂直 FOV 是 vertical_field_of_view_deg。 */
+        s_fov_ref = XPLMFindDataRef("sim/graphics/view/vertical_field_of_view_deg");
+        s_hfov_ref = XPLMFindDataRef("sim/graphics/view/field_of_view_deg");
+    }
     XPLMReadCameraPosition(&cam);
     XPLMGetScreenSize(&sw, &sh);
     if (sw < 16 || sh < 16) return 1;
     aspect = (double)sw / (double)sh;
     {
-        const double fov_deg = s_fov_ref ? (double)XPLMGetDataf(s_fov_ref) : 70.0;
+        const double d2r = 3.14159265358979323846 / 180.0;
+        double fov_deg = s_fov_ref ? (double)XPLMGetDataf(s_fov_ref) : 0.0;
+        double hfov_deg = 0.0;
         const double zoom = cam.zoom > 0.0001 ? (double)cam.zoom : 1.0;
-        half_tan = tan(fov_deg * 0.5 * 3.14159265358979323846 / 180.0) / zoom;
+        if (fov_deg < 1.0 || fov_deg > 179.0) {
+            /* 退而用水平 FOV 换算垂直 FOV；再不行用 60° 水平默认值。 */
+            hfov_deg = s_hfov_ref ? (double)XPLMGetDataf(s_hfov_ref) : 0.0;
+            if (hfov_deg < 1.0 || hfov_deg > 179.0) hfov_deg = 60.0;
+            fov_deg = 2.0 * atan(tan(hfov_deg * 0.5 * d2r) / aspect) / d2r;
+        }
+        half_tan = tan(fov_deg * 0.5 * d2r) / zoom;
         if (!s_logged_call) {
             s_logged_call = 1;
             xconnect_logf("labels: draw called phase=%d before=%d screen=%dx%d "
-                          "fov=%.1f zoom=%.2f",
-                          (int)phase, isBefore, sw, sh, fov_deg, zoom);
+                          "vfov=%.1f hfov=%.1f zoom=%.2f",
+                          (int)phase, isBefore, sw, sh, fov_deg, hfov_deg, zoom);
         }
     }
 
