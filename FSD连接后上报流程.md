@@ -148,9 +148,9 @@ webapp connect worker：登录后 sleep(1s) → 若有已保存飞行计划 → 
 |---|---|---|
 | `lights` | object | `strobe_on` / `landing_on` / `taxi_on` / `beacon_on` / `nav_on` / `logo_on` / `recognition_on` / `cabin_on` / `wing_on` |
 | `gear_down` | bool | 起落架放下 |
-| `flaps_pct` | int | 襟翼百分比 |
+| `flaps_pct` | int | 襟翼百分比 **0..100 整数**（`round(ratio*100)`，不是 0..1 比例）|
 | `spoilers_out` | bool | 扰流板 |
-| `engines` | list | 每台 `{"on": bool, "rpm_pct": double}`（发动机编号不随 JSON 传输） |
+| `engines` | **object** | 键=发动机编号（1 基字符串），值**只含** `{"on": bool}`。如 `{"1":{"on":false},"2":{"on":false}}` |
 | `on_ground` | bool | 地面标志 |
 | `is_full_data` | bool | `true`=全量 / `false`=增量 |
 
@@ -277,8 +277,7 @@ $ZRCCA1501:SERVER:eaf9c2f5b1c1f7d8c7b1e2a3f4d5b6c7  ← MD5 challenge/response
 全量应答:  $CQCCA1501:CSN3456:ACC:{"config":{"lights":{"strobe_on":true,"landing_on":false,
            "taxi_on":false,"beacon_on":true,"nav_on":true,"logo_on":false,
            "recognition_on":false,"cabin_on":false,"wing_on":false},"gear_down":true,
-           "flaps_pct":0,"spoilers_out":false,"engines":[{"on":true,"rpm_pct":0.5},
-           {"on":true,"rpm_pct":0.5}],"on_ground":true,"is_full_data":true}}
+           "flaps_pct":0,"spoilers_out":false,"engines":{"1":{"on":true},"2":{"on":true}},"on_ground":true,"is_full_data":true}}
 
 增量广播:  $CQCCA1501:@94836:ACC:{"config":{"flaps_pct":35,"lights":{"landing_on":true},
            "is_full_data":false}}

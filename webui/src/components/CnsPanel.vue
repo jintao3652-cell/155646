@@ -26,6 +26,11 @@
   const msgActive = computed(() => route.path === '/log')
   const setActive = computed(() => route.path === '/settings')
   const mainActive = computed(() => route.path === '/main')
+  /* VHF 灯：至少一个 COM 通电且在收听才亮，否则降级为 info（灰） */
+  const vhfOn = computed(() =>
+    (store.st.com1Pwr && store.st.audSel1) ||
+    (store.st.com2Pwr && store.st.audSel2))
+  const vhfTag = computed(() => vhfOn.value ? 'success' : 'info')
 </script>
 
 <template>
@@ -33,7 +38,7 @@
     <el-row>
       <el-col :span="24">
         <div class="rmp-status-light-group">
-          <ScreenStatusLight :text="t('cns.vhf')" status="success"></ScreenStatusLight>
+          <ScreenStatusLight :text="t('cns.vhf')" :status="vhfTag"></ScreenStatusLight>
           <ScreenStatusLight :text="t('cns.hf')" status="success"></ScreenStatusLight>
           <ScreenStatusLight :text="t('cns.tel')" status="success"></ScreenStatusLight>
           <ScreenStatusLight :text="t('cns.atc')" status="success"></ScreenStatusLight>

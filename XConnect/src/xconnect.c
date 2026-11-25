@@ -12,6 +12,7 @@
 #include "datarefs.h"
 #include "players.h"
 #include "labels.h"
+#include "xstr.h"
 
 static char g_log_path[2048] = "";
 
@@ -24,9 +25,18 @@ static char g_csl_missing[PLAYER_MAX][8];
 static int g_csl_loaded_n = 0;
 static int g_csl_missing_n = 0;
 static double g_last_send_log = -1.0;
-static int g_running = 0;
+static volatile int g_running = 0;
+/* 网络线程句柄：卸载时需等待其真正退出，再销毁锁/CSL */
+#ifdef _WIN32
+static HANDLE g_net_thread = NULL;
+#else
+static pthread_t g_net_thread;
+static int g_net_thread_started = 0;
+#endif
 static double g_last_send = -1.0;   /* xc_now_sec 绝对时间 */
 static int g_atc_count = 0;
+/* 手动重扫 dataref 的请求标志：网络线程置位，主线程消费（XPLM 非线程安全） */
+static volatile int g_scan_request = 0;
 
 void* g_players_lock = NULL;   /* pthread_mutex_t / CRITICAL_SECTION */
 void* g_sock_lock = NULL;
@@ -64,6 +74,12 @@ void xconnect_logf(const char* fmt, ...) {
 }
 
 /* ---------------- 网络线程 ---------------- */
+
+/* ---------------- 网络线程 ---------------- */
+
+/* 反向控制报文处理器（定义在下方；handle_client_line 先用到，故先声明） */
+static void handle_radio_command(const Json* root);
+static void handle_xpdr_command(const Json* root);
 
 static void handle_client_line(const char* line) {
 #ifdef _WIN32
@@ -129,8 +145,12 @@ static void handle_client_line(const char* line) {
                              * 平滑在 update_players / interpolate_player 完成 */
                             double lat = 0, lon = 0, alt_m = 0;
                             double pitch = 0, bank = 0, heading = 0, gs = 0;
+                            double agl_m = -1.0;   /* 未知：客户端未提供 */
+                            int on_ground = 0;
+                            const Json* jg;
                             GETSTR("aircraft", p->icao);
                             GETSTR("airline", p->airline);
+                            GETSTR("registration", p->reg);
                             GETSTR("aircraft_family", p->family);
                             GETNUM("latitude", lat);
                             GETNUM("longitude", lon);
@@ -140,9 +160,20 @@ static void handle_client_line(const char* line) {
                             GETNUM("bank", bank);
                             GETNUM("heading", heading);
                             GETNUM("ground_speed", gs);
+                            /* altitude_agl（ft）：^/#SL/#ST 包携带的离地高度，
+                             * 缺失/负值表示未知 */
+                            jg = json_get(el, "altitude_agl");
+                            if (jg && jg->type == JSON_NUM && jg->num >= 0.0)
+                                agl_m = jg->num * 0.3048;
+                            /* on_ground：遥测 onGround 标志（bool 或 0/1） */
+                            jg = json_get(el, "on_ground");
+                            if (jg) {
+                                if (jg->type == JSON_BOOL) on_ground = jg->bval ? 1 : 0;
+                                else if (jg->type == JSON_NUM) on_ground = jg->num != 0.0;
+                            }
                             p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
                             push_fix(p, lat, lon, alt_m, heading, pitch,
-                                     bank, gs, p->last_seen);
+                                     bank, gs, agl_m, on_ground, p->last_seen);
                         }
                     }
                     /* 不在列表中的玩家由超时机制（PLAYER_TIMEOUT）清理 */
@@ -156,6 +187,15 @@ static void handle_client_line(const char* line) {
                     g_atc_count = json_len(data);
                     LOCK_LEAVE(g_players_lock);
                 }
+            } else if (strcmp(jt->sval, "Send:RADIO") == 0) {
+                handle_radio_command(root);
+            } else if (strcmp(jt->sval, "Send:XPDR") == 0) {
+                handle_xpdr_command(root);
+            } else if (strcmp(jt->sval, "Send:SCAN") == 0) {
+                /* 手动重扫 dataref（诊断用）：换了机模之后想重新枚举，
+                 * 不必重启 X-Plane。结果写进 xconnect.log 的 dref: 行。
+                 * 注意必须在主线程执行（XPLM 非线程安全），这里只置标志。 */
+                g_scan_request = 1;
             }
         }
         json_free(root);
@@ -167,11 +207,176 @@ static void handle_client_line(const char* line) {
 #endif
 }
 
+/* ---------------- 反向控制报文解析（网络线程） ----------------
+ *
+ * 只入队，实际写 dataref 由主线程的 xconnect_control_drain() 完成
+ * （XPLM 非线程安全）。报文格式与 MConnect（MSFS）完全一致。 */
+
+/* 取数值字段（数字或 bool 都接受） */
+static int jnum_field(const Json* obj, const char* key, double* out) {
+    const Json* t = json_get(obj, key);
+    if (!t) return 0;
+    if (t->type == JSON_NUM) { *out = t->num; return 1; }
+    if (t->type == JSON_BOOL) { *out = t->bval ? 1.0 : 0.0; return 1; }
+    return 0;
+}
+
+/* Send:RADIO
+ *   {"type":"Send:RADIO","com":1,"active":true,"freq":122800}
+ *   {"type":"Send:RADIO","com":1,"swap":true}         主备互换（走命令）
+ *   {"type":"Send:RADIO","com":1,"flip":true}         同上（别名）
+ *   {"type":"Send:RADIO","com":1,"tx":true}           切发话通道（走命令）
+ *   {"type":"Send:RADIO","com":1,"monitor":true}      收听开关 toggle（走命令）
+ *   {"type":"Send:RADIO","com":1,"power":0}           COM 电源 on/off（走命令）
+ *
+ * 为什么互换/发话/收听/电源走命令而不是写 dataref：
+ * 机模内部监听的是 X-Plane 命令，直接改 dataref 会让机模面板与实际值脱节
+ * （ToLiss/Fenix 尤其明显）。MobiFlight 也是这么分的：DataRef 写 vs Command 触发。 */
+static void handle_radio_command(const Json* root) {
+    XCommand c;
+    double v;
+    int com = 1, active = 1, swap = 0;
+    const Json* t;
+
+    memset(&c, 0, sizeof(c));
+    if (jnum_field(root, "com", &v)) com = (int)v;
+    if (com < 1 || com > 3) {
+        xconnect_logf("control: RADIO bad com=%d", com);
+        return;
+    }
+    t = json_get(root, "active");
+    if (t) active = (t->type == JSON_BOOL) ? (t->bval ? 1 : 0)
+                                          : (int)(t->num != 0.0);
+    if (jnum_field(root, "swap", &v) && v != 0.0) swap = 1;
+
+    /* 命令型操作（互斥，按顺序判定） */
+    if (swap) {
+        c.kind = XCMD_COM_FLIP;      /* 命令路径，机模会同步面板 */
+        c.com_index = com;
+        xconnect_control_post(&c);
+        return;
+    }
+    if (jnum_field(root, "flip", &v) && v != 0.0) {
+        /* swap 的别名，语义相同 */
+        c.kind = XCMD_COM_FLIP;
+        c.com_index = com;
+        xconnect_control_post(&c);
+        return;
+    }
+    /* 只在值为真时触发。此前只看键是否存在，"tx": false / "monitor": false
+     * 也会执行一次 toggle，语义错误。 */
+    if (jnum_field(root, "tx", &v) && v != 0.0) {
+        c.kind = XCMD_AUDIO_TX;
+        c.com_index = com;
+        xconnect_control_post(&c);
+        return;
+    }
+    if (jnum_field(root, "monitor", &v) && v != 0.0) {
+        c.kind = XCMD_AUDIO_MON;
+        c.com_index = com;
+        xconnect_control_post(&c);
+        return;
+    }
+    t = json_get(root, "power");
+    if (t) {
+        int on = (t->type == JSON_BOOL) ? (t->bval ? 1 : 0)
+                                        : (int)(t->num != 0.0);
+        c.kind = XCMD_COM_POWER;
+        c.com_index = com;
+        c.active = on;
+        xconnect_control_post(&c);
+        return;
+    }
+
+    if (!jnum_field(root, "freq", &v) || v <= 0.0) {
+        xconnect_logf("control: RADIO missing freq");
+        return;
+    }
+    {
+        long hz = xconnect_mhz1000_to_hz((int)(v + 0.5));
+        if (hz <= 0) {
+            xconnect_logf("control: RADIO freq out of band: %.0f", v);
+            return;
+        }
+        c.kind = XCMD_COM_SET;
+        c.com_index = com;
+        c.active = active;
+        c.hz = hz;
+        xconnect_control_post(&c);
+    }
+}
+
+/* Send:XPDR
+ *   {"type":"Send:XPDR","code":"1234"} / {"code":1234}
+ *   {"type":"Send:XPDR","state":3}    */
+static void handle_xpdr_command(const Json* root) {
+    XCommand c;
+    double v;
+    const Json* t;
+
+    memset(&c, 0, sizeof(c));
+
+    t = json_get(root, "code");
+    if (t) {
+        int code = -1;
+        if (t->type == JSON_STR) {
+            code = xconnect_parse_squawk(t->sval);
+        } else if (t->type == JSON_NUM) {
+            int n = (int)(t->num + 0.5);
+            if (n >= 0 && n <= 7777) {
+                char tmp[8];
+                snprintf(tmp, sizeof(tmp), "%04d", n);
+                code = xconnect_parse_squawk(tmp);
+            }
+        }
+        if (code < 0) {
+            xconnect_logf("control: XPDR bad code");
+            return;
+        }
+        c.kind = XCMD_XPNDR_CODE;
+        c.code = code;
+        xconnect_control_post(&c);
+        return;
+    }
+
+    if (jnum_field(root, "state", &v)) {
+        int st = (int)(v + 0.5);
+        if (st < 0) st = 0;
+        if (st > 7) st = 7;      /* 0=Off..7=TA/RA（含 TA only / TA-RA） */
+        c.kind = XCMD_XPNDR_MODE;
+        c.mode = st;
+        xconnect_control_post(&c);
+        return;
+    }
+
+    /* IDENT：transponder_id 是只读 dataref，只能触发命令 */
+    t = json_get(root, "ident");
+    if (t) {
+        int on = (t->type == JSON_BOOL) ? (t->bval ? 1 : 0)
+                                        : (int)(t->num != 0.0);
+        if (on) {
+            c.kind = XCMD_XPNDR_IDENT;
+            xconnect_control_post(&c);
+            return;
+        }
+        /* ident=false 无法"取消"——命令是一次性脉冲，忽略并记日志 */
+        xconnect_logf("control: XPDR ident=false ignored (momentary)");
+        return;
+    }
+
+    xconnect_logf("control: XPDR no actionable field");
+}
+
 static THREAD_RET net_thread(THREAD_ARG arg) {
     (void)arg;
     g_listen_sock = net_listen(LISTEN_PORT);
     if (g_listen_sock == NET_INVALID) {
         xconnect_logf("net: listen %d failed", LISTEN_PORT);
+        return 0;
+    }
+    if (!g_running) {   /* 创建线程与插件卸载竞态：立刻关闭新监听并退出 */
+        net_close(g_listen_sock);
+        g_listen_sock = NET_INVALID;
         return 0;
     }
     xconnect_logf("net: listening on %d", LISTEN_PORT);
@@ -191,7 +396,9 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
         for (;;) {
             /* 玩家列表单行 JSON 可能很大（数百玩家），放宽到 256KB */
             static char line[256 * 1024];
-            int n = net_read_line(sock, line, sizeof(line));
+            int n;
+            if (!g_running) break;   /* 卸载中：尽快退出连接循环 */
+            n = net_read_line(sock, line, sizeof(line));
             if (n == -2) continue;          /* 超长行已丢弃，继续读下一条 */
             if (n <= 0) break;
             handle_client_line(line);
@@ -249,16 +456,26 @@ static void refresh_csl_status(void) {
 
     {
         char line[4096];
-        int n = snprintf(line, sizeof(line),
-                         "{\"type\":\"csl_status\",\"loaded\":[");
+        int n;
+        /* ⚠️ 用 XSTR_APPEND 而不是 `n += snprintf(...)`。
+         *
+         * `n += snprintf` 是错的：截断时 snprintf 返回"本应写入的长度"，
+         * 该值大于实际剩余空间 → n 越过 sizeof(line) → 下一轮
+         * `sizeof(line) - n` 溢出成巨大 size_t → 越界写破坏堆栈。
+         *
+         * 这里**真能触发**：PLAYER_MAX=256，loaded 和 missing 各最多 256
+         * 个 ICAO，每个 `"XXXX",` 约 8 字节，两组加起来 4096 字节刚好卡在
+         * 边界上，满员 + 长机型码就溢出。XSTR_APPEND 会自己夹住位置。 */
+        n = snprintf(line, sizeof(line),
+                     "{\"type\":\"csl_status\",\"loaded\":[");
+        if (n < 0) n = 0;
+        if (n >= (int)sizeof(line)) n = (int)sizeof(line) - 1;
         for (i = 0; i < ln; i++)
-            n += snprintf(line + n, sizeof(line) - (size_t)n,
-                          "%s\"%s\"", i ? "," : "", loaded[i]);
-        n += snprintf(line + n, sizeof(line) - (size_t)n, "],\"missing\":[");
+            XSTR_APPEND(line, n, "%s\"%s\"", i ? "," : "", loaded[i]);
+        XSTR_APPEND(line, n, "],\"missing\":[");
         for (i = 0; i < mn; i++)
-            n += snprintf(line + n, sizeof(line) - (size_t)n,
-                          "%s\"%s\"", i ? "," : "", missing[i]);
-        n += snprintf(line + n, sizeof(line) - (size_t)n, "]}");
+            XSTR_APPEND(line, n, "%s\"%s\"", i ? "," : "", missing[i]);
+        XSTR_APPEND(line, n, "]}");
         LOCK_ENTER(g_sock_lock);
         if (g_client_sock != NET_INVALID)
             net_send_line(g_client_sock, line);
@@ -292,6 +509,12 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
             dref_scanned = 1;
             discover_matching_datarefs();
         }
+        /* 客户端请求重扫（Send:SCAN）：换机模后无需重启 X-Plane */
+        if (g_scan_request) {
+            g_scan_request = 0;
+            xconnect_logf("dref: rescan requested by client");
+            discover_matching_datarefs();
+        }
 
         /* 应答机自定义旋钮值周期转储（每秒一次，校准用） */
         dump_xpdr_values();
@@ -323,6 +546,9 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
         }
 
         update_players(xc_now_sec());
+
+        /* 反向控制：执行客户端排队的应答机/频率写入（XPLM 只能主线程调） */
+        xconnect_control_drain();
         /* 无客户端时不推送 CSL 状态（省去 JSON 构建与遍历） */
         {
             int has_client;
@@ -364,7 +590,7 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
                  sys, XPLMGetDirectorySeparator(),
                  XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
     }
-    xconnect_logf("XConnect v8 (built %s %s): entry", __DATE__, __TIME__);
+    xconnect_logf("XConnect v29 (built %s %s): entry", __DATE__, __TIME__);
     xconnect_logf("  params: outName=%p outSig=%p outDesc=%p",
                   (void*)outName, (void*)outSig, (void*)outDesc);
 
@@ -379,12 +605,27 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
 
     if (net_init() != 0) {
         XPLMDebugString(XCONNECT_NAME ": network init failed\n");
-        return 1;
+        xconnect_logf("  net init FAILED -> abort start");
+        g_running = 0;
+        lock_done();
+        return 0;   /* 启动失败必须返回 0，否则 X-Plane 认为插件已加载但网络不可用 */
     }
     xconnect_logf("  step: net init done");
 
     load_all_datarefs();
     xconnect_logf("  step: datarefs done");
+
+    /* 机型适配表（可选）：放在插件目录下，缺失/损坏都只是退回通用 dataref。
+     * 用于 ToLiss/Fenix 这类把无线电存进私有 dataref 的机模。 */
+    {
+        char sys[1024], rp[1200];
+        XPLMGetSystemPath(sys);
+        snprintf(rp, sizeof(rp), "%sResources%splugins%sXConnect%sradio.json",
+                 sys, XPLMGetDirectorySeparator(),
+                 XPLMGetDirectorySeparator(), XPLMGetDirectorySeparator());
+        radio_table_load(rp);
+    }
+    xconnect_logf("  step: radio table done");
 
     csl_init();
     XPLMDebugString(XCONNECT_NAME
@@ -416,16 +657,13 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
 
     /* 网络线程（回调签名与 LPTHREAD_START_ROUTINE 完全一致） */
 #ifdef _WIN32
-    {
-        HANDLE h = CreateThread(NULL, 0, net_thread, NULL, 0, NULL);
-        if (h) CloseHandle(h);
-    }
+    g_net_thread = CreateThread(NULL, 0, net_thread, NULL, 0, NULL);
+    if (!g_net_thread) xconnect_logf("  net thread create FAILED");
 #else
-    {
-        pthread_t tid;
-        pthread_create(&tid, NULL, net_thread, NULL);
-        pthread_detach(tid);
-    }
+    if (pthread_create(&g_net_thread, NULL, net_thread, NULL) == 0)
+        g_net_thread_started = 1;
+    else
+        xconnect_logf("  net thread create FAILED");
 #endif
     xconnect_logf("  step: net thread started");
 
@@ -438,15 +676,30 @@ PLUGIN_API void XPluginStop(void) {
     xconnect_logf("XPluginStop begin");
     g_running = 0;
     if (g_listen_sock != NET_INVALID) {
+        net_shutdown(g_listen_sock);   /* 唤醒阻塞中的 accept（Linux/macOS） */
         net_close(g_listen_sock);
         g_listen_sock = NET_INVALID;
     }
+    /* 只 shutdown 不 close 客户端 socket：让网络线程的 recv 返回，
+     * 由它自己关闭，避免两个线程对同一 fd 的 double-close。 */
     LOCK_ENTER(g_sock_lock);
-    if (g_client_sock != NET_INVALID) {
-        net_close(g_client_sock);
-        g_client_sock = NET_INVALID;
-    }
+    if (g_client_sock != NET_INVALID) net_shutdown(g_client_sock);
     LOCK_LEAVE(g_sock_lock);
+
+    /* 等网络线程真正退出后，再销毁锁与 CSL 资源 */
+#ifdef _WIN32
+    if (g_net_thread) {
+        WaitForSingleObject(g_net_thread, 3000);
+        CloseHandle(g_net_thread);
+        g_net_thread = NULL;
+    }
+#else
+    if (g_net_thread_started) {
+        pthread_join(g_net_thread, NULL);
+        g_net_thread_started = 0;
+    }
+#endif
+    g_client_sock = NET_INVALID;
 
     if (g_flight_loop) {
         XPLMDestroyFlightLoop(g_flight_loop);

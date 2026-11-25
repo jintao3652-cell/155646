@@ -21,6 +21,7 @@ from xfly_client.config import AppConfig, load_config, save_config
 from xfly_client.fsd import packet as pk
 from xfly_client.fsd.session import STATE_ONLINE
 from xfly_client.model import NetworkModel
+from xfly_client.registration import norm_registration
 from xfly_client.xconnect.client import FlightData
 
 SIM_TYPES = {"xp11": pk.SIM_TYPE_XP11, "xp12": pk.SIM_TYPE_XP12}
@@ -57,6 +58,10 @@ class CliApp:
         self.model = NetworkModel()
         self.model.aircraft_icao = cfg.aircraft_icao.strip().upper()
         self.model.airline_icao = cfg.airline_icao.strip().upper()
+        # 尾号：--registration 优先，否则自动（模拟器 → 同机型上次值 → 空）
+        self.model.registration_manual = norm_registration(cfg.registration)
+        self.model.registration_cache = dict(cfg.registration_cache or {})
+        self.model._apply_registration("", "", self.model.aircraft_icao)
         self.model.on_log = lambda m: print(f"{m}")
         self.model.on_text_received = lambda f, m: print(f"\n[消息] {f}: {m}")
         self.model.on_fsd_unexpected_disconnect = \
@@ -211,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--realname", help="真实姓名")
     parser.add_argument("--aircraft", help="机型 ICAO，4 位 (A320/B738/C172)")
     parser.add_argument("--airline", help="航司 ICAO（涂装），如 CCA/CES")
+    parser.add_argument("--registration",
+                        help="注册号（尾号），如 B-1234；留空自动识别")
     parser.add_argument("--sim", choices=["xp11", "xp12"], default="xp12",
                         help="X-Plane 版本（默认 xp12）")
     args = parser.parse_args(argv)
@@ -235,7 +242,8 @@ def main(argv: list[str] | None = None) -> int:
     for attr, arg in (("callsign", args.callsign), ("cid", args.cid),
                       ("password", args.password), ("real_name", args.realname),
                       ("aircraft_icao", args.aircraft),
-                      ("airline_icao", args.airline)):
+                      ("airline_icao", args.airline),
+                      ("registration", args.registration)):
         if arg:
             setattr(cfg, attr, arg)
 

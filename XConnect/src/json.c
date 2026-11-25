@@ -57,8 +57,9 @@ static char* parse_string(ParseCtx* c) {
 
 static Json* parse_array(ParseCtx* c) {
     Json* arr = node(JSON_ARR);
-    Json** tail = &arr->child;
+    Json** tail;
     if (!arr) { c->fail = 1; return NULL; }
+    tail = &arr->child;
     c->p++; /* [ */
     skip_ws(c);
     if (*c->p == ']') { c->p++; return arr; }
@@ -78,8 +79,9 @@ static Json* parse_array(ParseCtx* c) {
 
 static Json* parse_object(ParseCtx* c) {
     Json* obj = node(JSON_OBJ);
-    Json** tail = &obj->child;
+    Json** tail;
     if (!obj) { c->fail = 1; return NULL; }
+    tail = &obj->child;
     c->p++; /* { */
     skip_ws(c);
     if (*c->p == '}') { c->p++; return obj; }

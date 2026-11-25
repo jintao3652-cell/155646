@@ -162,8 +162,12 @@ class XflyGui:
         missing = []
         if not callsign:
             missing.append("呼号")
-        if len(aircraft) != 4 or not aircraft.isalnum():
-            missing.append("机型 ICAO（等待模拟器识别）")
+        # 机型 ICAO 是 **2~4 位**，不是固定 4 位（ICAO Doc 8643：
+        # "代码由最多四个字符组成"）。写死 4 位会拒掉库里 2126 条
+        # 合法代码（2 位 433 条、3 位 1693 条），表现为"机型 ICAO
+        # （等待模拟器识别）"—— 但模拟器其实已经识别出来了。
+        if not (2 <= len(aircraft) <= 4 and aircraft.isalnum()):
+            missing.append("机型 ICAO（2~4 位，等待模拟器识别）")
         if len(airline) != 3 or not airline.isalnum():
             missing.append("航司 ICAO（3 位）")
         if not self.cfg.real_name.strip():
@@ -189,9 +193,14 @@ class XflyGui:
             return
 
         from xfly_client.model import NetworkModel
+        from xfly_client.registration import norm_registration
         self.model = NetworkModel(xconnect=self._xconnect)
         self.model.aircraft_icao = aircraft
         self.model.airline_icao = airline
+        # 尾号：手动填写 > 模拟器（插件上报）> 同机型上次记录 > 空
+        self.model.registration_manual = norm_registration(self.cfg.registration)
+        self.model.registration_cache = dict(self.cfg.registration_cache or {})
+        self.model._apply_registration("", "", aircraft)
         self.model.on_log = lambda m: self._post("log", m)
         self.model.on_text_received = lambda f, m: self._post("text", f, m)
         self.model.on_local_flight_data = lambda fd: self._post("flight", fd)
@@ -279,6 +288,7 @@ class XflyGui:
             ("呼号", "callsign"),
             ("机型 ICAO", "aircraft_icao"),
             ("航司 ICAO", "airline_icao"),
+            ("注册号(空=自动)", "registration"),
         ])
         add_group("服务器", [
             ("FSD 服务器", "server_host"),
@@ -311,6 +321,7 @@ class XflyGui:
             cfg.callsign = vars_["callsign"].get().strip().upper()
             cfg.aircraft_icao = vars_["aircraft_icao"].get().strip().upper()
             cfg.airline_icao = vars_["airline_icao"].get().strip().upper()
+            cfg.registration = vars_["registration"].get().strip().upper()
 
             cfg.server_host = vars_["server_host"].get().strip() or "ol.xflysim.com"
             cfg.xconnect_host = vars_["xconnect_host"].get().strip() or "127.0.0.1"
@@ -327,7 +338,8 @@ class XflyGui:
 
             self.cfg = load_config()
             for attr in ("callsign", "real_name", "cid", "password",
-                         "aircraft_icao", "airline_icao", "remember_password",
+                         "aircraft_icao", "airline_icao", "registration",
+                         "remember_password",
                          "server_host", "server_port",
                          "xconnect_host", "xconnect_port"):
                 if hasattr(cfg, attr):

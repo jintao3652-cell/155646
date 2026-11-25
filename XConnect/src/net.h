@@ -39,6 +39,11 @@ int net_write_all(net_sock_t sock, const char* buf, int len);
 int net_send_line(net_sock_t sock, const char* line);
 
 void net_close(net_sock_t sock);
+
+/* 只 shutdown 不 close：用于唤醒其它线程中阻塞的 recv/accept，
+ * 由该线程自己 close（避免 double-close）。 */
+void net_shutdown(net_sock_t sock);
+
 void net_sleep_ms(int ms);
 
 #endif

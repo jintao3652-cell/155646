@@ -8,9 +8,19 @@
 
 from __future__ import annotations
 
+import math
+
 NETWORK_RATING = 1
 PROTOCOL_REVISION = 9
-# 模拟器类型按 ISFP 私有服务器约定（xPilot 习惯）：15=XP11, 16=XP12
+# 模拟器类型：**按 XFlySim/ISFP 私有服务器约定**（沿用 xPilot C# 习惯）
+#   15 = XP11、16 = XP12
+#
+# ⚠️ 与 swift **不同**，不要拿 swift 的编号来对：
+#   swift `fsd/serializer.cpp::toQString(SimType)`：
+#       14 = XPLANE10, 16 = **XPLANE11**, 12..13 = XP8/XP9
+#       XPLANE12 与 P3Dv5 一起返回 "0"（swift 至今没给 XP12 分配编号）
+#   即同一个 16 在 swift 里是 XP11、在我们这里是 XP12。接第三方服务器前
+#   必须先确认该服务器的约定（xPilot/SquawkBox 系多用 15/16 表 XP11/XP12）。
 SIM_TYPE_XP11 = 15
 SIM_TYPE_XP12 = 16
 
@@ -81,17 +91,39 @@ def resolve_error_code(raw: str) -> int:
         return ERROR_CODE_NAMES.get(s, -1)
 
 
+def _qfloor(v: float) -> int:
+    """等价于 Qt 的 `qFloor`：真正的向下取整。
+
+    不能用 `int(v)` —— 那是朝 0 截断，负数会偏大 1。PBH 的 pitch/bank
+    都是负数（因为乘了 -1），用 `int()` 会让每个正姿态都少 1。
+    """
+    return math.floor(v)
+
+
 def encode_pbh(pitch_deg: float, bank_deg: float, heading_deg: float,
                on_ground: bool = False) -> int:
-    """PBH 编码（swift 公式）。
+    """PBH 编码（逐项对齐 swift `core/fsd/pbh.h::packPBH`）。
 
-    - pitch = qFloor(pitch * -256/90)   （10bit 有符号，取反）
-    - bank  = qFloor(bank  * -512/180)  （10bit 有符号，取反）
-    - hdg   = heading * 1024/360        （10bit 无符号）
+    - pitch = qFloor(pitch * -256/90)    （10bit 有符号，乘 -1 反转）
+    - bank  = qFloor(bank  * -512/180)   （10bit 有符号，乘 -1 反转）
+    - hdg   = int(heading * 1024/360)    （10bit 无符号，不反转）
     bit0 未用；bit1 onGround；bits2-11 heading；bits12-21 bank；bits22-31 pitch。
+
+    ⚠️ **必须用 floor 而不是截断**。swift 用 `qFloor`，而负数的 `int()` 截断
+    是朝 0 取整，两者差 1：
+
+        pitch=1°  → ×-256/90 = -2.844
+                    int()=-2   ← 错（朝 0 截断）
+                    floor=-3   ← 对（swift）
+
+    这在正俯仰 / 正坡度时**总是**偏 1，相当于 pitch 误差 0.35°、bank 误差 0.18°。
+    小角度下看不出来，但对端做插值时会表现为姿态轻微漂移。
+
+    swift 注释也说明了为什么用 `*-1` 而不是按位取反 `~`：
+    用 `~` 会让 0 变成 -1（地面上出现过大量 -1 的 PB 值），vPilot 同样用 `*-1`。
     """
-    p = int(pitch_deg * -256.0 / 90.0)
-    b = int(bank_deg * -512.0 / 180.0)
+    p = _qfloor(pitch_deg * -256.0 / 90.0)
+    b = _qfloor(bank_deg * -512.0 / 180.0)
     h = int(heading_deg * 1024.0 / 360.0)
     p = max(-256, min(255, p)) & 0x3FF
     b = max(-512, min(511, b)) & 0x3FF
@@ -100,7 +132,25 @@ def encode_pbh(pitch_deg: float, bank_deg: float, heading_deg: float,
 
 
 def decode_pbh(pbh: int) -> tuple[float, float, float, bool]:
-    """解码 PBH 位域 → (heading_deg, bank_deg, pitch_deg, on_ground)。"""
+    """解码 PBH 位域 → (heading_deg, bank_deg, pitch_deg, on_ground)。
+
+    **这里刻意不逐字照抄 swift 的 `unpackPBH`**，原因如下。
+
+    swift 的解码是：
+        const int iPitch = qFloor(pbhstrct.pitch / -pitchMultiplier());
+        pitch = iPitch;      // ← 赋给 double 的是**整数**
+    因为 encode 用了 qFloor（有损），decode 再 floor 一次，得到的是
+    **整度**——真实报文 `pbh=-8389616`（raw pitch=-3）swift 解出恰好 1.0°，
+    而对应真实姿态是 1.05°。swift 在 UI 里也不用这个值做插值。
+
+    我们这里要的是**连续姿态**（`model.py` 用它填远端玩家的
+    `tr.pitch/bank` 并参与插值显示），所以还原时乘回系数、不做再取整：
+        1.05°  而不是 1.0°
+    与真实值一致，也让小角度姿态不会看着"台阶化"。
+
+    编码侧（`encode_pbh`）仍严格用 qFloor 对齐 swift —— 那是**发上线的
+    字节**，必须和 swift 一致；解码只是本地显示，精度优先。
+    """
     h = (pbh >> 2) & 0x3FF
     b = (pbh >> 12) & 0x3FF
     p = (pbh >> 22) & 0x3FF
@@ -109,7 +159,11 @@ def decode_pbh(pbh: int) -> tuple[float, float, float, bool]:
     if p >= 512:
         p -= 1024
     on_ground = ((pbh & 0b10) >> 1) == 1
-    return h * 360.0 / 1024.0, -b * 180.0 / 512.0, -p * 90.0 / 256.0, on_ground
+    # 参照 swift 的系数但乘回（不 floor），保留亚度精度
+    pitch = p / (-256.0 / 90.0)
+    bank = b / (-512.0 / 180.0)
+    heading = h / (1024.0 / 360.0)
+    return heading, bank, pitch, on_ground
 
 
 def add_pilot(callsign: str, cid: str, password: str,
@@ -144,12 +198,76 @@ def plane_info_request_fsi(callsign: str, to: str) -> str:
 
 
 def plane_info(callsign: str, to: str, equipment: str, airline: str = "",
-               livery: str = "") -> str:
-    parts = ["#SB" + callsign + ":" + to + ":PI:GEN", f"EQUIPMENT={equipment}"]
+               livery: str = "", registration: str = "",
+               engines: int = 0) -> str:
+    """机型信息（PI:GEN）。
+
+## `LIVERY` 必须用 swift 格式，不能塞尾号
+
+**这是 2026-11-25 修掉的一个严重 bug 的结论。**
+
+XFlySim 服务器**从 `LIVERY` 反查机型**，而不是直接用 `EQUIPMENT=`。
+证据（同一时刻的服务器 API 响应）：
+
+    swift 发: EQUIPMENT=F14:LIVERY=SWIFT_L181A4278M87561
+    服务器存: "equipment":"F14", "livery":"SWIFT_L181A4278M87561"   ✅
+
+    swift 发: EQUIPMENT=A320:LIVERY=SWIFT_L1759A672M87075
+    服务器存: "equipment":"A320"                                    ✅
+
+    swift 发: EQUIPMENT=A388:LIVERY=SWIFT_L764A679M89612
+    服务器存: "equipment":"A388"                                    ✅
+
+三条的 `A<n>` 都是 aircrafticao.json 的 `id`，且该 id 的 designator
+与服务器存下的 equipment 完全一致（4278→F14、672→A320、679→A388）。
+
+而旧代码把**尾号塞进 LIVERY**（为了"穿透 swift 中继"）：
+
+    EQUIPMENT=F14:AIRLINE=SJX:LIVERY=N988DR:ENGINES=2:REG=N988DR
+
+`N988DR` 里没有 `A<id>`，服务器解析不出机型 →
+**整条 PI 的 aircraft 段被静默丢弃**：equipment/airline/livery/engines
+全部变 null，而服务器**不返回任何错误**（$ER 里看不到）。
+这个"静默失败"是它藏了很久的原因。
+
+## 现在的做法
+
+调用方（`session.send_aircraft_info`）传入的 `livery` 已经是
+`aircraft_db.swift_livery()` 生成的 `SWIFT_A<id>`；
+尾号单独走 `REG=`（服务器认这个键，JSON 里 registration 有值）。
+
+`ENGINES=<数量>` 是服务器识别的扩展键（对应 `aircraft.engines`）。
+不传则整键省略，服务器侧为 null。
+
+**字段顺序很重要**：`ENGINES=` 必须紧跟 `LIVERY=`，排在 `REG=` 之前。
+服务器 JSON 里 `engines` 的位置恰好夹在 `livery`（PI 组）与
+`flapsPct`（ACC 组）之间，说明它属于 PI 组的第 4 个字段。若把 `REG=`
+插在中间，服务器按位置取第 4 项拿到 `REG=D-AIKI`，转数字失败 →
+`engines` 恒为 null（实测踩过）。所以顺序固定为：
+    EQUIPMENT, AIRLINE, LIVERY, ENGINES, REG
+"""
+    tail = registration or ""
+    parts = ["#SB" + callsign + ":" + to + ":PI:GEN"]
+    # EQUIPMENT 不能发空值：`EQUIPMENT=` 这种"有键无值"在服务器侧很可能
+    # 导致**整条 PI 被丢弃**（表现：equipment/airline/livery 一起变成 null），
+    # 而不是仅机型为 null。机型未知时宁可不发这个键。
+    # 实测：切到某机型后 icao 一度为空，服务器把整个 PI 扔掉了。
+    eq = (equipment or "").strip()
+    if eq:
+        parts.append(f"EQUIPMENT={eq}")
     if airline:
         parts.append(f"AIRLINE={airline}")
-    if livery:
-        parts.append(f"LIVERY={livery}")
+    # LIVERY **只放 swift 格式的 A<id>**，绝不放尾号（见上方说明）。
+    # `livery` 为空时直接不写这个键 —— 比写个解析不了的裸尾号安全：
+    # 裸尾号会让服务器丢弃整条 PI，而缺键只是让 livery 字段为 null。
+    lv = (livery or "").strip()
+    if lv:
+        parts.append(f"LIVERY={lv}")
+    # ENGINES 必须在 REG 之前（见上，服务器按位置取第 4 项）
+    if engines and engines > 0:
+        parts.append(f"ENGINES={int(engines)}")
+    if tail:
+        parts.append(f"REG={tail}")
     return ":".join(parts)
 
 

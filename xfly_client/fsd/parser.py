@@ -33,6 +33,8 @@ class PilotPositionData:
     alt_ft: int = 0
     gs_kt: int = 0
     pbh: int = 0
+    on_ground: bool = False   # PBH bit1（@ 与 VI/SL/ST 都携带）
+    agl_ft: float = -1.0      # 遥测离地高度（仅 ^ / #SL / #ST 携带，-1 未知）
 
 
 @dataclass
@@ -124,12 +126,18 @@ def try_get_atc_position(p: ParsedPacket) -> AtcPositionData | None:
         return None
 
 
+def _pbh_on_ground(pbh: int) -> bool:
+    """PBH bit1 = onGround（swift packPBH / vPilot 同约定）。"""
+    return bool((pbh >> 1) & 1)
+
+
 def try_get_pilot_position(p: ParsedPacket) -> PilotPositionData | None:
     if p.kind == "@":
         f = p.flds
         if len(f) < 10:
             return None
         try:
+            pbh = int(float(f[8]))
             return PilotPositionData(
                 callsign=f[1],
                 mode=f[0][0] if f[0] else "S",
@@ -139,7 +147,8 @@ def try_get_pilot_position(p: ParsedPacket) -> PilotPositionData | None:
                 lon=float(f[5]),
                 alt_ft=int(float(f[6])),
                 gs_kt=int(float(f[7])),
-                pbh=int(float(f[8])),
+                pbh=pbh,
+                on_ground=_pbh_on_ground(pbh),
             )
         except ValueError:
             return None
@@ -150,6 +159,8 @@ def try_get_pilot_position(p: ParsedPacket) -> PilotPositionData | None:
         if len(f) < 6:
             return None
         try:
+            pbh = int(float(f[5]))
+            agl = float(f[4])
             return PilotPositionData(
                 callsign=f[0],
                 mode="N",
@@ -158,7 +169,33 @@ def try_get_pilot_position(p: ParsedPacket) -> PilotPositionData | None:
                 lon=float(f[2]),
                 alt_ft=int(float(f[3])),
                 gs_kt=0,  # 快速包不携带地速，保留上次 @ 包的值
-                pbh=int(float(f[5])),
+                pbh=pbh,
+                # AGL≈0 也视为在地面（部分客户端 PBH 的 onGround 位恒为 0）
+                on_ground=_pbh_on_ground(pbh) or (0.0 <= agl <= 1.5),
+                agl_ft=agl,
+            )
+        except ValueError:
+            return None
+
+    # swift 中间位置：#SB<from>:<to>:VI:<lat>:<lon>:<altTrue>:<gs>:<pbh>
+    # （SquawkBox 旧格式子类型 I 与 swift 一样**不解析**：字段布局存在历史差异，
+    #   精度也差，误判会把飞机放到错误位置；@ 包 5s 一次已足够兜底）
+    if p.kind == "#SB" and p.type == "VI":
+        f = p.flds          # flds[0]=lat, 1=lon, 2=alt, 3=gs, 4=pbh
+        if len(f) < 5:
+            return None
+        try:
+            pbh = int(float(f[4]))
+            return PilotPositionData(
+                callsign=p.from_,
+                mode="N",
+                squawk="",
+                lat=float(f[0]),
+                lon=float(f[1]),
+                alt_ft=int(float(f[2])),
+                gs_kt=int(float(f[3])),
+                pbh=pbh,
+                on_ground=_pbh_on_ground(pbh),
             )
         except ValueError:
             return None

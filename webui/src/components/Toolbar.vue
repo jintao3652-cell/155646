@@ -1,7 +1,8 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { store, doConnect, doDisconnect, onSim, onCallsignInput,
-         fsdText, fsdTag, xpText, xpTag, cslText, cslTag, cslTitle } from '../store.js'
+         fsdText, fsdTag, xpText, xpTag, cslText, cslTag, cslTitle,
+         regText, regSrcText } from '../store.js'
 const { t } = useI18n()
 </script>
 
@@ -27,6 +28,10 @@ const { t } = useI18n()
                         : (store.busy ? t('toolbar.connecting') : t('toolbar.connect')) }}
     </el-button>
     <div class="tb-tags">
+      <el-tooltip v-if="store.connected" placement="bottom"
+                  :content="`${t('toolbar.registration')} · ${regSrcText || t('regSrc.none')}`">
+        <el-tag size="small" type="info" effect="dark">{{ regText }}</el-tag>
+      </el-tooltip>
       <el-tag size="small" :type="fsdTag" effect="dark">{{ fsdText }}</el-tag>
       <el-tag size="small" :type="xpTag" effect="dark">{{ xpText }}</el-tag>
       <el-tooltip :content="cslTitle" placement="bottom">

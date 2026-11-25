@@ -46,7 +46,7 @@ const PositionFix* fix_at(const Player* p, int i) {
  * 同时以 EWMA 更新帧到达平均间隔（供自适应渲染滞后使用）。 */
 void push_fix(Player* p, double lat, double lon, double alt_m,
               double heading, double pitch, double roll, double gs,
-              double now) {
+              double agl_m, int on_ground, double now) {
     const PositionFix* newest = fix_at(p, 0);
     PositionFix* slot;
 
@@ -71,6 +71,8 @@ void push_fix(Player* p, double lat, double lon, double alt_m,
     slot->pitch = pitch;
     slot->roll = roll;
     slot->gs = gs;
+    slot->agl = agl_m;
+    slot->on_ground = on_ground;
     slot->ts = now;
 }
 
@@ -207,15 +209,19 @@ void update_players(double now) {
         }
         if (p->model.inst_count <= 0) {
             if (!p->model.tried) {
-                csl_load(&p->model, p->icao, p->family, p->airline);
+                csl_load(&p->model, p->icao, p->family, p->airline, p->reg);
                 if (p->model.inst_count > 0) {
                     strncpy(p->model_icao, p->icao, sizeof(p->model_icao) - 1);
                     p->model_icao[sizeof(p->model_icao) - 1] = '\0';
                     strncpy(p->model_airline, p->airline,
                             sizeof(p->model_airline) - 1);
                     p->model_airline[sizeof(p->model_airline) - 1] = '\0';
-                    xconnect_logf("csl: %s loaded icao=%s airline=%s variant=%s objs=%d",
+                    strncpy(p->model_reg, p->reg, sizeof(p->model_reg) - 1);
+                    p->model_reg[sizeof(p->model_reg) - 1] = '\0';
+                    xconnect_logf("csl: %s loaded icao=%s airline=%s reg=%s "
+                                  "variant=%s objs=%d",
                                   p->callsign, p->icao, p->airline,
+                                  p->reg[0] ? p->reg : "-",
                                   p->model.variant, p->model.inst_count);
                 } else {
                     xconnect_logf("csl: %s LOAD FAILED icao=%s airline=%s",
@@ -226,23 +232,32 @@ void update_players(double now) {
                            sizeof(p->model_icao)) != 0 ||
                    (p->airline[0] &&
                     strncmp(p->model_airline, p->airline,
-                            sizeof(p->model_airline)) != 0)) {
-            /* 机型或涂装变化：释放旧模型并重载 */
-            xconnect_logf("csl: %s icao %s->%s airline %s->%s (reload)",
+                            sizeof(p->model_airline)) != 0) ||
+                   (p->reg[0] &&
+                    strncmp(p->model_reg, p->reg,
+                            sizeof(p->model_reg)) != 0)) {
+            /* 机型 / 涂装 / 注册号变化：释放旧模型并重载 */
+            xconnect_logf("csl: %s icao %s->%s airline %s->%s reg %s->%s (reload)",
                           p->callsign, p->model_icao, p->icao,
-                          p->model_airline, p->airline);
+                          p->model_airline, p->airline,
+                          p->model_reg[0] ? p->model_reg : "-",
+                          p->reg[0] ? p->reg : "-");
             csl_release_node(&p->model);
             p->model_icao[0] = '\0';
             p->model_airline[0] = '\0';
-            csl_load(&p->model, p->icao, p->family, p->airline);
+            p->model_reg[0] = '\0';
+            csl_load(&p->model, p->icao, p->family, p->airline, p->reg);
             if (p->model.inst_count > 0) {
                 strncpy(p->model_icao, p->icao, sizeof(p->model_icao) - 1);
                 p->model_icao[sizeof(p->model_icao) - 1] = '\0';
                 strncpy(p->model_airline, p->airline,
                         sizeof(p->model_airline) - 1);
                 p->model_airline[sizeof(p->model_airline) - 1] = '\0';
-                xconnect_logf("csl: %s loaded icao=%s airline=%s variant=%s (reloaded)",
-                              p->callsign, p->icao, p->airline, p->model.variant);
+                strncpy(p->model_reg, p->reg, sizeof(p->model_reg) - 1);
+                p->model_reg[sizeof(p->model_reg) - 1] = '\0';
+                xconnect_logf("csl: %s loaded icao=%s airline=%s reg=%s variant=%s (reloaded)",
+                              p->callsign, p->icao, p->airline,
+                              p->reg[0] ? p->reg : "-", p->model.variant);
             } else {
                 xconnect_logf("csl: %s RELOAD FAILED icao=%s",
                               p->callsign, p->icao);
@@ -259,7 +274,8 @@ void update_players(double now) {
          * 远程玩家无襟翼/油门/灯光遥传，可取部分用启发值，其余置 0。 */
         memset(anim, 0, sizeof(anim));
         {
-            const float gear = (f->alt < 60.0 || f->gs < 40.0) ? 1.0f : 0.0f;
+            const float gear =
+                (f->on_ground || f->alt < 60.0 || f->gs < 40.0) ? 1.0f : 0.0f;
             anim[0] = gear;   /* gear_ratio      */
             anim[1] = gear;   /* gear_ratio[0]   */
             anim[2] = gear;   /* gear_ratio[1]   */
@@ -272,18 +288,43 @@ void update_players(double now) {
         }
         /* 4-13 操纵面/推力/反推、19-33 轮胎/风扇/触地：保持 0 */
 
-        /* 地面钳制：远程上报的高度是飞机参考点（重心）海拔，而 X-CSL 模型原点
-         * 在轮胎接地点。近地时把模型落到该点地形高度，避免整机悬空、轮子离地
-         * （XPMP2 的 clampToGround 语义；地形探针仅主线程调用）。 */
+        /* 地面吸附：远程上报的高度是飞机参考点（重心）海拔，而 X-CSL 模型原点
+         * 在轮胎接地点；且部分客户端（swift/旧 SB）上报的是气压/指示高度基准，
+         * QNH 偏离 1013 时与真高可差数百英尺 —— 直接渲染就会"整机悬空"。
+         * 因此：
+         *   1) 遥测 onGround 为真且速度不高 → 忽略高度偏差，直接落到地形高度；
+         *      遥测 AGL（^/#SL/#ST 包）≈0 也视为在地面；
+         *   2) 否则近地（AGL ≤ GROUND_CLAMP_AGL_M）同样贴地，消除重心偏移；
+         *   3) 地形探针仅在地面/近地场景调用（巡航目标跳过，省开销）。
+         */
         {
             double alt = p->cur_alt;
-            /* 仅对近地/低速目标探测地形（巡航目标跳过，避免每帧探针开销） */
-            if (f->gs < 60.0 || p->cur_alt < 200.0) {
+            int ground = f->on_ground ? 1 : 0;
+            if (!ground && f->agl >= 0.0 && f->agl <= 1.5) ground = 1;
+
+            if (ground || f->gs < 80.0 || p->cur_alt < 300.0) {
                 int hit = 0;
                 double terrain = csl_terrain_msl(p->cur_lat, p->cur_lon, alt, &hit);
                 if (hit) {
                     double agl = alt - terrain;
-                    if (agl <= GROUND_CLAMP_AGL_M && agl > -20.0) alt = terrain;
+                    double snapped = 0.0;
+                    if (ground && f->gs < GROUND_SNAP_MAX_GS &&
+                        agl > -GROUND_SNAP_WINDOW_M && agl < GROUND_SNAP_WINDOW_M) {
+                        snapped = agl;
+                        alt = terrain;   /* onGround：以地形为准（压掉高度基准偏差） */
+                    } else if (agl <= GROUND_CLAMP_AGL_M &&
+                               agl > -GROUND_CLAMP_SINK_M) {
+                        snapped = agl;
+                        alt = terrain;   /* 近地：消除重心/接地点偏移 */
+                    }
+                    /* 偏差较大时留痕（节流 10s），便于确认"机组悬空"是否被修正 */
+                    if (snapped != 0.0 && fabs(snapped) > 15.0 &&
+                        now - p->last_snap_log > 10.0) {
+                        p->last_snap_log = now;
+                        xconnect_logf("ground-snap %s agl=%.0fm -> terrain "
+                                      "(onGround=%d gs=%.0f)",
+                                      p->callsign, snapped, ground, f->gs);
+                    }
                 }
             }
             csl_set_position(&p->model, p->cur_lat, p->cur_lon, alt,

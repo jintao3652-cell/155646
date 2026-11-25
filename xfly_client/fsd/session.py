@@ -28,6 +28,21 @@ ACFG_CAPACITY = 10          # 桶容量（突发上限）
 ACFG_REFILL_INTERVAL = 5.0  # 每 5s 补 1 token（≈1 条/5s）
 ACFG_BROADCAST_TO = "@94836"
 
+# 登录后机型信息（PI）与机模配置（ACC）的重发节奏。
+# 原因：登录（#AP）与首条 PI/ACC 几乎同时发出，服务器此时可能还没建立好
+# 该呼号的会话，会把它们丢掉；而位置 @ 是每 5s 一包，所以看起来"只有位置
+# 正常、equipment/airline/gear/onGround 一直为 null"。登录确认后再补发，
+# 并周期性重发，保证最终一定生效。
+ACFG_INFO_RETRY_DELAYS = (2.0, 6.0, 12.0)
+
+# 是否在 LIVERY 中附带当前实际尾号，例如 `SWIFT_A685-D-AIKI`。
+# swift 的完整格式是 `SWIFT_L<涂装库id>A<机型库id>M<模型库id>`；本项目没有
+# swift 的涂装/模型数据库，算不出真实的 L/M，只能给出 `A<id>`。
+# `A<id>` 段必须保留（服务器据此反查机型），尾号附在其后便于站点/他人识别
+# 实际飞机。若某台服务器对 LIVERY 校验很严导致 aircraft 段丢失，把这里改成
+# False 即回到纯 `SWIFT_A<id>`。
+LIVERY_INCLUDE_REGISTRATION = True
+
 
 class FsdSession:
     def __init__(self, host: str, port: int, callsign: str, cid: str,
@@ -46,6 +61,8 @@ class FsdSession:
         self.aircraft_icao = "A320"
         self.airline_icao = ""
         self.livery_icao = ""
+        self.registration = ""      # 本机尾号（PI 的 LIVERY/REG= 扩展字段）
+        self.engines = 0            # 发动机数量（PI 的 ENGINES= 扩展键；0 = 不发送）
 
         self.state = STATE_DISCONNECTED
 
@@ -89,6 +106,15 @@ class FsdSession:
         self._acfg_tokens = ACFG_CAPACITY
         self._acfg_refill_at = time.monotonic()
 
+        # 机型信息/机模配置的重发调度（见 ACFG_INFO_RETRY_DELAYS）
+        self._info_next_at = 0.0
+        self._info_retries = 0
+        self._info_acked = False   # 是否已收到服务器消息（判定登录完成）
+        # 最近一次向我们发 PIR 的呼号（通常是服务器采集器 atis_collector）。
+        # XFlySim 服务器只从对它的 PIR 应答里采纳机型；切换机模后需要把新 PI
+        # 也发给它，否则服务器记录会一直停在登录时的旧机型。
+        self._last_pi_requester = ""
+
     # ---------- 生命周期 ----------
 
     def connect(self, timeout: float = 5.0) -> None:
@@ -102,12 +128,18 @@ class FsdSession:
         self._acfg_full = None
         self._acfg_tokens = ACFG_CAPACITY
         self._acfg_refill_at = time.monotonic()
+        self._info_next_at = 0.0
+        self._info_retries = 0
+        self._info_acked = False
+        self._last_pi_requester = ""
         self._send(pk.add_pilot(self.callsign, self.cid, self.credential,
                                 pk.NETWORK_RATING, pk.PROTOCOL_REVISION,
                                 self.simulator_type, self.real_name))
 
     def start_reporting(self) -> None:
         self._set_state(STATE_ONLINE)
+        # 2 秒后再发首轮 PI/ACC（此时服务器多半已完成登录），随后按退避重发
+        self._info_next_at = time.monotonic() + ACFG_INFO_RETRY_DELAYS[0]
         self._reporter = threading.Thread(
             target=self._report_loop, name="fsd-reporter", daemon=True)
         self._reporter.start()
@@ -144,22 +176,74 @@ class FsdSession:
     def request_metar(self, station: str) -> None:
         self._send(pk.metar_request(self.callsign, station))
 
+    def _effective_livery(self) -> str:
+        """swift 格式的 LIVERY（必要时附加实际尾号）。
+
+        `A<机型库id>` 段是服务器反查机型的唯一依据，必须保留；本项目没有
+        swift 的涂装/模型数据库，真实的 `L<...>`/`M<...>` id 无法生成，
+        因此在 A 段后附加当前尾号（可用 LIVERY_INCLUDE_REGISTRATION 关闭）。
+        """
+        from .. import aircraft_db
+        lv = self.livery_icao or aircraft_db.swift_livery(self.aircraft_icao)
+        reg = (self.registration or "").strip()
+        if lv and reg and LIVERY_INCLUDE_REGISTRATION:
+            return f"{lv}-{reg}"
+        return lv
+
+    def _pi_line(self, to: str) -> str:
+        return pk.plane_info(self.callsign, to, self.aircraft_icao,
+                             self.airline_icao, self._effective_livery(),
+                             self.registration, self.engines)
+
     def send_plane_info(self, to: str) -> None:
-        self._send(pk.plane_info(self.callsign, to, self.aircraft_icao,
-                                 self.airline_icao, self.livery_icao))
+        """PIR 应答（PI:GEN）。
+
+        ⚠️ 必须带 swift 格式的 `LIVERY=SWIFT_A<id>`：XFlySim 服务器按**位置**
+        用第 3 个键（LIVERY）反查机型。若 livery 为空，后面的 `ENGINES=`
+        会被顶到 LIVERY 的位置，服务器解析不出机型 → **整条 aircraft 段被
+        丢弃**（equipment/airline/livery/engines 全 null）。
+        这正是 `atis_collector`（服务器采集器）请求 PIR 后我方应答导致
+        equipment 一直为 null 的原因。
+        """
+        self._send(self._pi_line(to))
 
     def send_plane_info_fsi(self, to: str) -> None:
-        model = f"{self.airline_icao} {self.aircraft_icao}".strip()
+        # 末位 model 串是自由描述（"DLH A359 B-1234"）：带上尾号，让 FSInn 系
+        # 客户端（以及回读该串的我们）也能拿到注册号
+        model = f"{self.airline_icao} {self.aircraft_icao} {self.registration}".strip()
         self._send(pk.plane_info_fsi(self.callsign, to, self.aircraft_icao,
                                      self.airline_icao, model))
 
     def send_plane_info_request(self, to: str) -> None:
+        """机型信息请求（swift/xPilot 系应答 PI:GEN，含机型+航司+涂装）。"""
         self._send(pk.plane_info_request(self.callsign, to))
 
+    def send_plane_info_request_fsi(self, to: str) -> None:
+        """FSInn 系机型信息请求（应答 FSIPI，含航司+机型+模型串）。"""
+        self._send(pk.plane_info_request_fsi(self.callsign, to))
+
     def send_aircraft_info(self, to: str = "SERVER") -> None:
-        """机型/设备信息推送（#SB PI:GEN），模拟器机型变化时向服务器更新 equipment。"""
-        self._send(pk.plane_info(self.callsign, to, self.aircraft_icao,
-                                 self.airline_icao, self.livery_icao))
+        """机型/设备信息推送（#SB PI:GEN），模拟器机型变化时向服务器更新 equipment。
+
+        `LIVERY` 用 **swift 格式**（`SWIFT_A<id>`），因为 XFlySim 服务器
+        是从这个字段反查机型的 —— 见 `packet.plane_info` 的说明。
+        尾号单独走 `REG=`，不再占用 LIVERY。
+
+        这里**每次现算**而不是缓存一份，是为了避免机型变化时
+        `LIVERY` 与 `EQUIPMENT` 不同步（曾因此让服务器把整条 PI 丢掉）。
+
+        ⚠️ XFlySim 服务器**只从对服务器采集器（atis_collector）的 PIR 应答**
+        里采纳 aircraft 信息；直接发给 `SERVER` 的 PI 不会更新站点记录。
+        因此这里在发给 SERVER 的同时，也发给最近一次发 PIR 的采集器和
+        `@94836` 广播地址——切换机模后才能让服务器把 equipment 更新过来
+        （否则会一直停在登录时的旧机型）。
+        """
+        self._send(self._pi_line(to))
+        if to.upper() == "SERVER":
+            self._send(self._pi_line(ACFG_BROADCAST_TO))
+            req = (self._last_pi_requester or "").strip()
+            if req and req.upper() not in ("SERVER", ACFG_BROADCAST_TO.upper()):
+                self._send(self._pi_line(req))
 
     def request_flight_plan(self, target: str) -> None:
         """向服务器查询某呼号的缓存飞行计划（$CQ ...:SERVER:FP:<target>），
@@ -280,6 +364,14 @@ class FsdSession:
         self._log(f"< {line}")
         p = parse(line)
 
+        # 收到服务器消息（欢迎 #TM / 采集器 PIR / 心跳 #DL 等）说明登录已完成：
+        # 立即补发一次 PI + 全量 ACC（登录瞬间发的可能已被服务器丢弃）。
+        if (self.state == STATE_ONLINE and not self._info_acked
+                and p.kind in ("#TM", "#SB", "#DL", "#AP", "#DA")):
+            self._info_acked = True
+            self._info_next_at = 0.0
+            self._info_retries = len(ACFG_INFO_RETRY_DELAYS)
+
         if p.kind == "$ZC":
             if p.fields:
                 resp = self._auth.respond_to_challenge(p.fields[0])
@@ -318,6 +410,8 @@ class FsdSession:
 
         elif p.kind == "#SB":
             if p.type in ("PIR", "FSIPIR"):
+                if p.from_:
+                    self._last_pi_requester = p.from_
                 if self.on_plane_info_requested:
                     self.on_plane_info_requested(p.from_, p.type)
             elif p.type in ("PI", "FSIPI"):
@@ -376,7 +470,34 @@ class FsdSession:
                 # 用静默 $PO 回显目标的文本 ping
                 self._send(pk.text_message(self.callsign, SERVER_CALLSIGN, "ping"))
                 next_ka = now + KEEPALIVE_INTERVAL
+            # 登录后补发机型信息 + 机模配置，并周期性重发
+            if self._link.connected and now >= self._info_next_at:
+                self._resend_aircraft_info()
+                delay = (ACFG_INFO_RETRY_DELAYS[self._info_retries]
+                         if self._info_retries < len(ACFG_INFO_RETRY_DELAYS)
+                         else 60.0)
+                self._info_retries += 1
+                self._info_next_at = now + delay
             time.sleep(0.5)
+
+    def _resend_aircraft_info(self) -> None:
+        """补发机型信息（PI）并重播一次全量机模配置（ACC）。
+
+        登录（#AP）与首条 PI/ACC 几乎同时发出，服务器在会话就绪前可能丢弃；
+        位置 @ 每 5s 有包所以正常，但 equipment/gear/lights 会一直是 null。
+        """
+        self.send_aircraft_info()
+        self._broadcast_full_aircraft_config()
+
+    def _broadcast_full_aircraft_config(self) -> None:
+        if not self._acfg_full or not self._link.connected:
+            return
+        if not self._acfg_take_token():
+            return
+        payload = self._acfg_dump({"config": self._acfg_full})
+        if payload is None:
+            return
+        self._send(pk.aircraft_config(self.callsign, ACFG_BROADCAST_TO, payload))
 
     def _set_state(self, state: str) -> None:
         self.state = state
