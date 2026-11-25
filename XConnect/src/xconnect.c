@@ -267,8 +267,16 @@ static void handle_client_line(const char* line) {
                                             p->engines_on = (int)emask;
                                         }
                                     }
-                                    if (!p->logged_parts) {
+                                    if (!p->logged_parts ||
+                                        p->parts_log_gear != p->gear_down ||
+                                        p->parts_log_flaps != p->flaps_pct ||
+                                        p->parts_log_engines != p->engines_on ||
+                                        p->parts_log_lights != p->lights) {
                                         p->logged_parts = 1;
+                                        p->parts_log_gear = p->gear_down;
+                                        p->parts_log_flaps = p->flaps_pct;
+                                        p->parts_log_engines = p->engines_on;
+                                        p->parts_log_lights = p->lights;
                                         xconnect_logf("parts: %s gear=%d(has=%d) "
                                                       "flaps=%d eng=%d lights=%u",
                                                       p->callsign, p->gear_down,

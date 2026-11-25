@@ -225,7 +225,10 @@ void update_players(double now) {
     static XPLMDataRef s_sim_time_ref = NULL;
     if (!s_sim_time_ref)
         s_sim_time_ref = XPLMFindDataRef("sim/time/total_running_time_sec");
-    sim_time = s_sim_time_ref ? (double)XPLMGetDataf(s_sim_time_ref) : now;
+    /* sim/time/total_running_time_sec 是 double；GetDataf 会降精度，
+     * 但真正的卡扇根因是部分 CSL 旋转曲线的输入上限仅 0.1s，
+     * 下方按各动画用到的周期归一化。 */
+    sim_time = s_sim_time_ref ? XPLMGetDatad(s_sim_time_ref) : now; 
     LOCK_ENTER(g_players_lock);
     for (i = 0; i < PLAYER_MAX; i++) {
         Player* p = &g_players[i];
@@ -392,8 +395,10 @@ void update_players(double now) {
                     anim[23] = fan_deg;          /* ...[0] */
                     anim[24] = 20.0f;            /* speed rad/s */
                     anim[25] = 20.0f;            /* speed rad/s [0] */
-                    /* A321 等 CSL 的风扇直接由全局运行时间驱动 */
-                    anim[34] = (float)sim_time;  /* sim/time/total_running_time_sec */
+                    /* CSL OBJ 中不同部件分别使用 0.1s、0.9s、1s、5s 的
+                     * ANIM_rotate 周期。必须传累计运行时间，由 OBJ 动画段按各自
+                     * 周期处理；统一取模 0.1 会让 0.9/5s 的主风扇几乎不动。 */
+                    anim[34] = (float)sim_time; 
                 } else {
                     anim[9] = 0.0f;
                     anim[21] = anim[22] = anim[23] = 0.0f;
@@ -443,12 +448,20 @@ void update_players(double now) {
                     }
                 }
             }
-            if (!p->logged_anim && p->has_parts) {
+            if (p->has_parts &&
+                (!p->logged_anim || p->anim_log_gear != p->gear_down ||
+                 p->anim_log_flaps != p->flaps_pct ||
+                 p->anim_log_engines != p->engines_on ||
+                 p->anim_log_lights != p->lights)) {
                 p->logged_anim = 1;
+                p->anim_log_gear = p->gear_down;
+                p->anim_log_flaps = p->flaps_pct;
+                p->anim_log_engines = p->engines_on;
+                p->anim_log_lights = p->lights;
                 xconnect_logf("anim: %s gear=%.0f flap=%.0f%% lights=%u "
-                              "eng=%d sim=%.0f",
+                              "eng=%d thrust=%.1f sim=%.3f",
                               p->callsign, anim[0], anim[4] * 100.0f,
-                              p->lights, p->engines_on, sim_time);
+                              p->lights, p->engines_on, anim[9], anim[34]);
             }
             csl_set_position(&p->model, p->cur_lat, p->cur_lon, alt,
                              p->cur_heading, p->cur_pitch, p->cur_roll,

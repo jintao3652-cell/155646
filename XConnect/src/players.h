@@ -70,8 +70,16 @@ typedef struct {
     int spoilers_out;    /* 0/1 */
     unsigned lights;     /* bit0 beacon, bit1 landing, bit2 taxi, bit3 nav, bit4 strobe */
     int engines_on;      /* bit0..bit3 = 1..4 号引擎在运转 */
-    int logged_parts;    /* 是否已记录首条 ACC 部件诊断日志 */
-    int logged_anim;     /* 是否已记录首帧动画值诊断日志 */
+    int logged_parts;    /* 是否记录过 parts 状态 */
+    int parts_log_gear;
+    int parts_log_flaps;
+    int parts_log_engines;
+    unsigned parts_log_lights;
+    int logged_anim;     /* 是否记录过动画状态 */
+    int anim_log_gear;
+    int anim_log_flaps;
+    int anim_log_engines;
+    unsigned anim_log_lights;
     int active;
     CslNode model;
 } Player;
