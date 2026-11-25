@@ -1,0 +1,76 @@
+name: Build MConnect
+
+on:
+  workflow_dispatch:        # 手动触发
+  push:
+    paths:
+      - 'MConnect/**'
+      - '.github/workflows/build-mconnect.yml'
+  pull_request:
+    paths:
+      - 'MConnect/**'
+
+jobs:
+  build:
+    # MConnect 依赖 SimConnect（仅 Windows 实现），因此只在 windows-latest 构建
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        working-directory: MConnect
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+        working-directory: MConnect
+
+      # 单元测试不需要模拟器、不需要 SimConnect.dll：
+      # 机型匹配与反向控制都是纯逻辑（事件调用已用桩替换）
+      - name: Run unit tests
+        shell: pwsh
+        working-directory: MConnect
+        run: |
+          $failed = $false
+          foreach ($t in @("build\catalog_test.exe", "build\control_test.exe",
+                           "build\inputev_test.exe", "build\radio_test.exe",
+                           "build\wasmbridge_test.exe",
+                           "build\aircraftcaps_test.exe",
+                           "build\aircraftdb_test.exe",
+                           "build\pmdgbridge_test.exe")) {
+            if (-not (Test-Path $t)) { throw "$t not found" }
+            Write-Host "=== $t ==="
+            & $t
+            if ($LASTEXITCODE -ne 0) { $failed = $true; Write-Host "FAILED: $t" }
+          }
+          if ($failed) { throw "unit tests failed" }
+
+      - name: Verify artifact
+        shell: pwsh
+        working-directory: MConnect
+        run: |
+          $exe = "build\MConnect.exe"
+          if (-not (Test-Path $exe)) { throw "$exe not found" }
+          $raw = [IO.File]::ReadAllBytes($exe)
+          if ($raw[0] -ne 0x4D -or $raw[1] -ne 0x5A) { throw "not a PE file" }
+          # 静态 CRT 校验：不应依赖 VCRUNTIME/MSVCP（否则目标机缺 DLL 就起不来）
+          $txt = [Text.Encoding]::ASCII.GetString($raw)
+          foreach ($bad in @('VCRUNTIME140.dll','MSVCP140.dll','ucrtbase.dll')) {
+            if ($txt.Contains($bad)) { throw "dynamic CRT dependency found: $bad" }
+          }
+          # 关键能力：必须是动态装载 SimConnect（不静态链接）
+          if (-not $txt.Contains('SimConnect.dll')) {
+            throw "SimConnect.dll not referenced (expected runtime LoadLibrary)"
+          }
+          if (-not $txt.Contains('AICreateNonATCAircraft_EX1')) {
+            throw "MSFS2024 capability name missing"
+          }
+          "PE OK, static CRT, SimConnect runtime-loaded, 2024 EX1 supported"
+          "{0:N0} bytes" -f $raw.Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MConnect-windows-x64
+          path: MConnect/build/MConnect.exe
+          if-no-files-found: error
