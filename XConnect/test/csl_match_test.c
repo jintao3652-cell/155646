@@ -185,8 +185,8 @@ int main(int argc, char** argv) {
     expect("2 airline generic", "B738", "CCA", "", "B738_CCA");
     /* 2b) 尾号不在库里 → 退回同航司 */
     expect("2b unknown reg -> airline", "B738", "CCA", "B-9999", "B738_CCA");
-    /* 3) 航司不在库里 → 同机型白机 */
-    expect("3 type white", "B738", "BAW", "", "B738_ZZZ");
+    /* 3) 航司不在库里 → 同机型随机真实航司（不优先白机） */
+    expect("3 unknown airline -> random", "B738", "BAW", "", "B738_CCA");
     /* 4) 库里没有 FA8X → 别名 F900（白机） */
     expect("4 alias FA8X -> F900", "FA8X", "DLH", "", "F900_ZZZ");
     /* 4b) 别名 + 尾号也不命中 → 仍是 F900 */

@@ -593,19 +593,28 @@ static unsigned csl_seed_hash(const char* s) {
     return h;
 }
 
+/* 通用/白机变体码：随机真实航司时排除，避免又退成白机。 */
+static int csl_generic_code(const char* code) {
+    return csl_stricmp(code, "ZZZ") == 0 ||
+           csl_stricmp(code, "ANY") == 0 ||
+           csl_stricmp(code, "GEN") == 0;
+}
+
 /* 无航司映射时，从同机型里随机挑一个真实航司涂装：
- * 优先非"绑定尾号"变体；没有再用任意带码变体。 */
+ * 优先非"绑定尾号"变体；没有再用任意真实带码变体（排除 ZZZ/ANY/GEN）。 */
 static int pick_random_variant(int n, const char* seed) {
     int cand[CSL_MAX_VARIANTS];
     int count = 0, i;
     for (i = 0; i < n && count < CSL_MAX_VARIANTS; i++) {
         if (!g_variants[i].code[0] || g_variants[i].n <= 0) continue;
+        if (csl_generic_code(g_variants[i].code)) continue;
         if (variant_reg_specific(&g_variants[i])) continue;
         cand[count++] = i;
     }
     if (count == 0) {
         for (i = 0; i < n && count < CSL_MAX_VARIANTS; i++) {
             if (!g_variants[i].code[0] || g_variants[i].n <= 0) continue;
+            if (csl_generic_code(g_variants[i].code)) continue;
             cand[count++] = i;
         }
     }
@@ -632,6 +641,15 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
     n = read_variants(xsb, g_variants, CSL_MAX_VARIANTS);
     if (n > 0) {
         int vi = pick_variant(n, airline, reg, &g_last_tier);
+        /* 不优先白机：没有航司映射，或只匹配到 ZZZ/ANY/白机基础变体时，
+         * 先随机一个同机型真实航司涂装；只有包里没有真实航司才用白机。 */
+        if (vi < 0 || g_last_tier == MATCH_TYPE) {
+            const int rv = pick_random_variant(n, seed);
+            if (rv >= 0) {
+                vi = rv;
+                g_last_tier = MATCH_RANDOM;
+            }
+        }
         if (vi >= 0) {
             for (i = 0; i < g_variants[vi].n && node->inst_count < CSL_MAX_OBJS;
                  i++) {
@@ -649,8 +667,7 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
             }
         }
 
-        /* 没有匹配涂装：优先用包内基础 OBJ（{ICAO}.obj，通常是无涂装白机），
-         * 而不是退回"第一个变体"——那会挂上别家航司的涂装。 */
+        /* 没有真实航司涂装可随机：才退回包内基础 OBJ（{ICAO}.obj 白机）。 */
         {
             char rel[2048];
             snprintf(rel, sizeof(rel), "%s%s%s%s%s.obj",
