@@ -21,6 +21,7 @@ STATE_WAIT_LOGIN = "WaitLogin"
 STATE_ONLINE = "Online"
 
 POSITION_INTERVAL = 5.0
+INTERIM_POSITION_INTERVAL = 1.0   # #SB VI 中间位置（swift 1s）
 KEEPALIVE_INTERVAL = 60.0
 
 # 机模配置 ACC 上报（swift CTokenBucket 同参数）
@@ -463,9 +464,17 @@ class FsdSession:
 
     def _report_loop(self) -> None:
         next_pos = time.monotonic() + POSITION_INTERVAL
+        next_interim = time.monotonic() + INTERIM_POSITION_INTERVAL
         next_ka = time.monotonic() + KEEPALIVE_INTERVAL
         while not self._stop.is_set():
             now = time.monotonic()
+            # swift 的 #SB VI 中间位置：1s 一次，给对端更密的插值样本
+            if (self._has_fix and self._link.connected
+                    and now >= next_interim):
+                self._send(pk.interim_position(
+                    self.callsign, self._lat, self._lon, self._alt_ft,
+                    self._gs_kt, self._pbh))
+                next_interim = now + INTERIM_POSITION_INTERVAL
             if (self._has_fix and self._link.connected
                     and now >= next_pos):
                 self._send(pk.pilot_position(

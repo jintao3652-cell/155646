@@ -178,8 +178,7 @@ def try_get_pilot_position(p: ParsedPacket) -> PilotPositionData | None:
             return None
 
     # swift 中间位置：#SB<from>:<to>:VI:<lat>:<lon>:<altTrue>:<gs>:<pbh>
-    # （SquawkBox 旧格式子类型 I 与 swift 一样**不解析**：字段布局存在历史差异，
-    #   精度也差，误判会把飞机放到错误位置；@ 包 5s 一次已足够兜底）
+    # 1s 一次，PBH 同样携带姿态/地面位；用于两地 5s @ 之间补密。已解析。
     if p.kind == "#SB" and p.type == "VI":
         f = p.flds          # flds[0]=lat, 1=lon, 2=alt, 3=gs, 4=pbh
         if len(f) < 5:

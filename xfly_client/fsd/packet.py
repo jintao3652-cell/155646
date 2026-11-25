@@ -189,6 +189,17 @@ def pilot_position(callsign: str, transponder_mode: str, squawk: str,
             f"{lat:.5f}:{lon:.5f}:{alt_true_ft}:{gs_kt}:{pbh}:{alt_correction_ft}")
 
 
+def interim_position(callsign: str, lat: float, lon: float,
+                     alt_true_ft: int, gs_kt: int, pbh: int,
+                     to: str = "ALL") -> str:
+    """#SB VI 中间位置（每 1s，swift INTERIMPOS）。
+
+    格式：#SB<from>:<to>:VI:<lat>:<lon>:<altTrue>:<gs>:<pbh>
+    """
+    return (f"#SB{callsign}:{to}:VI:{lat:.5f}:{lon:.5f}:"
+            f"{int(alt_true_ft)}:{int(gs_kt)}:{int(pbh)}")
+
+
 def plane_info_request(callsign: str, to: str) -> str:
     return f"#SB{callsign}:{to}:PIR"
 

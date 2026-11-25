@@ -52,6 +52,30 @@ void push_fix(Player* p, double lat, double lon, double alt_m,
     const PositionFix* newest = fix_at(p, 0);
     PositionFix* slot;
 
+    if (newest) {
+        /* 位置/姿态未变：只就地刷新动画/地面字段，不新增“零速”帧。
+         * roster 现在 1s 一推，而对方位置可能 5s 才有一个 @；若把重复值
+         * 当成新帧，插值会变成“零速→跳变→零速”，滑行时就是一顿一顿。 */
+        const double m_per_deg = 111320.0;
+        const double d2r = 3.14159265358979323846 / 180.0;
+        const double dlat_m = fabs(lat - newest->lat) * m_per_deg;
+        const double dlon_m = fabs(lon - newest->lon) * m_per_deg *
+                              fabs(cos(lat * d2r));
+        const int same_pos = dlat_m < 0.5 && dlon_m < 0.5 &&
+                             fabs(alt_m - newest->alt) < 0.5;
+        const int same_att =
+            fabs(angle_delta(newest->heading, heading)) < 0.2 &&
+            fabs(pitch - newest->pitch) < 0.2 &&
+            fabs(roll - newest->roll) < 0.2;
+        if (same_pos && same_att) {
+            PositionFix* n = &p->fixes[p->fix_head];
+            n->gs = gs;
+            n->agl = agl_m;
+            n->on_ground = on_ground;
+            return;
+        }
+    }
+
     if (newest && fabs(now - newest->ts) < 1e-3) {
         slot = &p->fixes[p->fix_head];   /* 同刻：就地更新最新帧 */
     } else {

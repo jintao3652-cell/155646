@@ -30,7 +30,9 @@ from .xconnect.client import AtcEntry, FlightData, PlayerEntry, XConnectClient
 
 ATC_TIMEOUT = 45.0     # ATC 每 15s 重播 %，45s 无更新判离线
 PLAYER_TIMEOUT = 30.0  # 玩家位置包通常 5s 一次
-ROSTER_PUSH_INTERVAL = 3.0
+# roster 推送周期：与 #SB VI（1s）对齐；插件侧会对未变化的位置去重，
+# 避免 3s 重复帧把插值速度拆成“零速→跳变→零速”，滑行看起来一卡一卡。
+ROSTER_PUSH_INTERVAL = 1.0
 
 
 @dataclass
