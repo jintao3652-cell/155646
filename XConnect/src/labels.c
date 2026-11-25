@@ -15,7 +15,11 @@
 #include "XPLMGraphics.h"
 
 #define LABEL_MAX_DIST_M      40000.0  /* 超过此距离不画标签 */
-#define LABEL_ALT_OFFSET_M    18.0     /* 文本略高于模型，避免遮挡机模 */
+/* 标签高度按距离自适应：近距离别飞太高，远距离仍高于机模。
+ * 固定 18m 在近距离会离机身很远（200m 时约 140px）。 */
+#define LABEL_ALT_MIN_M       3.0
+#define LABEL_ALT_MAX_M       12.0
+#define LABEL_ALT_DIST_RATIO  0.02     /* 2% 距离，夹在 min..max */
 /* 2D 阶段：外部视角和座舱视角都会调用（LastCockpit 只在 3D 座舱时调用）。
  * inBefore=1 → 画在 X-Plane 浮动窗口之前、3D 场景之上。 */
 #define LABEL_PHASE           xplm_Phase_Window
@@ -143,11 +147,19 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
         int sx, sy, len, w2;
         if (!p->active || p->fix_count == 0) continue;
 
-        XPLMWorldToLocal(p->cur_lat, p->cur_lon,
-                         p->cur_alt + LABEL_ALT_OFFSET_M, &wx, &wy, &wz);
+        XPLMWorldToLocal(p->cur_lat, p->cur_lon, p->cur_alt,
+                         &wx, &wy, &wz);
         dx = wx - cam.x; dy = wy - cam.y; dz = wz - cam.z;
         dist2 = dx * dx + dy * dy + dz * dz;
         if (dist2 > LABEL_MAX_DIST_M * LABEL_MAX_DIST_M) continue;
+        {
+            double dist = sqrt(dist2);
+            double off = dist * LABEL_ALT_DIST_RATIO;
+            if (off < LABEL_ALT_MIN_M) off = LABEL_ALT_MIN_M;
+            if (off > LABEL_ALT_MAX_M) off = LABEL_ALT_MAX_M;
+            wy += off;
+            dy = wy - cam.y;
+        }
 
         if (!project_local_to_screen(wx, wy, wz, &cam, half_tan, aspect,
                                      &sx, &sy))

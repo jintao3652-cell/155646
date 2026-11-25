@@ -69,6 +69,7 @@ typedef struct {
     unsigned lights;     /* bit0 beacon, bit1 landing, bit2 taxi, bit3 nav, bit4 strobe */
     int engines_on;      /* bit0..bit3 = 1..4 号引擎在运转 */
     int logged_parts;    /* 是否已记录首条 ACC 部件诊断日志 */
+    int logged_anim;     /* 是否已记录首帧动画值诊断日志 */
     int active;
     CslNode model;
 } Player;

@@ -414,6 +414,13 @@ void update_players(double now) {
                     }
                 }
             }
+            if (!p->logged_anim) {
+                p->logged_anim = 1;
+                xconnect_logf("anim: %s gear=%.0f flap=%.0f%% lights=%u "
+                              "eng=%d sim=%.0f",
+                              p->callsign, anim[0], anim[4] * 100.0f,
+                              p->lights, p->engines_on, sim_time);
+            }
             csl_set_position(&p->model, p->cur_lat, p->cur_lon, alt,
                              p->cur_heading, p->cur_pitch, p->cur_roll,
                              anim, csl_dataref_count());
