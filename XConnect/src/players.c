@@ -303,6 +303,22 @@ void update_players(double now) {
         f = fix_at(p, 0);   /* 最新网络帧，用于动画判断 */
         if (!f) continue;
 
+        /* 动画积分用的 dt（轮胎转动） */
+        {
+            double dt = 0.0;
+            if (p->last_anim_t > 0.0) {
+                dt = now - p->last_anim_t;
+                if (dt < 0.0 || dt > 1.0) dt = 0.0;
+            }
+            p->last_anim_t = now;
+            if (f->on_ground) {
+                /* 地速 kt → m/s，轮胎半径约 0.5m，转成角度 */
+                const double mps = f->gs * 0.514444;
+                p->tire_angle = fmod(
+                    p->tire_angle + mps * dt / 0.5 * 57.2957795, 360.0);
+            }
+        }
+
         /* 动画值按 csl.c::kCslDataRefs 索引顺序填写（与模型 OBJ 键一一对应）。
          * 远端 ACC 部件（灯光/襟翼/起落架/扰流板）优先；没有 ACC 的客户端
          * 用启发值，其余（操纵面/油门/轮胎）保持 0。 */
@@ -323,6 +339,8 @@ void update_players(double now) {
             anim[3] = gear;   /* gear_ratio[2]   */
             /* 襟翼实际展开比例（ACC flaps_pct 0..100） */
             anim[4] = p->has_parts ? ((float)p->flaps_pct / 100.0f) : 0.0f;
+            /* 缝翼跟随襟翼（ACC 没有独立 slat 字段） */
+            anim[7] = anim[4];
             /* 扰流板：spoiler_ratio 与 speed_brake_ratio 同步 */
             spoiler = (p->has_parts && p->spoilers_out) ? 1.0f : 0.0f;
             anim[5] = spoiler;
@@ -330,8 +348,12 @@ void update_players(double now) {
             if (p->has_parts) {
                 anim[14] = (p->lights & 4u) ? 1.0f : 0.0f;   /* taxi    */
                 anim[15] = (p->lights & 2u) ? 1.0f : 0.0f;   /* landing */
-                anim[16] = (p->lights & 1u) ? 1.0f : 0.0f;   /* beacon  */
-                anim[17] = (p->lights & 16u) ? 1.0f : 0.0f;  /* strobe  */
+                /* 防撞灯/频闪灯由插件闪烁：CSL 的灯对象只跟随开关，
+                 * 常亮看起来不对。 */
+                anim[16] = ((p->lights & 1u) &&
+                            fmod(sim_time, 1.2) < 0.6) ? 1.0f : 0.0f;
+                anim[17] = ((p->lights & 16u) &&
+                            fmod(sim_time, 1.0) < 0.08) ? 1.0f : 0.0f;
                 anim[18] = (p->lights & 8u) ? 1.0f : 0.0f;   /* nav     */
             } else {
                 /* 没有 ACC 的客户端：维持原启发值（全亮），至少夜里可见 */
@@ -341,6 +363,13 @@ void update_players(double now) {
                 anim[17] = 1.0f;
                 anim[18] = 1.0f;
             }
+
+            /* 轮胎转动/压缩/触地：由地速与 on_ground 驱动 */
+            anim[26] = anim[27] = anim[28] = anim[29] =
+                (float)p->tire_angle;
+            anim[30] = anim[31] = anim[32] =
+                f->on_ground ? 0.03f : 0.0f;
+            anim[33] = f->on_ground ? 1.0f : 0.0f;
 
             /* 引擎风扇/螺旋桨旋转：X-CSL 的 OBJ 使用
              * engine_rotation_angle_deg[0] / engine_rotation_speed_rad_sec[0]
@@ -414,7 +443,7 @@ void update_players(double now) {
                     }
                 }
             }
-            if (!p->logged_anim) {
+            if (!p->logged_anim && p->has_parts) {
                 p->logged_anim = 1;
                 xconnect_logf("anim: %s gear=%.0f flap=%.0f%% lights=%u "
                               "eng=%d sim=%.0f",

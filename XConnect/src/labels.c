@@ -14,12 +14,16 @@
 #include "XPLMDisplay.h"
 #include "XPLMGraphics.h"
 
+#include <GL/gl.h>
+
 #define LABEL_MAX_DIST_M      40000.0  /* 超过此距离不画标签 */
 /* 标签高度按距离自适应：近距离别飞太高，远距离仍高于机模。
  * 固定 18m 在近距离会离机身很远（200m 时约 140px）。 */
-#define LABEL_ALT_MIN_M       3.0
-#define LABEL_ALT_MAX_M       12.0
+#define LABEL_ALT_MIN_M       8.0
+#define LABEL_ALT_MAX_M       14.0
 #define LABEL_ALT_DIST_RATIO  0.02     /* 2% 距离，夹在 min..max */
+#define LABEL_SCALE           2.0f     /* 呼号字号放大（XPLM 字体本身很小） */
+#define LABEL_FONT            xplmFont_Proportional
 /* 2D 阶段：外部视角和座舱视角都会调用（LastCockpit 只在 3D 座舱时调用）。
  * inBefore=1 → 画在 X-Plane 浮动窗口之前、3D 场景之上。 */
 #define LABEL_PHASE           xplm_Phase_Window
@@ -87,12 +91,16 @@ static void draw_label(int x, int y, const char* label) {
     float black[3] = { 0.0f, 0.0f, 0.0f };
     float amber[3] = { 1.0f, 0.62f, 0.10f };
     int ox, oy;
+    glPushMatrix();
+    glTranslatef((GLfloat)x, (GLfloat)y, 0.0f);
+    glScalef(LABEL_SCALE, LABEL_SCALE, 1.0f);
     for (ox = -1; ox <= 1; ox++)
         for (oy = -1; oy <= 1; oy++) {
             if (!ox && !oy) continue;
-            XPLMDrawString(black, x + ox, y + oy, label, NULL, xplmFont_Basic);
+            XPLMDrawString(black, ox, oy, label, NULL, LABEL_FONT);
         }
-    XPLMDrawString(amber, x, y, label, NULL, xplmFont_Basic);
+    XPLMDrawString(amber, 0, 0, label, NULL, LABEL_FONT);
+    glPopMatrix();
 }
 
 static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
@@ -137,7 +145,7 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
     /* 画 2D 文字：关闭 2D 纹理 / 光照 / 深度测试，保留 alpha 混合。
      * （XPLMDrawString 会自己管理字体纹理；开纹理单元反而可能让文字不可见） */
     XPLMSetGraphicsState(0, 0, 0, 0, 1, 0, 0);
-    XPLMGetFontDimensions(xplmFont_Basic, &cw, &ch, NULL);
+    XPLMGetFontDimensions(LABEL_FONT, &cw, &ch, NULL);
 
     LOCK_ENTER(g_players_lock);
     for (i = 0; i < PLAYER_MAX; i++) {
@@ -174,9 +182,9 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
                           p->callsign, sx, sy, sqrt(dist2));
         }
         len = (int)strlen(label);
-        w2 = len * cw;
+        w2 = (int)(len * cw * LABEL_SCALE);
         if (w2 < 8) w2 = 8;
-        draw_label(sx - w2 / 2, sy - ch / 2, label);
+        draw_label(sx - w2 / 2, sy - (int)(ch * LABEL_SCALE) / 2, label);
     }
     LOCK_LEAVE(g_players_lock);
     return 1;

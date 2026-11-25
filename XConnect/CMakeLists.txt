@@ -84,7 +84,8 @@ if(WIN32)
     find_library(XPLM_LIB NAMES XPLM_64 XPLM
         HINTS "${XPLM_LIB_HINTS}" "${XPlaneSDK}/lib")
     if(XPLM_LIB)
-        target_link_libraries(XConnect PRIVATE "${XPLM_LIB}" ws2_32)
+        # opengl32：标签字号用 glPushMatrix/glScalef 放大
+        target_link_libraries(XConnect PRIVATE "${XPLM_LIB}" ws2_32 opengl32)
     else()
         message(FATAL_ERROR "未找到 XPLM_64.lib / XPLM.lib（Windows 需官方 SDK 包）")
     endif()
@@ -94,11 +95,12 @@ elseif(APPLE)
         BUNDLE TRUE PREFIX "" SUFFIX ".xpl")
     # X-Plane 在运行时解析 XPLM 符号；dylib 必须允许未定义符号
     target_link_options(XConnect PRIVATE -undefined dynamic_lookup)
+    target_link_libraries(XConnect PRIVATE "-framework OpenGL")
 else()
     target_compile_definitions(XConnect PRIVATE LIN)
     target_compile_options(XConnect PRIVATE -O2 -Wall -fPIC -shared)
-    # csl.c 使用 sin/cos/sqrt 等数学函数
-    target_link_libraries(XConnect PRIVATE pthread m)
+    # csl.c 使用 sin/cos/sqrt；标签缩放用 GL
+    target_link_libraries(XConnect PRIVATE pthread m GL)
 endif()
 
 # 输出到 build 顶层，文件名 XConnect.xpl

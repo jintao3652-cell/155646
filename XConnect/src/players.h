@@ -60,6 +60,8 @@ typedef struct {
     int have_first_fix;
     double last_seen;    /* xc_now_sec */
     double last_snap_log; /* 上次落地吸附诊断日志时间（节流） */
+    double tire_angle;   /* 轮胎累计转角（由地速积分） */
+    double last_anim_t;  /* 上次动画更新时间（积分 dt） */
     /* 远端 ACC 机模部件（客户端合并后随 roster 下发） */
     int has_parts;       /* 是否收到过远端 ACC */
     int has_gear;        /* 是否收到过 gear_down（没收到则用地面启发值） */

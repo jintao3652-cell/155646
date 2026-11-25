@@ -579,12 +579,10 @@ class NetworkModel:
         now = time.monotonic()
         with self._gate:
             items = list(self._players.values())
-        # 远端 ACC：晚加入时可能错过对方的增量广播，主动请求一次全量配置
-        # （对方会回 is_full_data=true 的 lights/flaps/gear 等）。60s 节流。
+        # 远端 ACC：只靠增量广播会漏包，导致灯光/起落架/襟翼长期停在旧值。
+        # 每 30s 主动请求一次全量（对方回 is_full_data=true），保证最终一致。
         for tr in items:
-            if tr.parts:
-                continue
-            if now - self._parts_req_at.get(tr.callsign, 0.0) < 60.0:
+            if now - self._parts_req_at.get(tr.callsign, 0.0) < 30.0:
                 continue
             self._parts_req_at[tr.callsign] = now
             try:
