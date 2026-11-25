@@ -239,6 +239,18 @@ static void handle_client_line(const char* line) {
             const Json* data = json_get(root, "data");
             if (data && data->type == JSON_ARR && g_verbose_flag)
                 xc_logf("net: ATC list n=%d (ignored on MSFS)", json_len(data));
+        } else if (strcmp(jt->sval, "hello") == 0 ||
+                   strcmp(jt->sval, "Hello") == 0) {
+            /* 桥协议 v1 握手应答（connected 已带同样信息） */
+            LOCK_ENTER(g_sock_lock);
+            if (g_client_sock != NET_INVALID) {
+                net_send_line(g_client_sock,
+                    "{\"type\":\"hello_ack\",\"protocol\":1,"
+                    "\"plugin\":\"MConnect\",\"version\":\"1.0.0\","
+                    "\"capabilities\":[\"csl\",\"parts\",\"controls\","
+                    "\"wasm\",\"diagnostics\"]}");
+            }
+            LOCK_LEAVE(g_sock_lock);
         }
     }
     json_free(root);
@@ -258,7 +270,11 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
         LOCK_LEAVE(g_sock_lock);
         xc_infof("[mconnect] 客户端已连接");
 
-        net_send_line(sock, "{\"type\":\"connected\",\"version\":1,\"sim\":\"msfs\"}");
+        net_send_line(sock,
+            "{\"type\":\"connected\",\"protocol\":1,"
+            "\"plugin\":\"MConnect\",\"version\":\"1.0.0\","
+            "\"sim\":\"msfs\",\"capabilities\":[\"csl\",\"parts\","
+            "\"controls\",\"wasm\",\"diagnostics\"]}");
 
         for (;;) {
             static char line[256 * 1024];   /* 数百玩家的单行 JSON */

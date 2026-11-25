@@ -11,6 +11,7 @@ import time
 from typing import Callable, Optional
 
 from . import packet as pk
+from ..logutil import redact
 from .auth import FsdAuthState
 from .link import FsdLink, SERVER_CALLSIGN
 from .parser import ParsedPacket, parse
@@ -170,7 +171,7 @@ class FsdSession:
         with self._send_lock:
             try:
                 self._link.send(line)
-                self._log(f"> {line}")
+                self._log(f"> {redact(line)}")
             except Exception as exc:
                 self._log(f"[fsd] send failed: {exc}")
 
@@ -383,7 +384,7 @@ class FsdSession:
     # ---------- 接收 ----------
 
     def _on_line(self, line: str) -> None:
-        self._log(f"< {line}")
+        self._log(f"< {redact(line)}")
         p = parse(line)
 
         # 收到服务器消息（欢迎 #TM / 采集器 PIR / 心跳 #DL 等）说明登录已完成：

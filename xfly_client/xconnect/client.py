@@ -17,6 +17,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from ..version import BRIDGE_PROTOCOL, CLIENT_NAME, CLIENT_VERSION
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 51001
 RECONNECT_INTERVAL = 3.0
@@ -152,6 +154,14 @@ class XConnectClient:
         self._rx_thread: Optional[threading.Thread] = None
         self._ever_connected = False
 
+        # 桥协议握手信息（connected/hello_ack）
+        self.protocol_version = 0
+        self.plugin = ""
+        self.plugin_version = ""
+        self.capabilities: set[str] = set()
+        self.handshake_ok = False
+        self.on_handshake: Optional[Callable[[dict], None]] = None
+
         self.on_connected: Optional[Callable[[], None]] = None
         self.on_disconnected: Optional[Callable[[], None]] = None
         self.on_flight_data: Optional[Callable[[FlightData], None]] = None
@@ -162,6 +172,10 @@ class XConnectClient:
         self.on_aircraft_caps: Optional[Callable[[dict], None]] = None
         self.aircraft_caps: dict = {}
         self.on_log: Optional[Callable[[str], None]] = None
+
+    def has_capability(self, name: str) -> bool:
+        """桥协议握手声明的能力（csl/parts/controls/wasm/diagnostics…）。"""
+        return name in self.capabilities
 
     def control_options(self) -> dict:
         """当前机型可用的控制选项（按分类列出真实存在的事件名）。
@@ -264,7 +278,16 @@ class XConnectClient:
             self._ever_connected = True
             sock.settimeout(1.0)
             self._sock = sock
+            self.handshake_ok = False
+            self.plugin = ""
+            self.plugin_version = ""
+            self.protocol_version = 0
+            self.capabilities = set()
             self._log("[xconnect] 已发现模拟机")
+            # Bridge Protocol v1：插件也会主动推 connected，这里再发 hello
+            self._send(json.dumps({
+                "type": "hello", "protocol": BRIDGE_PROTOCOL,
+                "client": CLIENT_NAME, "version": CLIENT_VERSION}))
             if self.on_connected:
                 self.on_connected()
             self._rx_loop(sock)
@@ -302,6 +325,36 @@ class XConnectClient:
         if self.on_message:
             self.on_message(doc)
         msg_type = doc.get("type", "")
+        if msg_type in ("connected", "hello_ack"):
+            first = not self.handshake_ok
+            self.handshake_ok = True
+            self.plugin = str(doc.get("plugin") or "")
+            self.plugin_version = str(doc.get("version") or "")
+            self.capabilities = set(doc.get("capabilities") or [])
+            raw_ver = doc.get("version")
+            if self.plugin:
+                try:
+                    self.protocol_version = int(doc.get("protocol") or 1)
+                except (TypeError, ValueError):
+                    self.protocol_version = 1
+                if first:
+                    self._log(f"[xconnect] {self.plugin} "
+                              f"v{self.plugin_version or '?'} "
+                              f"协议 v{self.protocol_version}")
+            else:
+                # 旧版插件：connected 只有 {"version":1}，没有 plugin/capabilities
+                try:
+                    self.protocol_version = int(raw_ver or 1)
+                except (TypeError, ValueError):
+                    self.protocol_version = 1
+                if first:
+                    self._log("[xconnect] 旧版插件（无握手信息）")
+            if first and self.protocol_version != BRIDGE_PROTOCOL:
+                self._log(f"[xconnect] 协议版本不一致：插件 v{self.protocol_version}，"
+                          f"客户端 v{BRIDGE_PROTOCOL}")
+            if first and self.on_handshake:
+                self.on_handshake(doc)
+            return
         if msg_type == "csl_status":
             if self.on_csl_status:
                 self.on_csl_status(doc)

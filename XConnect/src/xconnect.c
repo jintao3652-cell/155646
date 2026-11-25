@@ -14,6 +14,13 @@
 #include "labels.h"
 #include "xstr.h"
 
+/* 桥协议版本（客户端握手/诊断用） */
+#define XCONNECT_PROTOCOL 1
+#define XCONNECT_VERSION  "1.0.0"
+#define XCONNECT_CAPABILITIES \
+    "\"csl\",\"parts\",\"controls\",\"diagnostics\"," \
+    "\"position_vi\",\"position_visual\",\"acc\""
+
 static char g_log_path[2048] = "";
 
 static net_sock_t g_client_sock = NET_INVALID;
@@ -54,6 +61,36 @@ static void lock_done(void) {
     LOCK_DONE(g_sock_lock);
 }
 
+/* 日志滚动：>8MB 时 xconnect.log -> .1 -> .2 -> .3。
+ * 每秒最多检查一次，避免频繁 stat；并发轮转的窗口极小。 */
+static void maybe_rotate_log(void) {
+    static double last_check = 0.0;
+    double now = xc_now_sec();
+    FILE* f;
+    long sz;
+    char a[2100], b[2100];
+    int i;
+    if (now - last_check < 1.0) return;
+    last_check = now;
+    f = fopen(g_log_path, "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    sz = ftell(f);
+    fclose(f);
+    if (sz < 8L * 1024L * 1024L) return;
+    snprintf(a, sizeof(a), "%s.%d", g_log_path, 3);
+    remove(a);
+    for (i = 2; i >= 1; i--) {
+        snprintf(a, sizeof(a), "%s.%d", g_log_path, i);
+        snprintf(b, sizeof(b), "%s.%d", g_log_path, i + 1);
+        remove(b);
+        rename(a, b);
+    }
+    snprintf(b, sizeof(b), "%s.1", g_log_path);
+    remove(b);
+    rename(g_log_path, b);
+}
+
 /* 写诊断日志（插件目录 xconnect.log）。飞行的每一步关键入口都记录，
  * 崩溃后可从最后一行定位阶段。 */
 void xconnect_logf(const char* fmt, ...) {
@@ -61,6 +98,7 @@ void xconnect_logf(const char* fmt, ...) {
     char ts[32];
     va_list ap;
     if (!g_log_path[0]) return;
+    maybe_rotate_log();
     f = fopen(g_log_path, "a");
     if (!f) return;
     snprintf(ts, sizeof(ts), "%.0f", xc_now_sec());
@@ -246,7 +284,13 @@ static void handle_client_line(const char* line) {
                     }
                     /* 不在列表中的玩家由超时机制（PLAYER_TIMEOUT）清理 */
                     LOCK_LEAVE(g_players_lock);
-                    xconnect_logf("players updated (n=%d)", n);
+                    {
+                        static int last_n = -1;
+                        if (n != last_n) {
+                            last_n = n;
+                            xconnect_logf("players updated (n=%d)", n);
+                        }
+                    }
                 }
             } else if (strcmp(jt->sval, "Send:ATC") == 0) {
                 const Json* data = json_get(root, "data");
@@ -264,6 +308,18 @@ static void handle_client_line(const char* line) {
                  * 不必重启 X-Plane。结果写进 xconnect.log 的 dref: 行。
                  * 注意必须在主线程执行（XPLM 非线程安全），这里只置标志。 */
                 g_scan_request = 1;
+            } else if (strcmp(jt->sval, "hello") == 0 ||
+                       strcmp(jt->sval, "Hello") == 0) {
+                /* 桥协议 v1 握手：客户端主动询问；同时 connected 已带同样信息 */
+                LOCK_ENTER(g_sock_lock);
+                if (g_client_sock != NET_INVALID) {
+                    net_send_line(g_client_sock,
+                        "{\"type\":\"hello_ack\",\"protocol\":1,"
+                        "\"plugin\":\"XConnect\","
+                        "\"version\":\"" XCONNECT_VERSION "\","
+                        "\"capabilities\":[" XCONNECT_CAPABILITIES "]}");
+                }
+                LOCK_LEAVE(g_sock_lock);
             }
         }
         json_free(root);
@@ -459,7 +515,10 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
         LOCK_LEAVE(g_sock_lock);
         xconnect_logf("net: client connected");
 
-        net_send_line(sock, "{\"type\":\"connected\",\"version\":1}");
+        net_send_line(sock,
+            "{\"type\":\"connected\",\"protocol\":1,"
+            "\"plugin\":\"XConnect\",\"version\":\"" XCONNECT_VERSION "\","
+            "\"sim\":\"xplane\",\"capabilities\":[" XCONNECT_CAPABILITIES "]}");
 
         for (;;) {
             /* 玩家列表单行 JSON 可能很大（数百玩家），放宽到 256KB */
@@ -604,7 +663,7 @@ static float xconnect_flight_loop(float elapsedMe, float elapsedSim,
                 rc = (g_client_sock != NET_INVALID)
                      ? net_send_line(g_client_sock, line) : 1;
                 LOCK_LEAVE(g_sock_lock);
-                if (now - g_last_send_log >= 0.25) {
+                if (now - g_last_send_log >= 30.0) {
                     g_last_send_log = now;
                     xconnect_logf("send flight_data rc=%d hasClient=%d",
                                   rc, g_client_sock != NET_INVALID);

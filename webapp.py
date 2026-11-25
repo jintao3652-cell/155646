@@ -24,6 +24,7 @@ from xfly_client.config import AppConfig, load_config, save_config
 from xfly_client.fsd import packet as pk
 from xfly_client.fsd.session import STATE_ONLINE
 from xfly_client.i18n import translate
+from xfly_client.logutil import RotatingFileWriter, redact
 from xfly_client.model import NetworkModel
 from xfly_client.registration import norm_registration
 from xfly_client.simbrief import SimbriefError
@@ -38,6 +39,7 @@ WEBUI_URL = "file:///" + WEBUI_DIST.replace("\\", "/")
 ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.ico")
 # FSD 收发报文落盘（只记 > 开头的发送行与 [fsd] 状态行），排查协议问题用
 FSD_LOG_PATH = os.path.join(BASE_DIR, "fsd.log")
+_FSD_LOG = RotatingFileWriter(FSD_LOG_PATH, max_bytes=10 * 1024 * 1024, backups=3)
 
 
 def _validate(cfg: AppConfig) -> list[str]:
@@ -134,6 +136,9 @@ class Api:
         return translate(self._cfg.language, msg)
 
     def _push(self, event: str, payload) -> None:
+        # 日志/UI 回显前先脱敏（#AP 密码等），落盘同样使用脱敏后的内容
+        if event == "log" and isinstance(payload, str):
+            payload = redact(payload)
         self._events.append((event, payload))
         # 关键报文落盘，方便事后排查（UI 日志关掉就丢了）。
         # 记：> 发送行、< 接收行、[fsd] 状态/错误行；不记 flight（5Hz 刷爆）。
@@ -147,8 +152,7 @@ class Api:
                 else:
                     s = f"<{event}> {payload}"
                 if s:
-                    with open(FSD_LOG_PATH, "a", encoding="utf-8") as f:
-                        f.write(f"{time.strftime('%H:%M:%S')} {s}\n")
+                    _FSD_LOG.write(f"{time.strftime('%H:%M:%S')} {redact(s)}\n")
             except OSError:
                 pass
         if len(webview.windows):
