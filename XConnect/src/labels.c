@@ -1,9 +1,11 @@
 /* XConnect — 远程玩家呼叫号标签（2D 顶层绘制）。
  *
  * 原理：把每个玩家当前渲染位置从局部坐标投影到屏幕像素，在
- * xplm_Phase_LastCockpit（最后 2D 机会，位于 3D 场景之上）用
- * XPLMDrawString 绘制带黑色描边的白色呼号文本。
- * 无需自定义 OpenGL 字体/矩阵，跨客户端可靠。
+ * xplm_Phase_Window（2D 阶段，外部/座舱视角都会调用）用
+ * XPLMDrawString 绘制带黑色描边的琥珀色呼号文本。
+ *
+ * 注意：不要用 xplm_Phase_LastCockpit——它只在 3D 座舱渲染时触发，
+ * 外部视角下回调根本不会被调用（日志里完全没有 draw 记录）。
  */
 #include "xconnect.h"
 #include "players.h"
@@ -13,7 +15,11 @@
 #include "XPLMGraphics.h"
 
 #define LABEL_MAX_DIST_M      40000.0  /* 超过此距离不画标签 */
-#define LABEL_ALT_OFFSET_M    14.0     /* 文本略高于模型，避免遮挡机模 */
+#define LABEL_ALT_OFFSET_M    18.0     /* 文本略高于模型，避免遮挡机模 */
+/* 2D 阶段：外部视角和座舱视角都会调用（LastCockpit 只在 3D 座舱时调用）。
+ * inBefore=1 → 画在 X-Plane 浮动窗口之前、3D 场景之上。 */
+#define LABEL_PHASE           xplm_Phase_Window
+#define LABEL_BEFORE          1
 
 static XPLMDataRef s_fov_ref = NULL;
 
@@ -42,17 +48,18 @@ static int project_local_to_screen(double px, double py, double pz,
     double xc, yc, zc, nx, ny;
     int sw2, sh2;
 
-    /* 相机基向量 */
+    /* 相机基向量。X-Plane 本地坐标：+X 东、+Y 上、+Z 南（北 = -Z）。
+     * 航向 0 = 北、90 = 东、顺时针增大；之前的 -sin(h) 把东西镜像了。 */
     const double ch = cos(h), sh = sin(h), cp = cos(p), sp = sin(p);
     const double cr = cos(r), sr = sin(r);
-    fx = -sh * cp; fy = sp; fz = -ch * cp;       /* forward */
-    rx = ch;      ry = 0;  rz = -sh;             /* right（偏航后） */
-    ux = ry * fz - rz * fy;                      /* up = right × forward */
+    fx = sh * cp;  fy = sp;  fz = -ch * cp;     /* forward */
+    rx = ch;       ry = 0;   rz = sh;           /* right（偏航后） */
+    ux = ry * fz - rz * fy;                     /* up = right × forward */
     uy = rz * fx - rx * fz;
     uz = rx * fy - ry * fx;
-    /* 横滚：right/up 绕 forward 旋转 */
-    r2x = rx * cr + ux * sr;  r2y = ry * cr + uy * sr;  r2z = rz * cr + uz * sr;
-    u2x = -rx * sr + ux * cr; u2y = -ry * sr + uy * cr; u2z = -rz * sr + uz * cr;
+    /* 横滚：正横滚 = 右翼下沉（right 向量向下、up 向量向右） */
+    r2x = rx * cr - ux * sr;  r2y = ry * cr - uy * sr;  r2z = rz * cr - uz * sr;
+    u2x = rx * sr + ux * cr;  u2y = ry * sr + uy * cr;  u2z = rz * sr + uz * cr;
 
     xc = dx * r2x + dy * r2y + dz * r2z;
     yc = dx * u2x + dy * u2y + dz * u2z;
@@ -152,10 +159,10 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
 
 int labels_init(void) {
     return XPLMRegisterDrawCallback(draw_callsign_labels,
-                                    xplm_Phase_LastCockpit, 0, NULL);
+                                    LABEL_PHASE, LABEL_BEFORE, NULL);
 }
 
 void labels_shutdown(void) {
     XPLMUnregisterDrawCallback(draw_callsign_labels,
-                               xplm_Phase_LastCockpit, 0, NULL);
+                               LABEL_PHASE, LABEL_BEFORE, NULL);
 }
