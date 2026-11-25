@@ -157,7 +157,7 @@ static void expect(const char* label, const char* icao, const char* airline,
                    const char* reg, const char* want) {
     CslNode node;
     memset(&node, 0, sizeof(node));
-    csl_load(&node, icao, "", airline, reg);
+    csl_load(&node, icao, "", airline, reg, "TEST");
     {
         const int ok = node.variant_name[0] &&
                        strcmp(node.variant_name, want) == 0;

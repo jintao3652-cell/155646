@@ -308,6 +308,7 @@ static int variant_reg_specific(const CslVariant* v) {
 #define MATCH_REG      1
 #define MATCH_AIRLINE  2
 #define MATCH_TYPE     3
+#define MATCH_RANDOM   4   /* 无航司映射：同机型随机真实航司涂装 */
 
 static int pick_variant(int n, const char* airline, const char* reg,
                         int* tier) {
@@ -386,6 +387,7 @@ static const char* match_tier_name(int t) {
     case MATCH_REG:     return "REG";
     case MATCH_AIRLINE: return "AIRLINE";
     case MATCH_TYPE:    return "TYPE";
+    case MATCH_RANDOM:  return "RANDOM";
     default:            return "FALLBACK";
     }
 }
@@ -581,8 +583,39 @@ static int find_icao_obj_in_dir(const char* dir, const char* icao,
  * family/{icao}.obj、{icao}.obj、目录内 {icao}*.obj。成功返回实例数。 */
 static int g_last_tier = MATCH_NONE;   /* 本次 load_pack 的匹配层级（日志用） */
 
+/* FNV-1a：同一呼号稳定，不同呼号分散。 */
+static unsigned csl_seed_hash(const char* s) {
+    unsigned h = 2166136261u;
+    while (s && *s) {
+        h ^= (unsigned char)*s++;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+/* 无航司映射时，从同机型里随机挑一个真实航司涂装：
+ * 优先非"绑定尾号"变体；没有再用任意带码变体。 */
+static int pick_random_variant(int n, const char* seed) {
+    int cand[CSL_MAX_VARIANTS];
+    int count = 0, i;
+    for (i = 0; i < n && count < CSL_MAX_VARIANTS; i++) {
+        if (!g_variants[i].code[0] || g_variants[i].n <= 0) continue;
+        if (variant_reg_specific(&g_variants[i])) continue;
+        cand[count++] = i;
+    }
+    if (count == 0) {
+        for (i = 0; i < n && count < CSL_MAX_VARIANTS; i++) {
+            if (!g_variants[i].code[0] || g_variants[i].n <= 0) continue;
+            cand[count++] = i;
+        }
+    }
+    if (count == 0) return -1;
+    return cand[csl_seed_hash(seed) % (unsigned)count];
+}
+
 static int load_pack(CslNode* node, const char* pack, const char* family,
-                     const char* airline, const char* reg) {
+                     const char* airline, const char* reg,
+                     const char* seed) {
     char packAbs[1200], xsb[1400];
     const char* sep = XPLMGetDirectorySeparator();
     int i, n;
@@ -633,19 +666,26 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
             }
         }
 
-        /* 最后回退首个变体（如 ZZZZ 只有一个变体且无 AIRLINE 行） */
-        for (i = 0; i < g_variants[0].n && node->inst_count < CSL_MAX_OBJS; i++) {
-            XPLMInstanceRef inst = load_obj(g_variants[0].objs[i], pack);
-            if (inst) node->insts[node->inst_count++] = inst;
-        }
-        if (node->inst_count > 0) {
-            strncpy(node->variant, g_variants[0].code,
-                    sizeof(node->variant) - 1);
-            node->variant[sizeof(node->variant) - 1] = '\0';
-            strncpy(node->variant_name, g_variants[0].name,
-                    sizeof(node->variant_name) - 1);
-            node->variant_name[sizeof(node->variant_name) - 1] = '\0';
-            return node->inst_count;
+        /* 最后回退：同机型随机一个真实航司涂装（以前固定变体 0，所有
+         * 未匹配航司都变成同一个 AAF）。按呼号哈希，稳定且不同机组不同。 */
+        {
+            int vi = pick_random_variant(n, seed);
+            if (vi < 0) vi = 0;
+            for (i = 0; i < g_variants[vi].n && node->inst_count < CSL_MAX_OBJS;
+                 i++) {
+                XPLMInstanceRef inst = load_obj(g_variants[vi].objs[i], pack);
+                if (inst) node->insts[node->inst_count++] = inst;
+            }
+            if (node->inst_count > 0) {
+                strncpy(node->variant, g_variants[vi].code,
+                        sizeof(node->variant) - 1);
+                node->variant[sizeof(node->variant) - 1] = '\0';
+                strncpy(node->variant_name, g_variants[vi].name,
+                        sizeof(node->variant_name) - 1);
+                node->variant_name[sizeof(node->variant_name) - 1] = '\0';
+                g_last_tier = MATCH_RANDOM;
+                return node->inst_count;
+            }
         }
     }
 
@@ -682,7 +722,7 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
 }
 
 int csl_load(CslNode* node, const char* icao, const char* family,
-             const char* airline, const char* reg) {
+             const char* airline, const char* reg, const char* seed) {
     char pack[16];
     size_t k = 0, j;
 
@@ -701,7 +741,7 @@ int csl_load(CslNode* node, const char* icao, const char* family,
     }
     pack[k] = '\0';
 
-    if (pack[0] && load_pack(node, pack, family, airline, reg) > 0) {
+    if (pack[0] && load_pack(node, pack, family, airline, reg, seed) > 0) {
         xconnect_logf("csl: %s -> pack %s variant %s/%s match=%s "
                       "(%d obj, airline=%s, reg=%s)",
                       pack, pack,
@@ -719,7 +759,7 @@ int csl_load(CslNode* node, const char* icao, const char* family,
     if (pack[0]) {
         const char* alias = csl_alias_for(pack);
         if (alias && csl_stricmp(alias, pack) != 0 &&
-            load_pack(node, alias, family, airline, reg) > 0) {
+            load_pack(node, alias, family, airline, reg, seed) > 0) {
             xconnect_logf("csl: %s has no CSL pack -> alias %s variant %s/%s "
                           "match=%s (%d obj, airline=%s, reg=%s)",
                           pack, alias,
@@ -735,7 +775,7 @@ int csl_load(CslNode* node, const char* icao, const char* family,
     /* 机型未知或 CSL 库中没有该机型 → 通用 ZZZZ 模型（白机），
      * 既不会"没有模型"，也不会把所有人错挂成默认机型。 */
     if (strcmp(pack, "ZZZZ") != 0 &&
-        load_pack(node, "ZZZZ", NULL, NULL, NULL) > 0) {
+        load_pack(node, "ZZZZ", NULL, NULL, NULL, seed) > 0) {
         xconnect_logf("csl: no CSL for \"%s\" (airline=%s) -> generic ZZZZ",
                       icao ? icao : "", airline ? airline : "");
         return node->inst_count;

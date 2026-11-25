@@ -664,7 +664,9 @@ class NetworkModel:
             fsd.update_flight_state(
                 fd.latitude, fd.longitude, round(fd.altitude_msl),
                 round(fd.groundspeed), fd.pitch, fd.bank, fd.true_heading,
-                corr_ft, mode, squawk, on_ground)
+                corr_ft, mode, squawk, on_ground,
+                alt_agl_ft=fd.altitude_agl, vs_fpm=fd.vertical_speed,
+                gear_deploy=fd.gear_deploy)
             # 模拟器机型变化 → 向服务器更新 equipment（#SB PI:GEN）
             #
             # icao 已在函数开头做过推断填充（见 _on_xconnect_flight_data 起始处），

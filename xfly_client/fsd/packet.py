@@ -200,6 +200,21 @@ def interim_position(callsign: str, lat: float, lon: float,
             f"{int(alt_true_ft)}:{int(gs_kt)}:{int(pbh)}")
 
 
+def visual_position(callsign: str, lat: float, lon: float,
+                    alt_true_ft: float, alt_agl_ft: float, pbh: int,
+                    vx_ms: float, vy_ms: float, vz_ms: float,
+                    pitch_rate: float = 0.0, heading_rate: float = 0.0,
+                    bank_rate: float = 0.0, nose_gear: float = 1.0) -> str:
+    """`^` 视觉位置（每 200ms，swift VISUPDATE/Velocity 协议）。
+
+    格式：^呼号:lat:lon:altTrue:altAGL:pbh:vx:vy:vz:pitchRate:hdgRate:bankRate:noseGear
+    """
+    return (f"^{callsign}:{lat:.7f}:{lon:.7f}:{alt_true_ft:.2f}:"
+            f"{alt_agl_ft:.2f}:{int(pbh)}:{vx_ms:.1f}:{vy_ms:.1f}:{vz_ms:.1f}:"
+            f"{pitch_rate:.2f}:{heading_rate:.2f}:{bank_rate:.2f}:"
+            f"{nose_gear:.2f}")
+
+
 def plane_info_request(callsign: str, to: str) -> str:
     return f"#SB{callsign}:{to}:PIR"
 

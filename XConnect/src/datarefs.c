@@ -128,6 +128,10 @@ typedef char dref_names_must_match_enum[
 /* 机模部件（ACC 配置上报）当前值，build_flight_data 每帧刷新 */
 static int g_parts_nav = 0, g_parts_strobe = 0, g_parts_landing = 0;
 static int g_parts_taxi = 0, g_parts_beacon = 0;
+/* X-Plane 没有独立的 logo/recognition/cabin/wing 灯 dataref；
+ * 仍上报这些 ACC 键（由现有灯光派生/置 false），保证字段齐全。 */
+static int g_parts_logo = 0, g_parts_recognition = 0;
+static int g_parts_cabin = 0, g_parts_wing = 0;
 static int g_parts_gear = 1, g_parts_flaps = 0, g_parts_onground = 1;
 /* 起落架放下比例 0..1（连续值，供 gear_deploy 字段用；数组里的最大值） */
 static float g_parts_gear_ratio = 0.0f;
@@ -932,6 +936,12 @@ void build_flight_data(char* out, int size) {
         g_parts_landing = dref_int(g_drefs[DR_LANDING_LT]) > 0;
         g_parts_taxi = dref_int(g_drefs[DR_TAXI_LT]) > 0;
         g_parts_beacon = dref_int(g_drefs[DR_BEACON_LT]) > 0;
+        /* 派生额外 ACC 灯光字段（无独立 dataref）：logo 随航行灯，
+         * recognition/wing 随滑行/着陆灯；cabin 无可靠来源先报 false。 */
+        g_parts_logo = g_parts_nav;
+        g_parts_recognition = g_parts_taxi || g_parts_landing;
+        g_parts_cabin = 0;
+        g_parts_wing = g_parts_taxi;
         /* 起落架：deploy_ratio 是 float[10] 数组（0=收起，1=放下），
          * 不能用 dref_float 当标量读。
          * 判定"放下"取所有条目里的最大值（前几项是主轮、后面可能是尾轮；
@@ -1115,7 +1125,9 @@ void build_flight_data(char* out, int size) {
             "\"gear_deploy\":%.2f,"
             "\"flaps_ratio\":%.2f,\"throttle_ratio\":%.2f,"
             "\"parts\":{\"lights\":{\"strobe_on\":%d,\"landing_on\":%d,\"taxi_on\":%d,"
-            "\"beacon_on\":%d,\"nav_on\":%d},\"gear_down\":%d,\"flaps_pct\":%d,"
+            "\"beacon_on\":%d,\"nav_on\":%d,\"logo_on\":%d,"
+            "\"recognition_on\":%d,\"cabin_on\":%d,\"wing_on\":%d},"
+            "\"gear_down\":%d,\"flaps_pct\":%d,"
             "\"spoilers_out\":%d,"
             "%s"
             "\"on_ground\":%d}}",
@@ -1148,7 +1160,8 @@ void build_flight_data(char* out, int size) {
             (double)g_parts_gear_ratio,
             (double)g_parts_flaps_ratio, dref_float(g_drefs[DR_THROTTLE]),
             g_parts_strobe, g_parts_landing, g_parts_taxi, g_parts_beacon,
-            g_parts_nav,
+            g_parts_nav, g_parts_logo, g_parts_recognition,
+            g_parts_cabin, g_parts_wing,
             g_parts_gear, g_parts_flaps, g_parts_spoilers,
             eng,                                  /* %s 引擎数组 */
             g_parts_onground);

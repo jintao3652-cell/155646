@@ -22,6 +22,7 @@ STATE_ONLINE = "Online"
 
 POSITION_INTERVAL = 5.0
 INTERIM_POSITION_INTERVAL = 1.0   # #SB VI 中间位置（swift 1s）
+VISUAL_POSITION_INTERVAL = 0.2    # ^ 视觉位置（swift 200ms）
 KEEPALIVE_INTERVAL = 60.0
 
 # 机模配置 ACC 上报（swift CTokenBucket 同参数）
@@ -76,6 +77,11 @@ class FsdSession:
         self._xpdr_mode = "S"
         self._squawk = "2000"
         self._has_fix = False
+        self._heading_deg = 0.0
+        self._alt_agl_ft = -1.0
+        self._vs_fpm = 0.0
+        self._on_ground = False
+        self._gear_deploy = 0.0
 
         self._send_lock = threading.Lock()
         self._stop = threading.Event()
@@ -284,7 +290,9 @@ class FsdSession:
                             gs_kt: int, pitch_deg: float, bank_deg: float,
                             heading_deg: float, corr_ft: int,
                             xpdr_mode: str, squawk: str,
-                            on_ground: bool = False) -> None:
+                            on_ground: bool = False,
+                            alt_agl_ft: float = -1.0, vs_fpm: float = 0.0,
+                            gear_deploy: float = 0.0) -> None:
         self._lat = lat
         self._lon = lon
         self._alt_ft = alt_true_ft
@@ -293,6 +301,11 @@ class FsdSession:
         self._corr_ft = corr_ft
         self._xpdr_mode = xpdr_mode
         self._squawk = squawk
+        self._heading_deg = heading_deg
+        self._alt_agl_ft = alt_agl_ft
+        self._vs_fpm = vs_fpm
+        self._on_ground = on_ground
+        self._gear_deploy = gear_deploy
         self._has_fix = True
 
     # ---------- 机模配置 ACC 上报（swift 机制） ----------
@@ -465,9 +478,23 @@ class FsdSession:
     def _report_loop(self) -> None:
         next_pos = time.monotonic() + POSITION_INTERVAL
         next_interim = time.monotonic() + INTERIM_POSITION_INTERVAL
+        next_vis = time.monotonic() + VISUAL_POSITION_INTERVAL
         next_ka = time.monotonic() + KEEPALIVE_INTERVAL
         while not self._stop.is_set():
             now = time.monotonic()
+            # swift 的 ^ 视觉位置：200ms 一次（不判断服务器能力，先发）
+            if (self._has_fix and self._link.connected
+                    and now >= next_vis):
+                h = math.radians(self._heading_deg)
+                gs_ms = self._gs_kt * 0.514444
+                agl = self._alt_agl_ft if self._alt_agl_ft >= 0.0 else 0.0
+                nose = 1.0 if (self._on_ground or self._gear_deploy > 0.5) else 0.0
+                self._send(pk.visual_position(
+                    self.callsign, self._lat, self._lon,
+                    float(self._alt_ft), agl, self._pbh,
+                    gs_ms * math.sin(h), self._vs_fpm * 0.00508,
+                    -gs_ms * math.cos(h), 0.0, 0.0, 0.0, nose))
+                next_vis = now + VISUAL_POSITION_INTERVAL
             # swift 的 #SB VI 中间位置：1s 一次，给对端更密的插值样本
             if (self._has_fix and self._link.connected
                     and now >= next_interim):
@@ -495,7 +522,7 @@ class FsdSession:
                          else 60.0)
                 self._info_retries += 1
                 self._info_next_at = now + delay
-            time.sleep(0.5)
+            time.sleep(0.05)   # 20Hz，保证 200ms 视觉位置定时精度
 
     def _resend_aircraft_info(self) -> None:
         """补发机型信息（PI）并重播一次全量机模配置（ACC）。

@@ -240,7 +240,8 @@ void update_players(double now) {
         }
         if (p->model.inst_count <= 0) {
             if (!p->model.tried) {
-                csl_load(&p->model, p->icao, p->family, p->airline, p->reg);
+                csl_load(&p->model, p->icao, p->family, p->airline, p->reg,
+                         p->callsign);
                 if (p->model.inst_count > 0) {
                     strncpy(p->model_icao, p->icao, sizeof(p->model_icao) - 1);
                     p->model_icao[sizeof(p->model_icao) - 1] = '\0';
@@ -277,7 +278,8 @@ void update_players(double now) {
             p->model_icao[0] = '\0';
             p->model_airline[0] = '\0';
             p->model_reg[0] = '\0';
-            csl_load(&p->model, p->icao, p->family, p->airline, p->reg);
+            csl_load(&p->model, p->icao, p->family, p->airline, p->reg,
+                     p->callsign);
             if (p->model.inst_count > 0) {
                 strncpy(p->model_icao, p->icao, sizeof(p->model_icao) - 1);
                 p->model_icao[sizeof(p->model_icao) - 1] = '\0';

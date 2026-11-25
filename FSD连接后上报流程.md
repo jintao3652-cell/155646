@@ -15,7 +15,7 @@
 | 2 | 客户端标识 | `$ID` | VATSIM 专用 | 一次 | ○（私有网不用） |
 | 3 | 位置更新 | `@`（PilotDataUpdate） | 定时器 | **每 5s**，需已有飞行数据 | ✅ |
 | 4 | 中间位置 | `#SB VI` | 定时器 | 每 1s（需 INTERIMPOS 能力） | ✅（发送 + 解析） |
-| 5 | 视觉位置 | `^` / `#SL` / `#ST` | 定时器 | 200ms（需 VISUPDATE+Velocity） | ○（不发送） |
+| 5 | 视觉位置 | `^` / `#SL` / `#ST` | 定时器 | 200ms（需 VISUPDATE+Velocity） | ✅（`^` 200ms 已发；`#SL/#ST` 未发） |
 | 6 | 机模配置 | `$CQ...:ACC` | 机模部件变化 | 100ms 检测（插件 5Hz 数据），5s 令牌桶，发 `@94836` | ✅ |
 | 7 | 飞行计划 | `$FP` | 登录后/计划载入时（应用层） | 一次/次 | ✅（webapp 自动补交） |
 | 8 | 机型信息应答 | `#SB PI/FSIPI` | 收到 `#SB PIR/FSIPIR` 请求 | 事件 | ✅ |
@@ -200,7 +200,7 @@ webapp connect worker：登录后 sleep(1s) → 若有已保存飞行计划 → 
 | `c_processingIntervalMsec` | 100 | 机模配置变化检查 |
 | `PendingConnectionTimeoutMs` | 7500 | 登录挂起超时 |
 
-本地常量：`POSITION_INTERVAL=5.0`、`INTERIM_POSITION_INTERVAL=1.0`、`KEEPALIVE_INTERVAL=60.0`（`session.py`）。
+本地常量：`POSITION_INTERVAL=5.0`、`INTERIM_POSITION_INTERVAL=1.0`、`VISUAL_POSITION_INTERVAL=0.2`、`KEEPALIVE_INTERVAL=60.0`（`session.py`）。
 
 ## 6. 完整报文示例
 
