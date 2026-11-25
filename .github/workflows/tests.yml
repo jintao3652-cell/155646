@@ -38,3 +38,25 @@ jobs:
         run: cmake --build build/xconnect --config Release --parallel
       - name: CTest
         run: ctest --test-dir build/xconnect -C Release --output-on-failure
+
+  xconnect-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S XConnect -B build/xconnect -DXCONNECT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/xconnect --parallel
+      - name: CTest
+        run: ctest --test-dir build/xconnect --output-on-failure
+
+  xconnect-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S XConnect -B build/xconnect -DXCONNECT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/xconnect --parallel
+      - name: CTest
+        run: ctest --test-dir build/xconnect --output-on-failure

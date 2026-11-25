@@ -1,0 +1,29 @@
+{
+  "aircraft": [
+    {
+      "id": "example-custom-a320",
+      "match": "My Custom A320|A20N",
+      "caps": 31,
+      "xpdr_code_rpn": "1 (>L:EXAMPLE_XPDR_CODE_SET)",
+      "xpdr_mode_rpn": [
+        "0 (>L:EXAMPLE_XPDR_MODE)",
+        "1 (>L:EXAMPLE_XPDR_MODE)",
+        "2 (>L:EXAMPLE_XPDR_MODE)",
+        "3 (>L:EXAMPLE_XPDR_MODE)",
+        "4 (>L:EXAMPLE_XPDR_MODE)",
+        "5 (>L:EXAMPLE_XPDR_MODE)"
+      ],
+      "xpdr_mode_read": "(L:EXAMPLE_XPDR_MODE)",
+      "xpdr_mode_native": [0, 1, 2, 3, 4, 5],
+      "xpdr_code_read": "(A:TRANSPONDER CODE:1, Number)",
+      "com_set_rpn": [
+        "%d (>L:EXAMPLE_COM1_HZ)",
+        "%d (>L:EXAMPLE_COM2_HZ)",
+        "%d (>L:EXAMPLE_COM3_HZ)"
+      ],
+      "com_swap_rpn": "%d (>L:EXAMPLE_COM_SWAP)",
+      "com_xmit_rpn": "%d (>L:EXAMPLE_COM_XMIT)",
+      "note": "示例：复制为 MConnect.exe 同目录的 profiles.json 后修改；文件保存后 2 秒内热加载"
+    }
+  ]
+}

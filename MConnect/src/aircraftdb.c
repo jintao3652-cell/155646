@@ -6,9 +6,14 @@
  * 引用处的注释标明来源 label，便于日后随厂商更新复核。
  */
 #include "aircraftdb.h"
+#include "json.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <windows.h>
 
 /* ============================================================
  * 档案表
@@ -436,6 +441,211 @@ static const int kProfileCount =
     (int)(sizeof(kProfiles) / sizeof(kProfiles[0]));
 
 /* ============================================================
+ * 外部档案：profiles.json（热加载）
+ *
+ * 放在 MConnect.exe 同目录。结构见 MConnect/profiles.example.json：
+ *   {"aircraft":[{"id":"...","match":"...","caps":31,
+ *                 "xpdr_code_rpn":"...", "xpdr_mode_rpn":["..." x6],
+ *                 "xpdr_mode_read":"...", "xpdr_mode_native":[0..5],
+ *                 "xpdr_code_read":"...", "com_set_rpn":["..." x3],
+ *                 "com_swap_rpn":"...", "com_xmit_rpn":"...",
+ *                 "note":"..."}]}
+ *
+ * 外部档案优先于内置表；文件修改后 2s 内自动重载。
+ * 重载时不释放旧档案内存：aircraftdb_current() 可能仍指向旧条目。
+ * ============================================================ */
+
+#define EXT_MAX 64
+
+static AircraftProfile* g_ext = NULL;
+static int g_ext_n = 0;
+static char g_ext_path[MAX_PATH] = "";
+static int g_ext_have = 0;
+static time_t g_ext_mtime = 0;
+static long g_ext_size = 0;
+
+static char* dup_str(const char* s) {
+    size_t n;
+    char* p;
+    if (!s) return NULL;
+    n = strlen(s) + 1;
+    p = (char*)malloc(n);
+    if (p) memcpy(p, s, n);
+    return p;
+}
+
+static const char* jstr(const Json* obj, const char* key) {
+    const Json* v = json_get(obj, key);
+    return (v && v->type == JSON_STR) ? v->sval : NULL;
+}
+
+static int jint(const Json* obj, const char* key, int def) {
+    const Json* v = json_get(obj, key);
+    return (v && v->type == JSON_NUM) ? (int)v->num : def;
+}
+
+static int parse_profile(const Json* item, AircraftProfile* p) {
+    const Json* arr;
+    int i;
+    unsigned derived = 0;
+
+    memset(p, 0, sizeof(*p));
+    p->id = dup_str(jstr(item, "id"));
+    p->match = dup_str(jstr(item, "match"));
+    if (!p->id || !p->match) return 0;
+
+    p->xpdr_code_rpn = dup_str(jstr(item, "xpdr_code_rpn"));
+    p->xpdr_mode_read = dup_str(jstr(item, "xpdr_mode_read"));
+    p->xpdr_code_read = dup_str(jstr(item, "xpdr_code_read"));
+    p->com_swap_rpn = dup_str(jstr(item, "com_swap_rpn"));
+    p->com_xmit_rpn = dup_str(jstr(item, "com_xmit_rpn"));
+    p->note = dup_str(jstr(item, "note"));
+
+    arr = json_get(item, "xpdr_mode_rpn");
+    for (i = 0; i < 6; i++) {
+        const Json* v = json_at(arr, i);
+        if (v && v->type == JSON_STR)
+            p->xpdr_mode_rpn[i] = dup_str(v->sval);
+        p->xpdr_mode_native[i] = -1;
+    }
+    arr = json_get(item, "com_set_rpn");
+    for (i = 0; i < 3; i++) {
+        const Json* v = json_at(arr, i);
+        if (v && v->type == JSON_STR)
+            p->com_set_rpn[i] = dup_str(v->sval);
+    }
+    arr = json_get(item, "xpdr_mode_native");
+    for (i = 0; i < 6; i++) {
+        const Json* v = json_at(arr, i);
+        if (v && v->type == JSON_NUM)
+            p->xpdr_mode_native[i] = (int)v->num;
+    }
+
+    if (p->xpdr_code_rpn) derived |= CAP_XPDR_CODE;
+    for (i = 0; i < 6; i++)
+        if (p->xpdr_mode_rpn[i]) { derived |= CAP_XPDR_MODE; break; }
+    if (p->com_set_rpn[0] || p->com_set_rpn[1] || p->com_set_rpn[2])
+        derived |= CAP_COM_SET;
+    if (p->com_swap_rpn) derived |= CAP_COM_SWAP;
+    if (p->com_xmit_rpn) derived |= CAP_COM_XMIT;
+    p->caps = (unsigned)jint(item, "caps", 0);
+    if (!p->caps) p->caps = derived;
+    return 1;
+}
+
+static void load_profiles(void) {
+    FILE* f;
+    long sz;
+    char* buf;
+    char* text;
+    Json* root;
+    const Json* arr;
+    AircraftProfile* ext;
+    int n, i, m = 0;
+
+    f = fopen(g_ext_path, "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0 || sz > 4L * 1024L * 1024L) { fclose(f); return; }
+    buf = (char*)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return; }
+    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
+        free(buf);
+        fclose(f);
+        return;
+    }
+    fclose(f);
+    buf[sz] = '\0';
+    text = buf;
+    if ((unsigned char)text[0] == 0xEF &&
+        (unsigned char)text[1] == 0xBB &&
+        (unsigned char)text[2] == 0xBF)
+        text += 3;
+
+    root = json_parse(text);
+    free(buf);
+    if (!root) {
+        xc_logf("profilejson: parse failed: %s", g_ext_path);
+        return;
+    }
+    arr = json_get(root, "aircraft");
+    n = arr ? json_len(arr) : 0;
+    if (n > EXT_MAX) n = EXT_MAX;
+    if (n <= 0) {
+        json_free(root);
+        return;
+    }
+    ext = (AircraftProfile*)calloc((size_t)n, sizeof(*ext));
+    if (!ext) { json_free(root); return; }
+    for (i = 0; i < n; i++) {
+        const Json* item = json_at(arr, i);
+        if (item && item->type == JSON_OBJ && parse_profile(item, &ext[m]))
+            m++;
+    }
+    json_free(root);
+    if (m <= 0) {
+        free(ext);
+        xc_logf("profilejson: no valid profiles in %s", g_ext_path);
+        return;
+    }
+    /* 旧 g_ext 故意不释放：当前档案指针可能仍指向它 */
+    g_ext = ext;
+    g_ext_n = m;
+    xc_logf("profilejson: loaded %d external profile(s) from %s",
+            m, g_ext_path);
+}
+
+static void resolve_profiles_path(void) {
+    char exe[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, exe, sizeof(exe));
+    struct _stat st;
+
+    if (n > 0 && n < sizeof(exe)) {
+        char* slash = strrchr(exe, '\\');
+        if (slash) {
+            slash[1] = '\0';
+            snprintf(g_ext_path, sizeof(g_ext_path), "%sprofiles.json", exe);
+            if (_stat(g_ext_path, &st) == 0) return;
+        }
+    }
+    snprintf(g_ext_path, sizeof(g_ext_path), "profiles.json");
+    if (_stat(g_ext_path, &st) != 0)
+        g_ext_path[0] = '\0';   /* 文件不存在：保留空路径，tick 再试 */
+}
+
+static void load_if_changed(int force) {
+    struct _stat st;
+    if (!g_ext_path[0]) resolve_profiles_path();
+    if (!g_ext_path[0]) return;
+    if (_stat(g_ext_path, &st) != 0) {
+        g_ext_have = 0;
+        return;
+    }
+    if (!force && g_ext_have &&
+        st.st_mtime == g_ext_mtime && (long)st.st_size == g_ext_size)
+        return;
+    g_ext_mtime = st.st_mtime;
+    g_ext_size = (long)st.st_size;
+    g_ext_have = 1;
+    load_profiles();
+}
+
+void aircraftdb_init(void) {
+    resolve_profiles_path();
+    load_if_changed(1);
+}
+
+void aircraftdb_tick(void) {
+    static ULONGLONG next = 0;
+    ULONGLONG now = GetTickCount64();
+    if (now < next) return;
+    next = now + 2000;   /* 2s 检查一次 */
+    load_if_changed(0);
+}
+
+/* ============================================================
  * 查询
  * ============================================================ */
 
@@ -482,6 +692,14 @@ static int match_any(const char* match, const char* text) {
 const AircraftProfile* aircraftdb_find(const char* title, const char* icao) {
     int i;
 
+    /* 外部 profiles.json 优先于内置表 */
+    for (i = 0; i < g_ext_n; i++) {
+        if (match_any(g_ext[i].match, title)) return &g_ext[i];
+    }
+    for (i = 0; i < g_ext_n; i++) {
+        if (match_any(g_ext[i].match, icao)) return &g_ext[i];
+    }
+
     /* 表已按"具体 → 通用"排序，顺序扫描即可。
      * 例："A310" 档案排在 "IniBuilds|iniBuilds" 之前，不会被子串抢走。 */
     for (i = 0; i < kProfileCount; i++) {
@@ -493,11 +711,19 @@ const AircraftProfile* aircraftdb_find(const char* title, const char* icao) {
     return NULL;
 }
 
-int aircraftdb_count(void) { return kProfileCount; }
+int aircraftdb_count(void) { return kProfileCount + g_ext_n; }
 
 void aircraftdb_dump(void) {
     int i;
-    xc_logf("aircraftdb: %d 个机型档案", kProfileCount);
+    xc_logf("aircraftdb: %d 个机型档案（外部 %d）",
+            kProfileCount + g_ext_n, g_ext_n);
+    for (i = 0; i < g_ext_n; i++) {
+        xc_logf("  [ext] %-14s caps=0x%02x match=\"%s\"",
+                g_ext[i].id ? g_ext[i].id : "?",
+                g_ext[i].caps, g_ext[i].match ? g_ext[i].match : "");
+        if (g_ext[i].note && g_ext[i].note[0])
+            xc_logf("        备注: %s", g_ext[i].note);
+    }
     for (i = 0; i < kProfileCount; i++) {
         xc_logf("  %-18s caps=0x%02x match=\"%s\"", kProfiles[i].id,
                 kProfiles[i].caps, kProfiles[i].match);

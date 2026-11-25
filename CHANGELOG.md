@@ -8,8 +8,12 @@
 
 - Bridge Protocol v1：`connected`/`hello`/`hello_ack` 握手、能力位、版本提示。
 - 客户端诊断导出：`python -m xfly_client.diagnostics`（日志自动脱敏）。
-- `tests/` 单元测试：日志脱敏/轮转、VI/`^` 报文、桥握手、诊断。
-- 文档：FAQ、支持矩阵、桥协议、贡献指南、变更日志。
+- `tests/` 单元测试：日志脱敏/轮转、VI/`^` 报文、桥握手、诊断、回放、mock FSD。
+- 诊断 UI：设置页“导出诊断”；后端 `Api.diagnostics/export_diagnostics`。
+- MConnect 外部机型档案：`MConnect.exe` 同目录 `profiles.json`，2s 热加载，
+  外部档案优先于内置表（`MConnect/PROFILES.md`）。
+- CI：Windows/Linux/macOS XConnect 构建 + CTest；Python unittest + selftest。
+- 文档：FAQ、支持矩阵、桥协议、贡献指南、变更日志、MConnect 档案格式。
 
 ### Changed
 

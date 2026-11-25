@@ -465,6 +465,9 @@ static void sim_loop(void) {
 
         now = xc_now_sec();
 
+        /* 1b) 外部机型档案热加载（每 2s 检查 profiles.json） */
+        aircraftdb_tick();
+
         /* 2) 驱动 AI 对象（建/换/写位置）—— 必须在本线程 */
         update_players(now);
         /* 网络线程请求的"客户端断开 → 清空 AI"也放到本线程执行 */
@@ -656,6 +659,8 @@ int main(int argc, char** argv) {
     xc_infof("  日志: %s", g_log_path);
     xc_logf("==== MConnect start ====");
     xc_logf("exe dir: %s", g_exe_dir);
+    /* 外部机型档案：MConnect.exe 同目录 profiles.json（热加载） */
+    aircraftdb_init();
 
     /* 1. 锁 */
     InitializeCriticalSection(&g_lock_players);

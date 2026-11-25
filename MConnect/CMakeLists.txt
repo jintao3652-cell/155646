@@ -68,7 +68,7 @@ function(mconnect_add_test name)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
-mconnect_add_test(aircraftdb_test    src/aircraftdb.c)
+mconnect_add_test(aircraftdb_test    src/aircraftdb.c src/json.c)
 mconnect_add_test(pmdgbridge_test    src/pmdgbridge.c)
 mconnect_add_test(inputev_test       src/inputev.c)
 mconnect_add_test(wasmbridge_test    src/wasmbridge.c)
@@ -77,6 +77,7 @@ mconnect_add_test(control_test
     src/control.c src/inputev.c src/aircraftdb.c src/wasmbridge.c
     src/pmdgbridge.c src/json.c)
 mconnect_add_test(radio_test
-    src/datadefs.c src/aircraftdb.c src/pmdgbridge.c src/wasmbridge.c)
+    src/datadefs.c src/aircraftdb.c src/pmdgbridge.c src/wasmbridge.c
+    src/json.c)
 mconnect_add_test(aircraftcaps_test
     src/aircraftcaps.c src/inputev.c src/wasmbridge.c)

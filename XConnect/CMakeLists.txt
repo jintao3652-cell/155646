@@ -92,10 +92,13 @@ elseif(APPLE)
     target_compile_definitions(XConnect PRIVATE APL)
     set_target_properties(XConnect PROPERTIES
         BUNDLE TRUE PREFIX "" SUFFIX ".xpl")
+    # X-Plane 在运行时解析 XPLM 符号；dylib 必须允许未定义符号
+    target_link_options(XConnect PRIVATE -undefined dynamic_lookup)
 else()
     target_compile_definitions(XConnect PRIVATE LIN)
     target_compile_options(XConnect PRIVATE -O2 -Wall -fPIC -shared)
-    target_link_libraries(XConnect PRIVATE pthread)
+    # csl.c 使用 sin/cos/sqrt 等数学函数
+    target_link_libraries(XConnect PRIVATE pthread m)
 endif()
 
 # 输出到 build 顶层，文件名 XConnect.xpl

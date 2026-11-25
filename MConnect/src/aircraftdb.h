@@ -105,6 +105,11 @@ typedef struct {
 /* 按机型标题 / ICAO 查档案。找不到返回 NULL（调用方回退通用逻辑）。 */
 const AircraftProfile* aircraftdb_find(const char* title, const char* icao);
 
+/* 加载 MConnect.exe 同目录的 profiles.json（外部档案，热加载）。
+ * aircraftdb_init 在启动时调用一次；aircraftdb_tick 在主循环里周期检查。 */
+void aircraftdb_init(void);
+void aircraftdb_tick(void);
+
 /* 档案数量（诊断用）。 */
 int aircraftdb_count(void);
 
