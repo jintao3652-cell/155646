@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from . import aircraft_db
@@ -52,6 +52,17 @@ class PlayerTrack:
     airline: str = ""       # 航司/涂装码（PI AIRLINE 优先）
     livery: str = ""        # PI LIVERY（swift 的涂装串，常与 AIRLINE 同为航司码）
     registration: str = ""  # 尾号（PI LIVERY/REG；本客户端把尾号放 LIVERY，swift 不提供）
+    # 远端 ACC 机模配置（增量合并后的灯光/襟翼/起落架/扰流板等），下发给插件渲染
+    parts: dict = field(default_factory=dict)
+
+
+def _merge_parts(dst: dict, src: dict) -> None:
+    """把增量 ACC 合并进已有部件表（嵌套字典逐层合并，其余覆盖）。"""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _merge_parts(dst[k], v)
+        else:
+            dst[k] = v
 
 
 _FACILITY_NAMES = {1: "FSS", 2: "DEL", 3: "GND", 4: "TWR", 5: "APP", 6: "CTR"}
@@ -84,6 +95,7 @@ class NetworkModel:
         self._atc_last_seen: dict[str, float] = {}
         self._pl_last_seen: dict[str, float] = {}
         self._model_req_at: dict[str, float] = {}   # 远程机型 PIR 请求节流
+        self._parts_req_at: dict[str, float] = {}   # 远端全量 ACC 请求节流
 
         self.fsd: Optional[FsdSession] = None
         # 插件客户端可注入共享实例（应用级监听插件上线，生命周期由调用方管理）
@@ -203,6 +215,7 @@ class NetworkModel:
         session.on_plane_info_requested = self._on_plane_info_requested
         session.on_plane_info_received = self._on_plane_info_received
         session.on_flight_plan_received = self._on_flight_plan_received
+        session.on_aircraft_config_received = self._on_aircraft_config_received
         session.on_text_received = lambda f, m: self.on_text_received and \
             self.on_text_received(f, m)
         session.on_metar_received = lambda m: self.on_metar_received and \
@@ -261,6 +274,7 @@ class NetworkModel:
             self._players.clear()
             self._atc_last_seen.clear()
             self._pl_last_seen.clear()
+            self._parts_req_at.clear()
         if self.on_roster_changed:
             self.on_roster_changed()
         self.push_roster()  # 立即通知插件清空场景
@@ -424,6 +438,26 @@ class NetworkModel:
                   f"({family or '-'}, {airline or '-'}, livery={livery or '-'}, "
                   f"reg={registration or '-'})")
 
+    def _on_aircraft_config_received(self, sender: str, config: dict) -> None:
+        """远端机模配置（$CQ:@94836:ACC）：合并部件，供 CSL 渲染灯光/襟翼等。
+
+        插件之前把远端灯光硬编码成全亮（因为收不到遥测），现在把对方 ACC 里的
+        lights / flaps_pct / gear_down / spoilers_out 合并后随 roster 下发。
+        """
+        if not sender or not isinstance(config, dict):
+            return
+        full = bool(config.get("is_full_data"))
+        data = {k: v for k, v in config.items() if k != "is_full_data"}
+        with self._gate:
+            tr = self._players.get(sender)
+            if tr is None:
+                return          # 尚未收到过位置：不创建"幽灵"玩家
+            if full:
+                tr.parts = data
+            else:
+                _merge_parts(tr.parts, data)
+            self._pl_last_seen[sender] = time.monotonic()
+
     def _on_flight_plan_received(self, from_callsign: str, fp_type: str,
                                  flds: list[str], raw: str) -> None:
         """远程客户端飞行计划（$FP，服务器转发）→ 机型兜底匹配。
@@ -501,6 +535,9 @@ class NetworkModel:
             for tr in pseen.values():
                 if tr.callsign.lower() in atc_callsigns:
                     continue  # 剔除与管制员同名的条目，防插件双重渲染
+                parts = tr.parts if isinstance(tr.parts, dict) else {}
+                # ACC 的 on_ground 比 PBH 位更可信（部分客户端 PBH 地面位恒 0）
+                og = parts.get("on_ground", tr.on_ground)
                 player_list.append(PlayerEntry(
                     callsign=tr.callsign,
                     latitude=tr.lat,
@@ -514,8 +551,9 @@ class NetworkModel:
                     aircraft_family=tr.family,
                     airline=_derive_airline(tr),
                     registration=tr.registration,
-                    on_ground=tr.on_ground,
+                    on_ground=bool(og),
                     altitude_agl=tr.agl_ft,
+                    parts=parts,
                 ))
 
         self.xconnect.send_atc(atc_list)
@@ -539,6 +577,18 @@ class NetworkModel:
         now = time.monotonic()
         with self._gate:
             items = list(self._players.values())
+        # 远端 ACC：晚加入时可能错过对方的增量广播，主动请求一次全量配置
+        # （对方会回 is_full_data=true 的 lights/flaps/gear 等）。60s 节流。
+        for tr in items:
+            if tr.parts:
+                continue
+            if now - self._parts_req_at.get(tr.callsign, 0.0) < 60.0:
+                continue
+            self._parts_req_at[tr.callsign] = now
+            try:
+                fsd.request_aircraft_config(tr.callsign)
+            except Exception:
+                pass
         req = 0
         for tr in items:
             if req >= limit:

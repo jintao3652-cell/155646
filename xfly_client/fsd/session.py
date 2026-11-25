@@ -245,6 +245,14 @@ class FsdSession:
             if req and req.upper() not in ("SERVER", ACFG_BROADCAST_TO.upper()):
                 self._send(self._pi_line(req))
 
+    def request_aircraft_config(self, target: str) -> None:
+        """向对端请求全量机模配置（$CQ...:ACC:{"request":"full"}）。
+
+        对方会回一条带 is_full_data=true 的 ACC；用于晚加入时补齐
+        远端灯光/襟翼/起落架等部件（增量广播可能错过了）。
+        """
+        self._send(pk.aircraft_config_request(self.callsign, target))
+
     def request_flight_plan(self, target: str) -> None:
         """向服务器查询某呼号的缓存飞行计划（$CQ ...:SERVER:FP:<target>），
         服务器以 $FP 应答（含机型），用于远程玩家机型识别兜底。"""

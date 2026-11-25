@@ -80,6 +80,8 @@ void xconnect_logf(const char* fmt, ...) {
 /* 反向控制报文处理器（定义在下方；handle_client_line 先用到，故先声明） */
 static void handle_radio_command(const Json* root);
 static void handle_xpdr_command(const Json* root);
+/* 定义在下方；handle_client_line 解析远端 ACC 部件时先用到 */
+static int jnum_field(const Json* obj, const char* key, double* out);
 
 static void handle_client_line(const char* line) {
 #ifdef _WIN32
@@ -170,6 +172,64 @@ static void handle_client_line(const char* line) {
                             if (jg) {
                                 if (jg->type == JSON_BOOL) on_ground = jg->bval ? 1 : 0;
                                 else if (jg->type == JSON_NUM) on_ground = jg->num != 0.0;
+                            }
+                            /* 远端 ACC 部件：客户端把对方的
+                             * $CQ:@94836:ACC 增量合并后随 roster 下发。
+                             * 之前插件把远端灯光硬编码为全亮，这里改用真实值。 */
+                            {
+                                const Json* parts = json_get(el, "parts");
+                                if (parts && parts->type == JSON_OBJ && parts->child) {
+                                    const Json* lights;
+                                    double pv;
+                                    p->has_parts = 1;
+                                    lights = json_get(parts, "lights");
+                                    if (lights && lights->type == JSON_OBJ) {
+                                        unsigned mask = 0;
+                                        if (jnum_field(lights, "beacon_on", &pv) && pv != 0.0)
+                                            mask |= 1u;
+                                        if (jnum_field(lights, "landing_on", &pv) && pv != 0.0)
+                                            mask |= 2u;
+                                        if (jnum_field(lights, "taxi_on", &pv) && pv != 0.0)
+                                            mask |= 4u;
+                                        if (jnum_field(lights, "nav_on", &pv) && pv != 0.0)
+                                            mask |= 8u;
+                                        if (jnum_field(lights, "strobe_on", &pv) && pv != 0.0)
+                                            mask |= 16u;
+                                        p->lights = mask;
+                                    }
+                                    if (jnum_field(parts, "flaps_pct", &pv)) {
+                                        int fp = (int)(pv + 0.5);
+                                        if (fp < 0) fp = 0;
+                                        if (fp > 100) fp = 100;
+                                        p->flaps_pct = fp;
+                                    }
+                                    if (jnum_field(parts, "gear_down", &pv)) {
+                                        p->gear_down = pv != 0.0;
+                                        p->has_gear = 1;
+                                    }
+                                    if (jnum_field(parts, "spoilers_out", &pv))
+                                        p->spoilers_out = pv != 0.0;
+                                    /* 引擎运转状态：{"1":{"on":true},"2":{"on":true}} */
+                                    {
+                                        const Json* eng = json_get(parts, "engines");
+                                        if (eng && eng->type == JSON_OBJ) {
+                                            unsigned emask = 0;
+                                            const Json* e;
+                                            for (e = eng->child; e; e = e->next) {
+                                                int idx;
+                                                double onv;
+                                                if (!e->key || e->type != JSON_OBJ)
+                                                    continue;
+                                                idx = atoi(e->key);
+                                                if (idx >= 1 && idx <= 4 &&
+                                                    jnum_field(e, "on", &onv) &&
+                                                    onv != 0.0)
+                                                    emask |= 1u << (idx - 1);
+                                            }
+                                            p->engines_on = (int)emask;
+                                        }
+                                    }
+                                }
                             }
                             p->last_seen = xc_now_sec();   /* 非主线程：不使用 XPLM API */
                             push_fix(p, lat, lon, alt_m, heading, pitch,

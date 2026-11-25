@@ -271,20 +271,71 @@ void update_players(double now) {
         if (!f) continue;
 
         /* 动画值按 csl.c::kCslDataRefs 索引顺序填写（与模型 OBJ 键一一对应）。
-         * 远程玩家无襟翼/油门/灯光遥传，可取部分用启发值，其余置 0。 */
+         * 远端 ACC 部件（灯光/襟翼/起落架/扰流板）优先；没有 ACC 的客户端
+         * 用启发值，其余（操纵面/油门/轮胎）保持 0。 */
         memset(anim, 0, sizeof(anim));
         {
-            const float gear =
-                (f->on_ground || f->alt < 60.0 || f->gs < 40.0) ? 1.0f : 0.0f;
+            /* 优先用远端 ACC 的真实部件；没有 ACC 的客户端保留启发值。 */
+            float gear;
+            float spoiler;
+            if (p->has_parts && p->has_gear) {
+                gear = p->gear_down ? 1.0f : 0.0f;
+            } else {
+                gear = (f->on_ground || f->alt < 60.0 || f->gs < 40.0)
+                           ? 1.0f : 0.0f;
+            }
             anim[0] = gear;   /* gear_ratio      */
             anim[1] = gear;   /* gear_ratio[0]   */
             anim[2] = gear;   /* gear_ratio[1]   */
             anim[3] = gear;   /* gear_ratio[2]   */
-            anim[14] = 1.0f;  /* taxi_lites_on   */
-            anim[15] = 1.0f;  /* landing_lites_on*/
-            anim[16] = 1.0f;  /* beacon_lites_on */
-            anim[17] = 1.0f;  /* strobe_lites_on */
-            anim[18] = 1.0f;  /* nav_lites_on    */
+            /* 襟翼实际展开比例（ACC flaps_pct 0..100） */
+            anim[4] = p->has_parts ? ((float)p->flaps_pct / 100.0f) : 0.0f;
+            /* 扰流板：spoiler_ratio 与 speed_brake_ratio 同步 */
+            spoiler = (p->has_parts && p->spoilers_out) ? 1.0f : 0.0f;
+            anim[5] = spoiler;
+            anim[6] = spoiler;
+            if (p->has_parts) {
+                anim[14] = (p->lights & 4u) ? 1.0f : 0.0f;   /* taxi    */
+                anim[15] = (p->lights & 2u) ? 1.0f : 0.0f;   /* landing */
+                anim[16] = (p->lights & 1u) ? 1.0f : 0.0f;   /* beacon  */
+                anim[17] = (p->lights & 16u) ? 1.0f : 0.0f;  /* strobe  */
+                anim[18] = (p->lights & 8u) ? 1.0f : 0.0f;   /* nav     */
+            } else {
+                /* 没有 ACC 的客户端：维持原启发值（全亮），至少夜里可见 */
+                anim[14] = 1.0f;
+                anim[15] = 1.0f;
+                anim[16] = 1.0f;
+                anim[17] = 1.0f;
+                anim[18] = 1.0f;
+            }
+
+            /* 引擎风扇/螺旋桨旋转：X-CSL 的 OBJ 使用
+             * engine_rotation_angle_deg[0] / engine_rotation_speed_rad_sec[0]
+             * （部分模型用 prop_rotation_angle_deg）。
+             *
+             * 之前这些值恒为 0，所以即使对端双发已启动，扇叶也不转。
+             * 转角用单调时间计算（与帧率无关），引擎在转时持续累加。 */
+            {
+                int any_engine;
+                if (p->has_parts)
+                    any_engine = p->engines_on != 0;
+                else
+                    /* 没有 ACC：起飞/滑行中的飞机默认引擎在转，停机不转 */
+                    any_engine = (!f->on_ground || f->gs > 10.0);
+                if (any_engine) {
+                    const float fan_deg = (float)fmod(now * 1200.0, 360.0);
+                    anim[9] = 0.5f;              /* thrust_ratio */
+                    anim[21] = fan_deg;          /* prop_rotation_angle_deg */
+                    anim[22] = fan_deg;          /* engine_rotation_angle_deg */
+                    anim[23] = fan_deg;          /* ...[0] */
+                    anim[24] = 20.0f;            /* speed rad/s */
+                    anim[25] = 20.0f;            /* speed rad/s [0] */
+                } else {
+                    anim[9] = 0.0f;
+                    anim[21] = anim[22] = anim[23] = 0.0f;
+                    anim[24] = anim[25] = 0.0f;
+                }
+            }
         }
         /* 4-13 操纵面/推力/反推、19-33 轮胎/风扇/触地：保持 0 */
 

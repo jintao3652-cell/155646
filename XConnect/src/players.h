@@ -60,6 +60,14 @@ typedef struct {
     int have_first_fix;
     double last_seen;    /* xc_now_sec */
     double last_snap_log; /* 上次落地吸附诊断日志时间（节流） */
+    /* 远端 ACC 机模部件（客户端合并后随 roster 下发） */
+    int has_parts;       /* 是否收到过远端 ACC */
+    int has_gear;        /* 是否收到过 gear_down（没收到则用地面启发值） */
+    int flaps_pct;       /* 0..100 */
+    int gear_down;       /* 0/1 */
+    int spoilers_out;    /* 0/1 */
+    unsigned lights;     /* bit0 beacon, bit1 landing, bit2 taxi, bit3 nav, bit4 strobe */
+    int engines_on;      /* bit0..bit3 = 1..4 号引擎在运转 */
     int active;
     CslNode model;
 } Player;

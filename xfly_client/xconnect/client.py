@@ -124,8 +124,10 @@ class PlayerEntry:
     aircraft_family: str = ""
     airline: str = ""              # 涂装/航司码（PI AIRLINE/LIVERY 或呼号前三位）
     registration: str = ""         # 注册号（尾号）：CSL 匹配第一级
-    on_ground: bool = False        # 遥测 onGround（PBH bit1 / #SB VI）
+    on_ground: bool = False        # 遥测 onGround（PBH bit1 / #SB VI / ACC）
     altitude_agl: float = -1.0     # ft；<0 = 未知（^/#SL/#ST 包才携带）
+    # 远端 ACC 机模部件（lights/flaps_pct/gear_down/spoilers_out 等），供 CSL 渲染
+    parts: dict = field(default_factory=dict)
 
 
 _FD_FIELDS = set(FlightData.__dataclass_fields__)
