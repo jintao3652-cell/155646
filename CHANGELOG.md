@@ -25,6 +25,9 @@
 
 ### Fixed
 
+- 服务器不支持 `^` 视觉位置时返回 `$ER 004 Syntax error` 刷屏：按最近发送的
+  `^`/`#SB VI` 自动关闭对应报文（保留 `@`），并节流其它 004 日志。
+
 - 远端呼号标签：改用 `xplm_Phase_Window`，修正 FOV dataref
   （`vertical_field_of_view_deg`）与航向/横滚基向量。
 - 滑行卡顿：补 `#SB VI`(1s)、`^`(200ms)、roster 1s、重复位置帧去重。

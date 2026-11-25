@@ -84,6 +84,14 @@ class FsdSession:
         self._on_ground = False
         self._gear_deploy = 0.0
 
+        # 服务器不一定支持 ^ / #SB VI；收到 004 Syntax error 时按最近发送的
+        # 报文类型自动关闭，避免 5Hz 错误刷屏。
+        self._visual_pos_disabled = False
+        self._interim_pos_disabled = False
+        self._last_visual_sent = 0.0
+        self._last_interim_sent = 0.0
+        self._last_syntax_log_at = 0.0
+
         self._send_lock = threading.Lock()
         self._stop = threading.Event()
         self._reporter: Optional[threading.Thread] = None
@@ -140,6 +148,12 @@ class FsdSession:
         self._info_retries = 0
         self._info_acked = False
         self._last_pi_requester = ""
+        # 新连接重新探测（服务器可能不同）
+        self._visual_pos_disabled = False
+        self._interim_pos_disabled = False
+        self._last_visual_sent = 0.0
+        self._last_interim_sent = 0.0
+        self._last_syntax_log_at = 0.0
         self._send(pk.add_pilot(self.callsign, self.cid, self.credential,
                                 pk.NETWORK_RATING, pk.PROTOCOL_REVISION,
                                 self.simulator_type, self.real_name))
@@ -168,6 +182,10 @@ class FsdSession:
     def _send(self, line: str) -> None:
         if not self._link.connected:
             return
+        if line.startswith("^"):
+            self._last_visual_sent = time.monotonic()
+        elif line.startswith("#SB") and ":VI:" in line:
+            self._last_interim_sent = time.monotonic()
         with self._send_lock:
             try:
                 self._link.send(line)
@@ -404,6 +422,14 @@ class FsdSession:
             raw = p.type if p.type else (p.flds[0] if p.flds else "")
             desc = ":".join(p.flds[1:]) if len(p.flds) > 1 else ""
             code = pk.resolve_error_code(raw)
+            if self._maybe_disable_unsupported(code):
+                return
+            # 其它 004 语法错误也节流，避免刷爆 UI/日志
+            if code == pk.ERR_SYNTAX:
+                now = time.monotonic()
+                if now - self._last_syntax_log_at < 5.0:
+                    return
+                self._last_syntax_log_at = now
             if self.on_error_text:
                 self.on_error_text(f"服务器错误 {raw}: {desc}")
             # 仅致命错误断链；NoFlightPlan(8)/NoSuchCallsign(7) 等非致命保持连接
@@ -466,6 +492,27 @@ class FsdSession:
             if isinstance(cfg, dict):
                 self.on_aircraft_config_received(sender, cfg)
 
+    def _maybe_disable_unsupported(self, code: int) -> bool:
+        """004 Syntax error 与最近发送的 ^ / VI 相关联 → 关闭对应报文。
+
+        服务器（如当前 XFlySim legacy）不支持 ^ 时会 5Hz 回语法错误；
+        自动降级后仍保留 @（5s）与 VI（1s）。
+        """
+        if code != pk.ERR_SYNTAX:
+            return False
+        now = time.monotonic()
+        if (not self._visual_pos_disabled
+                and now - self._last_visual_sent < 1.5):
+            self._visual_pos_disabled = True
+            self._log("[fsd] 服务器不支持 ^ 视觉位置，已自动关闭（保留 @/VI）")
+            return True
+        if (not self._interim_pos_disabled
+                and now - self._last_interim_sent < 1.5):
+            self._interim_pos_disabled = True
+            self._log("[fsd] 服务器不支持 #SB VI，已自动关闭（保留 @）")
+            return True
+        return False
+
     def _on_socket_down(self) -> None:
         self._stop.set()
         if self.state != STATE_DISCONNECTED:
@@ -485,7 +532,7 @@ class FsdSession:
             now = time.monotonic()
             # swift 的 ^ 视觉位置：200ms 一次（不判断服务器能力，先发）
             if (self._has_fix and self._link.connected
-                    and now >= next_vis):
+                    and not self._visual_pos_disabled and now >= next_vis):
                 h = math.radians(self._heading_deg)
                 gs_ms = self._gs_kt * 0.514444
                 agl = self._alt_agl_ft if self._alt_agl_ft >= 0.0 else 0.0
@@ -498,7 +545,7 @@ class FsdSession:
                 next_vis = now + VISUAL_POSITION_INTERVAL
             # swift 的 #SB VI 中间位置：1s 一次，给对端更密的插值样本
             if (self._has_fix and self._link.connected
-                    and now >= next_interim):
+                    and not self._interim_pos_disabled and now >= next_interim):
                 self._send(pk.interim_position(
                     self.callsign, self._lat, self._lon, self._alt_ft,
                     self._gs_kt, self._pbh))
