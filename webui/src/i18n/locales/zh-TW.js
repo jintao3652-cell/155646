@@ -183,6 +183,9 @@ export default {
     accountSaved: '帳號設定已儲存',
     debugOn: '除錯模式已開啟（顯示外掛原始封包）',
     debugOff: '除錯模式已關閉',
+    exitTitle: '結束 XFlySim Client',
+    exitMessage: '確定要結束用戶端嗎？',
+    exitConfirm: '結束',
   },
   errors: {
     alreadyConnected: '已在連線中',

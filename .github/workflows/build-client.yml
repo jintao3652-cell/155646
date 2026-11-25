@@ -28,18 +28,23 @@ on:
       - 'package-lock.json'
       - 'build_exe.ps1'
 
+# 同一分支只保留最新一次运行，避免排队/并发积累产物
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     # PyInstaller onefile + --windowed + `;` 路径分隔符均为 Windows 专属
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -68,8 +73,12 @@ jobs:
           python -c "raw=open('dist/XFlySimClient.exe','rb').read(); assert raw[:2]==b'MZ','not PE'; assert b'pywebview' in raw.lower(),'pywebview not bundled'; print('PE OK: MZ header + pywebview bundled')"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
+        # 配额满时上传失败不应把构建判失败
+        continue-on-error: true
+        if: github.event_name != 'pull_request'
         with:
           name: XFlySimClient-windows-x86_64
           path: dist/XFlySimClient.exe
           if-no-files-found: error
+          retention-days: 1

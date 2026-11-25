@@ -17,7 +17,14 @@
 
 static XPLMDataRef s_fov_ref = NULL;
 
-/* 局部坐标 3D 点 → 屏幕像素（屏幕坐标原点左上角，Y 向下）。
+/* 诊断：确认绘制回调在外部视角也会被调用，以及第一个标签的屏幕位置。
+ * 每次插件启动只在日志里各记一次。 */
+static int s_logged_call = 0;
+static int s_logged_label = 0;
+
+/* 局部坐标 3D 点 → 屏幕像素。
+ * 注意：XPLMDrawString 的屏幕坐标原点是**左下角**、Y 向上（OpenGL 约定），
+ * 不是左上角。之前按左上角算 `1 - ny`，标签会被上下镜像画到别处。
  * 相机基向量按 XPLM 约定：-Z 为 forward（0 航向朝北），顺时针偏航、
  * 抬头为正俯仰、绕视轴顺时针横滚；zoom 放大对应半视场角缩小。
  * 返回 1 表示点在相机前方。 */
@@ -57,21 +64,23 @@ static int project_local_to_screen(double px, double py, double pz,
     XPLMGetScreenSize(&sw2, &sh2);
     if (sw2 < 16 || sh2 < 16) return 0;
     *out_x = (int)(sw2 * 0.5 * (1.0 + nx));
-    *out_y = (int)(sh2 * 0.5 * (1.0 - ny));
+    /* 左下角原点、Y 向上：ny>0（目标在相机上方）时 y 应更大 */
+    *out_y = (int)(sh2 * 0.5 * (1.0 + ny));
     return 1;
 }
 
-/* 带描边的文本：四向 ±1px 黑色 + 本体白色 */
+/* 带描边的文本：周围 ±1px 黑色 + 本体琥珀色（与 swift 的呼号标签一致）。
+ * 注意 XPLMDrawString 的颜色是 3 个 float（RGB），不是 RGBA。 */
 static void draw_label(int x, int y, const char* label) {
-    float black[4] = { 0.0f, 0.0f, 0.0f, 0.9f };
-    float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    float black[3] = { 0.0f, 0.0f, 0.0f };
+    float amber[3] = { 1.0f, 0.62f, 0.10f };
     int ox, oy;
     for (ox = -1; ox <= 1; ox++)
         for (oy = -1; oy <= 1; oy++) {
             if (!ox && !oy) continue;
             XPLMDrawString(black, x + ox, y + oy, label, NULL, xplmFont_Basic);
         }
-    XPLMDrawString(white, x, y, label, NULL, xplmFont_Basic);
+    XPLMDrawString(amber, x, y, label, NULL, xplmFont_Basic);
 }
 
 static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
@@ -81,7 +90,7 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
     int sw = 0, sh = 0;
     int cw = 0, ch = 0;
     int i;
-    (void)phase; (void)isBefore; (void)refcon;
+    (void)refcon;
 
     if (!s_fov_ref)
         s_fov_ref = XPLMFindDataRef("sim/graphics/view/field_of_view_vertical_deg");
@@ -93,9 +102,17 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
         const double fov_deg = s_fov_ref ? (double)XPLMGetDataf(s_fov_ref) : 70.0;
         const double zoom = cam.zoom > 0.0001 ? (double)cam.zoom : 1.0;
         half_tan = tan(fov_deg * 0.5 * 3.14159265358979323846 / 180.0) / zoom;
+        if (!s_logged_call) {
+            s_logged_call = 1;
+            xconnect_logf("labels: draw called phase=%d before=%d screen=%dx%d "
+                          "fov=%.1f zoom=%.2f",
+                          (int)phase, isBefore, sw, sh, fov_deg, zoom);
+        }
     }
 
-    XPLMSetGraphicsState(0, 1, 0, 0, 1, 0, 0);
+    /* 画 2D 文字：关闭 2D 纹理 / 光照 / 深度测试，保留 alpha 混合。
+     * （XPLMDrawString 会自己管理字体纹理；开纹理单元反而可能让文字不可见） */
+    XPLMSetGraphicsState(0, 0, 0, 0, 1, 0, 0);
     XPLMGetFontDimensions(xplmFont_Basic, &cw, &ch, NULL);
 
     LOCK_ENTER(g_players_lock);
@@ -117,8 +134,13 @@ static int draw_callsign_labels(XPLMDrawingPhase phase, int isBefore,
             continue;
         if (sx < -300 || sx > sw + 300 || sy < -100 || sy > sh + 100) continue;
 
-        snprintf(label, sizeof(label), "%s %dft",
-                 p->callsign, (int)(p->cur_alt * 3.28084));
+        /* 只显示呼号（与 swift 的标签一致）；高度不再挤在同一行 */
+        snprintf(label, sizeof(label), "%s", p->callsign);
+        if (!s_logged_label) {
+            s_logged_label = 1;
+            xconnect_logf("labels: first label %s at (%d,%d) dist=%.0fm",
+                          p->callsign, sx, sy, sqrt(dist2));
+        }
         len = (int)strlen(label);
         w2 = len * cw;
         if (w2 < 8) w2 = 8;

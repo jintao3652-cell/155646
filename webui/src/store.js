@@ -3,7 +3,7 @@
  * 界面文本统一走 vue-i18n（en / zh-CN / zh-TW，语言保存在 config.json）。
  * 状态标签用 computed 从原始状态派生，切换语言即时刷新。 */
 import { reactive, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import i18n, { normalizeLocale, setLocale, getLocale } from './i18n'
 
 const t = (k, p) => i18n.global.t(k, p)
@@ -217,7 +217,22 @@ export const regSrcText = computed(() => {
 
 function handleEvent(ev) {
   switch (ev.event) {
-    case 'log': addLog(ev.data, 'out'); break
+    case 'log': {
+      /* 原始 FSD 报文（> 发送 / < 接收）只在调试模式显示。
+       * 关闭调试时这里原来也一直在追加，日志页会被位置包等刷成一片黄色。
+       * [fsd]/[xconnect] 状态始终保留：错误红、断线/离线等警告黄、其余绿。 */
+      const msg = String(ev.data == null ? '' : ev.data)
+      if (!store.set.debug && (msg.startsWith('> ') || msg.startsWith('< '))) break
+      const isErr = /错误|失败|error|failed|exception/i.test(msg)
+      const isWarn = /断开|断线|离线|未发现|未连接|未上线|超时|timeout|disconnect|offline|not found/i.test(msg)
+      let cls = 'out'
+      if (msg.startsWith('< ')) cls = 'in'
+      else if (msg.startsWith('[fsd]')) cls = isErr ? 'err' : isWarn ? 'warn' : 'txt'
+      else if (msg.startsWith('[xconnect]') || msg.startsWith('[mconnect]'))
+        cls = isErr ? 'err' : isWarn ? 'warn' : 'txt'
+      addLog(msg, cls)
+      break
+    }
     case 'text':
       addLog(`${t('log.msgPrefix')} ${ev.data[0]}: ${ev.data[1]}`, 'txt')
       appendMsg(ev.data[0], ev.data[1], false)
@@ -236,14 +251,14 @@ function handleEvent(ev) {
       store.connected = false
       store.atcCount = 0
       store.plrCount = 0
-      addLog(t('log.disconnected'), 'in')
+      addLog(t('log.disconnected'), 'warn')
       break
   }
 }
 
 function setXconnectState(state) {
   if (state === 'failed') {
-    addLog(t('log.simNotRunning'), 'err')
+    addLog(t('log.simNotRunning'), 'warn')
   }
   store.xpState = state
 }
@@ -665,12 +680,17 @@ export async function submitFlightPlan() {
     /* 手填值（可能为空 = 恢复自动）立即反映到界面 */
     store.regManual = store.fp.registration.trim().toUpperCase()
     if (store.regManual) { store.reg = store.regManual; store.regSrc = 'manual' }
-    message(store.regManual
+    const okText = store.regManual
       ? t('flightPlan.submittedReg', { reg: store.regManual })
-      : t('flightPlan.submitted'))
+      : t('flightPlan.submitted')
+    message(okText)
+    /* 抽屉关闭后 LCD 主屏会被新页面盖住，额外给一个轻提示确保用户看到成功 */
+    toast(okText, 'success')
     store.overlays.fp = false
   } else {
-    message(errText(r) || t('flightPlan.submitFailed'), true)
+    const why = errText(r) || t('flightPlan.submitFailed')
+    message(why, true)
+    toast(why, 'error', 3500)
   }
 }
 
@@ -690,7 +710,27 @@ export function scrollLog(dir) {
 /* ---------- 窗口控制（frameless） ---------- */
 export function winMin() { if (store.api) store.api.win_minimize() }
 export function winMax() { if (store.api) store.api.win_maximize() }
-export function winClose() { if (store.api) store.api.win_close() }
+export async function winClose() {
+  if (!store.api) return
+  /* 不用 pywebview 的 confirm_close：它是原生对话框，在 420x577 小窗口里
+   * 英文文案换行后会被裁掉（"Do you really want to" 少了 exit）。改用
+   * 应用内确认框，文案完整、可随语言切换、还能和面板风格一致。 */
+  try {
+    await ElMessageBox.confirm(
+      t('actions.exitMessage'),
+      t('actions.exitTitle'),
+      {
+        confirmButtonText: t('actions.exitConfirm'),
+        cancelButtonText: t('settings.cancel'),
+        type: 'warning',
+        closeOnClickModal: false,
+      },
+    )
+  } catch (e) {
+    return   /* 取消 */
+  }
+  try { store.api.win_close() } catch (e) { /* 忽略关闭异常 */ }
+}
 
 export function noop() {}
 

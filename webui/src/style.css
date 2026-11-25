@@ -510,6 +510,14 @@ body,
   line-height: 1.5;
 }
 
+/* 日志行等级（LogPane / Log 共用；黄色=警告，红色=错误） */
+.log-line.warn {
+  color: var(--led-amber);
+}
+.log-line.err {
+  color: var(--bad);
+}
+
 /* ---------- 轻提示（ElMessage 定制为面板风格） ---------- */
 /* 420x577 的小窗口里默认的 ElMessage 太宽、圆角偏大，压制一下让它贴着顶边 */
 .el-message.xp-toast {

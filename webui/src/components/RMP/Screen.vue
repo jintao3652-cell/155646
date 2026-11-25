@@ -31,6 +31,12 @@ onBeforeUnmount(() => {
   if (clock) clearInterval(clock)
 })
 
+/* 在线人数：固定两位，读数宽度稳定，不随数字变化抖动 */
+function fmtCount(n) {
+  const v = Number(n)
+  return String(Number.isFinite(v) ? Math.max(0, Math.trunc(v)) : 0).padStart(2, '0')
+}
+
 const callsign = computed(() => (store.callsign || '---').toUpperCase())
 const aircraft = computed(() => (store.aircraft || '---').toUpperCase())
 const realName = computed(() => (store.set.real_name || '---').toUpperCase())
@@ -41,19 +47,28 @@ const realName = computed(() => (store.set.real_name || '---').toUpperCase())
     <div class="lcd-body lcd-screen-msg">
       <div v-if="msg" :class="['scr-msg', msg.isErr ? 'err' : '']">{{ msg.text }}</div>
       <div v-else-if="store.connected" class="scr-idle">
-        <div class="idle-line">
-          <span class="idle-label">{{ t('settings.lblCallsign') }}</span><b>{{ callsign }}</b>
+        <div class="idle-ident">
+          <div class="idle-line">
+            <span class="idle-label">{{ t('settings.lblCallsign') }}</span><b>{{ callsign }}</b>
+          </div>
+          <div class="idle-line">
+            <span class="idle-label">{{ t('lcd.lblAircraft') }}</span><b>{{ aircraft }}</b>
+          </div>
+          <div class="idle-line">
+            <span class="idle-label">{{ t('settings.lblRealName') }}</span><b>{{ realName }}</b>
+          </div>
         </div>
-        <div class="idle-line">
-          <span class="idle-label">{{ t('lcd.lblAircraft') }}</span><b>{{ aircraft }}</b>
-        </div>
-        <div class="idle-line">
-          <span class="idle-label">{{ t('settings.lblRealName') }}</span><b>{{ realName }}</b>
-        </div>
-        <div class="idle-line">
-          <span class="idle-label">{{ t('lcd.lblPilots') }}</span><b>{{ store.plrCount }}</b>
-          <span class="idle-sep">·</span>
-          <span class="idle-label">{{ t('lcd.lblAtc') }}</span><b>{{ store.atcCount }}</b>
+        <!-- 在线人数：RMP 风格双读数格，标签暗绿、数值亮绿 -->
+        <div class="idle-traffic">
+          <div class="traffic-cell">
+            <span class="traffic-label">{{ t('lcd.lblPilots') }}</span>
+            <span class="traffic-val">{{ fmtCount(store.plrCount) }}</span>
+          </div>
+          <span class="traffic-div" aria-hidden="true"></span>
+          <div class="traffic-cell">
+            <span class="traffic-label">{{ t('lcd.lblAtc') }}</span>
+            <span class="traffic-val">{{ fmtCount(store.atcCount) }}</span>
+          </div>
         </div>
         <div class="idle-clock">{{ utc }}</div>
       </div>
@@ -88,13 +103,19 @@ const realName = computed(() => (store.set.real_name || '---').toUpperCase())
   .scr-idle {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 6px;
     font-family: var(--mono);
     font-size: 10px;
     line-height: 1.4;
     letter-spacing: 0.5px;
     color: var(--led-green-dim);
     text-align: left;
+  }
+
+  .idle-ident {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .idle-line {
@@ -114,8 +135,46 @@ const realName = computed(() => (store.set.real_name || '---').toUpperCase())
     text-shadow: 0 0 6px rgba(53, 255, 154, 0.5);
   }
 
-  .idle-sep {
+  /* 在线人数读数格：与上方身份行对齐，中间一条细分隔线 */
+  .idle-traffic {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 1px;
+    padding-top: 6px;
+    border-top: 1px solid #0c1811;
+  }
+
+  .traffic-cell {
+    flex: 1 1 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .traffic-label {
+    font-size: 9px;
+    letter-spacing: 1px;
     color: #2a7a4c;
+    text-transform: uppercase;
+  }
+
+  .traffic-val {
+    min-width: 2ch;
+    text-align: right;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--led-green);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 6px rgba(53, 255, 154, 0.6);
+  }
+
+  .traffic-div {
+    width: 1px;
+    height: 12px;
+    background: #0f3a24;
   }
 
   .idle-clock {

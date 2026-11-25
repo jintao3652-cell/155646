@@ -633,7 +633,7 @@ def run_web(debug: bool = False) -> None:
             width=420, height=577.5, resizable=False,
             js_api=api, background_color="#16181c",
             frameless=True, easy_drag=False,
-            confirm_close=True)
+            confirm_close=False)   # 退出确认由前端 ElMessageBox 完成（原生框会裁字）
         if os.path.exists(ICON_PATH):
             _apply_window_icon_async(ICON_PATH)
         webview.start(debug=debug,

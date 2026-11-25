@@ -183,6 +183,9 @@ export default {
     accountSaved: '账号设置已保存',
     debugOn: '调试模式已开启（显示插件原始报文）',
     debugOff: '调试模式已关闭',
+    exitTitle: '退出 XFlySim Client',
+    exitMessage: '确认退出客户端吗？',
+    exitConfirm: '退出',
   },
   errors: {
     alreadyConnected: '已在连线中',

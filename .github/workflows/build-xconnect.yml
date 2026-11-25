@@ -10,6 +10,11 @@ on:
     paths:
       - 'XConnect/**'
 
+# 同一分支只保留最新一次运行，避免排队/并发积累产物
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -23,7 +28,7 @@ jobs:
             artifact: XConnect-windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # SDK 已内置仓库（XConnect/SDK，XPSDK 43.0，含头文件与 XPLM_64.lib）
       - name: Configure CMake
@@ -60,8 +65,14 @@ jobs:
         working-directory: XConnect
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
+        # GitHub Actions 产物存储配额满时上传会失败，但构建/测试已经通过，
+        # 不应因此把整个任务判失败；配额恢复后产物会自动开始上传。
+        continue-on-error: true
+        # PR 不产出发布件，减少配额占用
+        if: github.event_name != 'pull_request'
         with:
           name: ${{ matrix.artifact }}
           path: XConnect/build/XConnect.xpl
           if-no-files-found: error
+          retention-days: 1

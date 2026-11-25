@@ -10,12 +10,17 @@ on:
     paths:
       - 'MConnect/**'
 
+# 同一分支只保留最新一次运行，避免排队/并发积累产物
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     # MConnect 依赖 SimConnect（仅 Windows 实现），因此只在 windows-latest 构建
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -69,8 +74,12 @@ jobs:
           "{0:N0} bytes" -f $raw.Length
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
+        # 配额满时上传失败不应把构建判失败
+        continue-on-error: true
+        if: github.event_name != 'pull_request'
         with:
           name: MConnect-windows-x64
           path: MConnect/build/MConnect.exe
           if-no-files-found: error
+          retention-days: 1

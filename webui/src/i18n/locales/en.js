@@ -184,6 +184,9 @@ export default {
     accountSaved: 'Account settings saved',
     debugOn: 'Debug mode enabled (show raw plugin packets)',
     debugOff: 'Debug mode disabled',
+    exitTitle: 'Exit XFlySim Client',
+    exitMessage: 'Do you really want to exit?',
+    exitConfirm: 'Exit',
   },
   errors: {
     alreadyConnected: 'Already connected',
