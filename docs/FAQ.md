@@ -53,6 +53,5 @@
 
 ## Linux / macOS
 
-- 仅 XConnect；MConnect 不支持。
-- Linux 使用 WebKitGTK；macOS 使用 WKWebView，插件需 universal + 公证。
-- CSL 路径大小写敏感（Linux）。
+- 当前版本**只支持 Windows**；Linux/macOS 暂时搁置，不提供安装包/CI 验证。
+- 构建脚本与 CMake 分支保留，后续恢复时再验证 WebView/插件签名与 CSL 路径大小写。

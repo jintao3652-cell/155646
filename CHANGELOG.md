@@ -12,7 +12,8 @@
 - 诊断 UI：设置页“导出诊断”；后端 `Api.diagnostics/export_diagnostics`。
 - MConnect 外部机型档案：`MConnect.exe` 同目录 `profiles.json`，2s 热加载，
   外部档案优先于内置表（`MConnect/PROFILES.md`）。
-- CI：Windows/Linux/macOS XConnect 构建 + CTest；Python unittest + selftest。
+- CI：Windows XConnect 构建 + CTest；Python unittest + selftest。
+  （Linux/macOS 暂时搁置，不纳入 CI/发布。）
 - 文档：FAQ、支持矩阵、桥协议、贡献指南、变更日志、MConnect 档案格式。
 
 ### Changed

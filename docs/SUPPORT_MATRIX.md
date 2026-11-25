@@ -1,10 +1,15 @@
 # 支持矩阵
 
+当前阶段**只支持/验证 Windows 10/11 x64**；Linux/macOS 暂时搁置，代码与构建脚本保留，但不纳入 CI/发布。
+
 | 平台 | 客户端 | XConnect（X-Plane 12） | MConnect（MSFS 2020/2024） |
 |---|---|---|---|
 | Windows 10/11 x64 | ✅ | ✅ | ✅ |
-| Linux x64 | ✅ | ✅（需实机验证） | ❌ SimConnect/Win32 |
-| macOS arm64/x64 | ✅ | ✅（universal，需签名/公证） | ❌ SimConnect/Win32 |
+| Linux x64 | ⏸ 暂停 | ⏸ 暂停 | ❌ SimConnect/Win32 |
+| macOS arm64/x64 | ⏸ 暂停 | ⏸ 暂停 | ❌ SimConnect/Win32 |
+
+> Linux/macOS 的 CMake 分支（LIN/APL、`-lm`、`-undefined dynamic_lookup`）仍保留，
+> 便于以后恢复；当前 CI 只跑 Windows。
 
 ## 客户端
 
