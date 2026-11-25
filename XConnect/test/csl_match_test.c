@@ -18,6 +18,10 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#endif
+
 #include "XPLMGraphics.h"
 #include "XPLMInstance.h"
 #include "XPLMPlanes.h"
@@ -102,17 +106,26 @@ static void write_text(const char* path, const char* text) {
 
 static void touch(const char* path) { write_text(path, ""); }
 
+static void make_dir(const char* path) {
+#ifdef _WIN32
+    _mkdir(path);
+#else
+    mkdir(path, 0777);
+#endif
+}
+
 static void make_tree(const char* root) {
     char p[1024];
+    make_dir(root);
     snprintf(g_sys, sizeof(g_sys), "%s/", root);
 
-    snprintf(p, sizeof(p), "%s/Resources", root);        mkdir(p);
-    snprintf(p, sizeof(p), "%s/Resources/plugins", root); mkdir(p);
-    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect", root); mkdir(p);
-    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL", root); mkdir(p);
+    snprintf(p, sizeof(p), "%s/Resources", root);        make_dir(p);
+    snprintf(p, sizeof(p), "%s/Resources/plugins", root); make_dir(p);
+    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect", root); make_dir(p);
+    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL", root); make_dir(p);
 
     /* B738：一条“绑定尾号”的变体 + 通用 CCA 涂装 + ZZZ 白机 */
-    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/B738", root); mkdir(p);
+    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/B738", root); make_dir(p);
     snprintf(p, sizeof(p), "%s/xsb_aircraft.txt", p);
     write_text(p,
         "OBJ8_AIRCRAFT B738_CCA_B1234\n"
@@ -132,7 +145,7 @@ static void make_tree(const char* root) {
     snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/B738/B738_ZZZ.obj", root); touch(p);
 
     /* F900：FA8X 的别名目标（只有 ZZZ 白机，模拟“库里没有 DLH”的情况） */
-    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/F900", root); mkdir(p);
+    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/F900", root); make_dir(p);
     snprintf(p, sizeof(p), "%s/xsb_aircraft.txt", p);
     write_text(p,
         "OBJ8_AIRCRAFT F900_ZZZ\n"
@@ -142,7 +155,7 @@ static void make_tree(const char* root) {
     snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/F900/F900W_ZZZ.obj", root); touch(p);
 
     /* ZZZZ：兜底通用白机 */
-    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/ZZZZ", root); mkdir(p);
+    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/ZZZZ", root); make_dir(p);
     snprintf(p, sizeof(p), "%s/xsb_aircraft.txt", p);
     write_text(p,
         "OBJ8_AIRCRAFT ZZZZ_ZZZZ\n"

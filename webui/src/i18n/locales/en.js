@@ -114,6 +114,9 @@ export default {
     languageTip: 'Select the interface language',
     cancel: 'Cancel',
     save: 'Save',
+    exportDiagnostics: 'Export diagnostics',
+    diagnosticsSaved: 'Diagnostics saved: {path}',
+    diagnosticsFailed: 'Failed to export diagnostics',
     // LCD-style sub-screen labels
     lblAccount: 'ACCOUNT',
     lblServer: 'SERVER',

@@ -27,3 +27,14 @@ jobs:
         run: python -m unittest discover -s tests -t . -v
       - name: Client selftest
         run: python main.py --selftest
+
+  xconnect:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S XConnect -B build/xconnect -A x64 -DXCONNECT_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build/xconnect --config Release --parallel
+      - name: CTest
+        run: ctest --test-dir build/xconnect -C Release --output-on-failure

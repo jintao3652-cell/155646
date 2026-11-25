@@ -480,6 +480,20 @@ export async function openSettings() {
   store.overlays.set = true
 }
 
+export async function exportDiagnostics() {
+  if (!store.api) return
+  try {
+    const r = await store.api.export_diagnostics()
+    if (r && r.ok) {
+      message(t('settings.diagnosticsSaved', { path: r.path }))
+    } else {
+      message(t('settings.diagnosticsFailed'), true)
+    }
+  } catch (e) {
+    message(t('settings.diagnosticsFailed'), true)
+  }
+}
+
 export async function saveSettings() {
   const d = {
     real_name: store.set.real_name.trim(),

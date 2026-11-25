@@ -48,6 +48,32 @@ set_target_properties(XConnect PROPERTIES
     PREFIX ""
     SUFFIX ".xpl")
 
+# 可选：构建独立的 CSL 匹配单元测试（用桩替换 XPLM，不需要 X-Plane）
+option(XCONNECT_BUILD_TESTS "Build XConnect unit tests" OFF)
+if(XCONNECT_BUILD_TESTS)
+    enable_testing()
+    add_executable(csl_match_test test/csl_match_test.c src/csl.c)
+    target_include_directories(csl_match_test PRIVATE
+        "${XPLM_BASE}" "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(csl_match_test PRIVATE
+        XPLM200 XPLM210 XPLM300 XPLM400 XPLM410 XPLM420 XPLM430)
+    if(MSVC)
+        target_compile_options(csl_match_test PRIVATE /utf-8 /W3)
+    endif()
+    if(WIN32)
+        target_compile_definitions(csl_match_test PRIVATE IBM _CRT_SECURE_NO_WARNINGS)
+    elseif(APPLE)
+        target_compile_definitions(csl_match_test PRIVATE APL)
+    else()
+        target_compile_definitions(csl_match_test PRIVATE LIN)
+    endif()
+    if(UNIX)
+        target_link_libraries(csl_match_test m)
+    endif()
+    add_test(NAME csl_match_test
+             COMMAND csl_match_test "${CMAKE_CURRENT_BINARY_DIR}/csltest")
+endif()
+
 if(WIN32)
     target_compile_definitions(XConnect PRIVATE _CRT_SECURE_NO_WARNINGS IBM)
     # /utf-8：源码为 UTF-8。否则在中文 Windows（代码页 936）下 MSVC 按 GBK

@@ -21,6 +21,8 @@ import webview
 
 from xfly_client import aircraft_db
 from xfly_client.config import AppConfig, load_config, save_config
+from xfly_client.diagnostics import collect as collect_diagnostics
+from xfly_client.diagnostics import export as export_diagnostics_file
 from xfly_client.fsd import packet as pk
 from xfly_client.fsd.session import STATE_ONLINE
 from xfly_client.i18n import translate
@@ -128,6 +130,44 @@ class Api:
     def _start_xconnect(self) -> None:
         self._push("xconnect", "waiting")
         self._xconnect.start()  # 持续重连，直到插件上线
+
+    # ---------- 诊断 ----------
+
+    def _diagnostics_extra(self) -> dict:
+        xc = self._xconnect
+        extra = {
+            "xconnect": {
+                "connected": bool(xc and xc.connected),
+                "plugin": getattr(xc, "plugin", ""),
+                "plugin_version": getattr(xc, "plugin_version", ""),
+                "protocol": getattr(xc, "protocol_version", 0),
+                "capabilities": sorted(getattr(xc, "capabilities", set()) or []),
+            }
+        }
+        m = self._model
+        if m is not None:
+            extra["model"] = {
+                "players": len(m._players),
+                "atc": len(m._atc),
+                "fsd_state": m.fsd.state if m.fsd else None,
+            }
+        return extra
+
+    def diagnostics(self) -> dict:
+        """返回可展示/复制的诊断 JSON（日志尾部已脱敏）。"""
+        return collect_diagnostics(log_path=FSD_LOG_PATH,
+                                   extra=self._diagnostics_extra())
+
+    def export_diagnostics(self) -> dict:
+        """导出诊断 JSON 到程序目录，返回路径。"""
+        name = f"xflysim-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        path = os.path.join(BASE_DIR, name)
+        try:
+            p = export_diagnostics_file(path=path, log_path=FSD_LOG_PATH,
+                                        extra=self._diagnostics_extra())
+            return {"ok": True, "path": p}
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
 
     # ---------- 事件推送（前端回调） ----------
 
