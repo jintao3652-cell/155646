@@ -34,6 +34,21 @@
    —— `Send:RADIO` / `Send:XPDR`，直写 dataref。报文与 MSFS 版 `MConnect`
    完全一致（那边走 SimConnect 事件，因为频率是只读 SimVar）。
    命令由网络线程入队、主线程执行（XPLM 非线程安全）。
+6. **自绘呼号标签**（`src/labels.c`）：每架远端飞机的呼号以琥珀色文本
+   悬浮在机身上方——世界坐标 `XPLMWorldToLocal` → 相机基向量投影到屏幕
+   （vFOV 读 `sim/graphics/view/vertical_field_of_view_deg`，缺失回退水平
+   FOV 换算）、高度随距离自适应（2% 距离，夹 8-14m）、40km/屏外剔除。
+   绘制在 `xplm_Phase_Window`（外部/座舱视角都会调用；`LastCockpit` 只在
+   3D 座舱触发，外部视角下不会被调用）。
+7. **灯光权威读数（XP12）**：XP12 泛化灯亮度数组
+   `sim/flightmodel2/lights/generic_lights_brightness_ratio` 是权威灯状态
+   （旧标量 `*_lights_on` 在部分机模不再镜像）。派生逻辑：logo/wing 从 737
+   系槽位真实读取（`[0]=wing [1]=logo [2]/[3]=runway turnoff L/R
+   [5]=wheel well`），runway turnoff 按 swift/XP 惯例归并 taxi 位，landing
+   按实际亮度判定（>0.05 亮，缺失回退开关 dataref）。
+8. **远端油门**：消费对端 ACC `throttle_ratio`（仅引擎运转时上报），写
+   `libxplanemp/controls/thrust_ratio` 驱动 CSL 风扇转速/推力动画；
+   未上报时退 0.8 兜底。
 
 ## 目录结构
 
@@ -43,7 +58,12 @@ XConnect/
     xconnect.c       插件入口：flight loop、数据读取/发送、玩家管理
     json.c / json.h  轻量 JSON 解析/序列化助手
     net.c / net.h    TCP 跨平台封装（WinSock / POSIX）
-    csl.c / csl.h    CSL 模型加载与 XPLMInstance 实例渲染
+    csl.c / csl.h    CSL 模型加载与 XPLMInstance 实例渲染（含 libxplanemp
+                     自定义 dataref 注册——必须在任何 XPLMLoadObject 之前，
+                     否则 OBJ 的 ANIM 绑定全部失效、部件不动）
+    datarefs.c/.h    本机飞行数据读取（含 XP12 泛化灯数组派生灯状态）
+    players.c / players.h  远端玩家表：插值、落地吸附、ACC 部件/油门消费
+    labels.c / labels.h    自绘呼号标签（投影 + 2D 顶层绘制）
   CMakeLists.txt     跨平台构建
   Makefile           Linux/macOS 简单构建
   PROTOCOL.md        TCP JSON 协议文档

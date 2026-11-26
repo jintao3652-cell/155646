@@ -20,6 +20,12 @@
 - **双桥接自动探测**：启动即同时监听 XConnect(XP) 与 MConnect(MSFS)，
   **任一在线即可连线**；飞行数据 5Hz 经桥接传输；在线玩家/管制列表推送给
   插件 → 在模拟器场景中渲染飞机
+- **部件状态同步（ACC）**：起落架/襟翼/扰流板/引擎点火/灯光（含 logo、
+  wing、recognition、cabin）/油门 双向上报与消费——对端放下起落架、推油门、
+  开灯，本端场景里的飞机实时跟着动。上报采用 swift 客户端兼容的
+  `config.aircraft.engines` 嵌套形状（服务器只认这个形状）
+- **呼号标签**：X-Plane 由 XConnect 自绘（琥珀色文本悬浮在机身上方，
+  投影精确跟机）；MSFS 写入 AI 的 ATC ID 供内置"交通铭牌"显示呼号
 
 ## 数据源：XConnect 插件（X-Plane 11 / 12）
 
@@ -35,6 +41,15 @@
 - **连线规则**：客户端同时探测 XConnect 与 MConnect 端口，**任一在线即可
   连线 FSD**（XP11/XP12/MSFS2020/2024 三选一）；所有桥都离线时禁止连线，
   当前桥断开后自动断开 FSD 并复位界面
+- **自绘呼号标签**：琥珀色呼号文本悬浮在每架远端飞机上方（世界坐标投影
+  到屏幕、距离自适应高度、超距剔除），外部/座舱视角均可见
+- **灯光权威读数（XP12）**：改读 `sim/flightmodel2/lights/`
+  `generic_lights_brightness_ratio` 泛化灯亮度数组（旧标量 `*_lights_on`
+  在部分机模不再镜像）；logo/wing/turnoff 等从 737 系真实槽位读取，
+  runway turnoff 按 swift 惯例归并 taxi 位
+- **反向控制**：应答机（码/模式/IDENT）、COM1-3 频率（主频/备频/互换）、
+  发射台选择（`xmit`）与按台收听（`recv_all` 精准 toggle 不符的台）、
+  远端油门写入 `thrust_ratio` 动画
 
 协议细节见 `XConnect/PROTOCOL.md`；`tools/xconnect_bridge.py` 为演示客户端。
 
@@ -51,6 +66,17 @@ exe（SimConnect 官方推荐的 out-of-process 方式）：
   同一份 exe 两边都能跑
 - **他机显示**：把在线玩家注入为模拟器里的真实 AI 飞机
   （`AICreateNonATCAircraft` + 每帧 `SetDataOnSimObject`）
+- **他机部件驱动**：对端 ACC 部件（起落架/襟翼/扰流板/油门）经
+  `DEF_AI_PARTS` 写入 AI 的 SimVar，灯光按 ObjectID 发 SimConnect 事件
+  （能力探测，失败自动禁用该通道不影响位置渲染）
+- **呼号标签**：AI 的 ATC ID 写成远端呼号，MSFS 内置"交通铭牌"
+  （Traffic Nameplates）显示的就是它。注意：铭牌位置由模拟器固定绘制
+  （无法贴机身）；`TOGGLE_AIRCRAFT_LABELS` 事件在 MSFS 2020 已废弃，
+  需在 选项→常规选项→交通→显示交通铭牌 手动开关（设置界面有开关项，
+  仅 MSFS 2024 生效）
+- **音频面板互通**：上行发射台/收听/音量/flight_id；下行发射台切换
+  （`PILOT_TRANSMITTER_SET`，2020 已废弃 `COMn_TRANSMIT_SELECT`）与
+  按台收听 toggle
 - **反向控制**：客户端可设置应答机（码/模式/IDENT）与 COM1-3 频率
   （主频/备频/互换）——频率与应答机码是只读 SimVar，走 SimConnect 事件
 - **机型匹配**：扫描 `Community`/`Official` 下全部 `aircraft.cfg` +
@@ -164,15 +190,17 @@ CLI 命令：`/text <呼号> <消息>`、`/freq <MHz> <消息>`、`/metar <ICAO>
 ## 自测
 
 ```bat
-python main.py --selftest
+python main.py --selftest        # 68 项协议断言（纯离线）
+python -m unittest discover -s tests   # 54 项单元测试（报文/ACC/桥握手/诊断等）
 ```
 
-覆盖 PBH 编码/解码、各 FSD 包构造/解析、频率换算、认证算法确定性、尾号优先级、
-SimBrief 计划映射（68 项断言，纯离线，不联网）。
+C 侧：XConnect `csl_match_test`（9 用例，四级匹配）；MConnect 8 套 442 断言（机型匹配/反向控制/Input Events/WASM 桥/PMDG
+双协议等，均不需要模拟器，见各 README）。
 
 ## 配置
 
-软件根目录 `config.json`（含密码请勿外传）：
+用户级目录（Windows `%APPDATA%\XFlySim-Client`）`config.json`
+（含密码请勿外传）：
 
 ```json
 {
@@ -187,15 +215,29 @@ SimBrief 计划映射（68 项断言，纯离线，不联网）。
   "server_port": 6809,
   "xconnect_host": "127.0.0.1",
   "xconnect_port": 51001,
+  "mconnect_port": 51002,
   "auto_start_mconnect": true,
-  "mconnect_stop_on_exit": false
+  "mconnect_stop_on_exit": false,
+  "msfs_toggle_labels": false,
+  "simbrief_user": "",
+  "registration": ""
 }
 ```
 
-`auto_start_mconnect`（默认 `true`）：客户端启动时自动拉起无窗口的
-`MConnect.exe`（MSFS 桥接），已运行则复用、不重复启动；X-Plane 用户可设为
-`false`。`mconnect_stop_on_exit`（默认 `false`）：退出客户端时是否关闭插件，
-默认保留以便下次快速重连。诊断请用 `MConnectConsole.exe`（见 `MConnect/README.md`）。
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `xconnect_port` / `mconnect_port` | 51001 / 51002 | 两个桥的端口；客户端同时探测 51001-51004，占用自动退避 |
+| `auto_start_mconnect` | `true` | 启动时自动拉起无窗口 `MConnect.exe`（已运行则复用）；XP 用户可关 |
+| `mconnect_stop_on_exit` | `false` | 退出客户端是否关闭 MConnect（默认保留便于重连） |
+| `msfs_toggle_labels` | `false` | MConnect 启动时发一次 `TOGGLE_AIRCRAFT_LABELS`（toggle 语义）。仅 MSFS 2024 有效；2020 需在模拟器设置手动开关铭牌。改后需重启 MConnect |
+| `simbrief_user` | 空 | SimBrief 用户名/ID，飞行计划页自动回填 |
+
+## 端口分配（X-Plane 与 MSFS 必须错开）
+
+| 端口 | 组件 | 说明 |
+|---|---|---|
+| 51001 | XConnect 插件（X-Plane） | 实测 XP12 会独占该端口 |
+| 51002 | MConnect（MSFS） | 占用时依次退 51003/51004，实际端口见启动日志 |
 
 ## 协议要点（与 C# 版一致）
 

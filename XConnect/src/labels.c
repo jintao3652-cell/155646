@@ -85,20 +85,13 @@ static int project_local_to_screen(double px, double py, double pz,
     return 1;
 }
 
-/* 带描边的文本：周围 ±1px 黑色 + 本体琥珀色（与 swift 的呼号标签一致）。
+/* 呼号文本：琥珀色、无描边（用户要求）。
  * 注意 XPLMDrawString 的颜色是 3 个 float（RGB），不是 RGBA。 */
 static void draw_label(int x, int y, const char* label) {
-    float black[3] = { 0.0f, 0.0f, 0.0f };
     float amber[3] = { 1.0f, 0.62f, 0.10f };
-    int ox, oy;
     glPushMatrix();
     glTranslatef((GLfloat)x, (GLfloat)y, 0.0f);
     glScalef(LABEL_SCALE, LABEL_SCALE, 1.0f);
-    for (ox = -1; ox <= 1; ox++)
-        for (oy = -1; oy <= 1; oy++) {
-            if (!ox && !oy) continue;
-            XPLMDrawString(black, ox, oy, label, NULL, LABEL_FONT);
-        }
     XPLMDrawString(amber, 0, 0, label, NULL, LABEL_FONT);
     glPopMatrix();
 }

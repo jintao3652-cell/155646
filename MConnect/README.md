@@ -223,6 +223,33 @@ MConnectConsole.exe [选项]
 
 两平台字段语义统一：`pilot_xmit` 都是 `0=COM1 1=COM2 2=COM3`、`-1` 未选中/未知。
 
+### 音频面板反向控制（对齐 XConnect 能力）
+
+| 协议字段 | MSFS 2020/2024 写法 | 说明 |
+|---|---|---|
+| `tx` / `xmit`（发射台） | `PILOT_TRANSMITTER_SET`，参数 `com-1` | **MSFS 2020 已废弃 `COMn_TRANSMIT_SELECT` 系列**（发送后 EXCEPTION NAME_UNRECOGNIZED），统一改用本事件；0=COM1 1=COM2 2=COM3 |
+| `flip`（主备互换） | `COM{n}_RADIO_SWAP` | 同 swap 别名 |
+| `monitor`（按台收听） | `COM{n}_RECEIVE_SELECT` toggle | 按 `COM RECEIVE:n` 当前读数精准 toggle 不符的台 |
+| `recv_all`（全收） | 显式忽略 + 日志 | MSFS 无"全收"事件（读侧有 `COM RECEIVE ALL`，无对应写入） |
+| `power`（单台电源） | 显式忽略 + 日志 | MSFS 无单台 COM 电源 SimVar |
+
+### 呼号标签（ATC ID）
+
+MConnect 在每个 AI 创建成功后把 `ATC ID` 写成远端呼号（DEF_AI_ATCID，
+String32）。MSFS 内置的 **"交通铭牌"（Traffic Nameplates，选项→常规选项→
+交通→显示交通铭牌）** 显示的就是 ATC ID——开启铭牌即可看到他机呼号。
+
+限制（模拟器硬约束，代码无法绕过）：
+
+- **铭牌位置由模拟器固定绘制**（锚在飞机包围球上方一段屏幕偏移），离机越远
+  视觉上飘得越高，SimConnect 无 API 移动/重锚/改样式，做不到贴机身。
+  X-Plane 侧的贴机身呼号由 XConnect 自绘实现（见 XConnect README）
+- `TOGGLE_AIRCRAFT_LABELS` 事件在 **MSFS 2020 已废弃**（官方确认，无替代）：
+  `--labels` / 客户端配置 `msfs_toggle_labels` 在 2020 上无效，只能在模拟器
+  设置里手动开关；2024 上事件仍可用
+- 事件只在 MConnect 启动时发一次（toggle 语义：原本已开会被关掉），改配置后
+  需重启 MConnect
+
 ### 深度机模：三级写入通道
 
 上面这些**标准事件只能驱动默认机**。Fenix / PMDG / Inibuilds 这类深度机模把
@@ -522,6 +549,11 @@ MSFS 版本不可用，插件会自动禁用它，位置渲染与其他功能不
 位置会被 AI 逻辑接管（自己飞/自己滑行），因此**每帧（50Hz）都要写**位置 +
 速度分量。只写位置不写速度会被当成瞬移而抖动/回弹。
 
+对端 ACC 部件消费：起落架/襟翼/扰流板/**油门**（`throttle_ratio`，仅引擎
+运转时上报；<0 时退 0.8 兜底）经 `DEF_AI_PARTS` 写入 AI 的
+`GENERAL ENG THROTTLE LEVER POSITION:1..4`——对端推油门，本端能听到
+AI 引擎的转速/推力变化。
+
 地面吸附：`onGround` 为真时用 `高度 - AGL` 把飞机压到地形上（AGL 在
 ±400ft 内才采信），消除"整机悬空"。
 
@@ -555,7 +587,14 @@ SimConnect 客户端**不是线程安全的**（官方文档明确说明），�
 - **LVar 读不到（无 WASM 模块时）**：Input Events 只覆盖"写"（触发按钮）。
   读机模内部 LVar 需要 WASM 桥（③级），未装 MobiFlight WASM 模块时该通道
   停在 `failed`，不影响其余功能
-- 机型目录全量扫描需要 1~3 秒（取决于包数量）；扫描完成前用内置兜底表
+- 机型目录全量扫描需要 1~3 秒（取决于包数量）；扫描完成前用内置兜底表，
+  AI 创建会等待目录就绪（上限 90s 防扫描失败永不渲染）
+- **WASM 桥注册可能超时**：MobiFlight WASM 模块只响应已知客户端名时，
+  `"mconnect"` 注册 5s 超时 → 判定通道不可用（回退机型档案/Input Events，
+  不影响其余功能）；是否可用看日志 `wasm: 注册超时`
+- **字符串 SimVar 的 units 必须传空串**：TITLE/ATC ID/AIRLINE 等字符串
+  定义传 `"NULL"` 会 NAME_UNRECOGNIZED（MSFS 2020 真机实测），包体也会
+  缺 352 字节。这是 SimConnect 的坑，自定义字段时注意
 
 ## 单元测试
 
@@ -563,16 +602,16 @@ SimConnect 客户端**不是线程安全的**（官方文档明确说明），�
 
 ```bash
 build\catalog_test.exe       # 机型四级匹配 / 别名回退（30 断言）
-build\control_test.exe       # 频率 / BCD / 报文 / 队列 / 发射台 / INPUTEV（65 断言）
+build\control_test.exe       # 频率 / BCD / 报文 / 队列 / 发射台 / INPUTEV（66 断言）
 build\inputev_test.exe       # InputEvent 布局 / 分页 / 查找 / 截断（24 断言）
-build\radio_test.exe         # 无线电报文 / 发射台推导 / JSON 字段（26 断言）
+build\radio_test.exe         # 无线电报文 / 发射台推导 / JSON 字段（41 断言）
 build\wasmbridge_test.exe    # WASM 命令 / 队列 / 状态机 / LVar（42 断言）
 build\aircraftcaps_test.exe  # 语义分类 / 优先级 / 能力报文 / 变更检测（57 断言）
 build\aircraftdb_test.exe    # 机型档案识别 / 模板展开 / **应答机读写一致性**（115 断言）
 build\pmdgbridge_test.exe    # PMDG 737/777 双协议 / 重映射 / 旋钮差值（67 断言）
 ```
 
-共 426 个断言。`ctest --test-dir build` 也可跑全部。
+共 442 个断言。`ctest --test-dir build` 也可跑全部。
 
 `control_test.exe` 用桩替换 `TransmitClientEvent` 与 `SetDataOnSimObject`，
 断言"我们发出的事件 ID 与参数是对的"（事件是否真的被模拟器接受需要实机）。
