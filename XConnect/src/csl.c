@@ -196,11 +196,14 @@ void csl_init(void) {
     snprintf(g_csl_abs, sizeof(g_csl_abs), "%s%s", sys, g_csl_rel);
 }
 
+static void obj_cache_clear(void);   /* 前置声明（定义在下方缓存实现处） */
+
 void csl_shutdown(void) {
     if (g_probe) {
         XPLMDestroyProbe(g_probe);
         g_probe = NULL;
     }
+    obj_cache_clear();
     csl_unregister_datarefs();
 }
 
@@ -226,7 +229,82 @@ static void norm_sep(char* out, size_t cap, const char* in, const char* sep) {
 }
 
 /* 由「相对 X-System 根」的路径创建实例；文件不存在或创建失败返回 NULL。 */
-static XPLMInstanceRef create_from_rel(const char* relPath) {
+/* ---------------- OBJ 对象缓存（引用计数） ----------------
+ *
+ * 为什么必须有：XPLMLoadObject 是同步解析 OBJ + 上传纹理，代价几十~几百毫秒。
+ * 旧实现每架玩家每个 OBJ 都重新 LoadObject：
+ *   1) 繁忙机场 40 人 × 3 OBJ 全挤在 roster 到达后的循环里 → XP 冻结数秒
+ *      （"卡爆"）；
+ *   2) 同一涂装的纹理在显存里 ×N 份 → 显存爆 → 持续掉帧；
+ *   3) 旧实现释放时只 DestroyInstance、从不 UnloadObject → XPLMObjectRef
+ *      泄漏，换涂装/重建越多显存涨得越多。
+ * 现在按 OBJ 相对路径缓存 XPLMObjectRef + 引用计数：同变体多架飞机共享
+ * 同一个对象，只有实例创建是廉价的；引用归零才真正 UnloadObject。 */
+typedef struct {
+    char         rel[1200];
+    XPLMObjectRef obj;
+    int          refs;   /* 0 = 空槽 */
+} ObjCacheEnt;
+
+#define OBJ_CACHE_MAX 96
+static ObjCacheEnt g_obj_cache[OBJ_CACHE_MAX];
+
+/* 取 OBJ（命中缓存则引用 +1）。成功返回对象并写 *slotOut（>=0 = 缓存槽，
+ * -1 = 缓存满时直接加载未入缓存，释放时不卸载）。失败返回 NULL。 */
+static XPLMObjectRef obj_cache_acquire(const char* rel, int* slotOut) {
+    int i, free_slot = -1;
+    *slotOut = -1;
+    for (i = 0; i < OBJ_CACHE_MAX; i++) {
+        if (g_obj_cache[i].refs > 0) {
+            if (strcmp(g_obj_cache[i].rel, rel) == 0) {
+                g_obj_cache[i].refs++;
+                *slotOut = i;
+                return g_obj_cache[i].obj;
+            }
+        } else if (free_slot < 0) {
+            free_slot = i;
+        }
+    }
+    {
+        XPLMObjectRef obj = XPLMLoadObject(rel);
+        if (!obj) return NULL;
+        if (free_slot >= 0) {
+            snprintf(g_obj_cache[free_slot].rel,
+                     sizeof(g_obj_cache[free_slot].rel), "%s", rel);
+            g_obj_cache[free_slot].obj = obj;
+            g_obj_cache[free_slot].refs = 1;
+            *slotOut = free_slot;
+        }
+        /* 缓存满：返回对象但 slot=-1，实例销毁时不卸载（不致崩溃，仅少量驻留） */
+        return obj;
+    }
+}
+
+/* 减引用；归零则真正 UnloadObject 释放显存。 */
+static void obj_cache_release(int slot) {
+    if (slot < 0 || slot >= OBJ_CACHE_MAX) return;
+    if (g_obj_cache[slot].refs <= 0) return;
+    if (--g_obj_cache[slot].refs == 0) {
+        XPLMUnloadObject(g_obj_cache[slot].obj);
+        g_obj_cache[slot].obj = NULL;
+        g_obj_cache[slot].rel[0] = '\0';
+    }
+}
+
+/* 插件退出时清空缓存（正常情况下引用已全部归零）。 */
+static void obj_cache_clear(void) {
+    int i;
+    for (i = 0; i < OBJ_CACHE_MAX; i++) {
+        if (g_obj_cache[i].obj) {
+            XPLMUnloadObject(g_obj_cache[i].obj);
+            g_obj_cache[i].obj = NULL;
+        }
+        g_obj_cache[i].refs = 0;
+        g_obj_cache[i].rel[0] = '\0';
+    }
+}
+
+static XPLMInstanceRef create_from_rel(const char* relPath, int* slotOut) {
     char sys[1024];
     char abs[2048];
     XPLMGetSystemPath(sys);   /* SDK 430: void XPLMGetSystemPath(char*) */
@@ -235,8 +313,9 @@ static XPLMInstanceRef create_from_rel(const char* relPath) {
 
 #if kXPLM_Version >= 430
     {
-        /* SDK 430：XPLMLoadObject + XPLMCreateInstance（null 结尾 datarefs） */
-        XPLMObjectRef obj = XPLMLoadObject(relPath);
+        /* SDK 430：XPLMLoadObject（走缓存）+ XPLMCreateInstance（null 结尾 datarefs） */
+        int slot = -1;
+        XPLMObjectRef obj = obj_cache_acquire(relPath, &slot);
         if (!obj) return NULL;
         {
             const char* drefs[CSL_MAX_DATAREFS + 1];
@@ -245,17 +324,22 @@ static XPLMInstanceRef create_from_rel(const char* relPath) {
             for (i = 0; i < CSL_DATAREF_COUNT; i++) drefs[i] = kCslDataRefs[i];
             drefs[CSL_DATAREF_COUNT] = NULL;
             inst = XPLMCreateInstance(obj, drefs);
-            if (!inst) XPLMUnloadObject(obj);   /* 创建失败需卸载对象引用 */
+            if (inst) {
+                if (slotOut) *slotOut = slot;   /* 实例持有缓存引用，释放时归还 */
+            } else {
+                obj_cache_release(slot);        /* 创建失败立即归还引用 */
+            }
             return inst;
         }
     }
 #else
-    /* 旧 SDK：XPLMInstanceCreate(path, datarefs, count) */
+    /* 旧 SDK：XPLMInstanceCreate(path, datarefs, count)——XP 内部自管对象 */
     {
         XPLMInstanceRef inst = XPLMInstanceCreate(relPath, kCslDataRefs,
                                                   CSL_DATAREF_COUNT);
         if (!inst)
             inst = XPLMInstanceCreate(relPath, NULL, 0);
+        if (slotOut) *slotOut = -1;
         return inst;
     }
 #endif
@@ -599,17 +683,18 @@ static const char* csl_alias_for(const char* type) {
 
 /* 加载变体中单个 OBJ：先按「相对 CSL 根」解析（`pack:file`），
  * 再按「相对包目录」解析（裸文件名）。 */
-static XPLMInstanceRef load_obj(const char* objpath, const char* pack) {
+static XPLMInstanceRef load_obj(const char* objpath, const char* pack,
+                                int* slotOut) {
     const char* sep = XPLMGetDirectorySeparator();
     char norm[256], rel[2048];
     norm_sep(norm, sizeof(norm), objpath, sep);
     snprintf(rel, sizeof(rel), "%s%s%s", g_csl_rel, sep, norm);
     {
-        XPLMInstanceRef inst = create_from_rel(rel);
+        XPLMInstanceRef inst = create_from_rel(rel, slotOut);
         if (inst) return inst;
     }
     snprintf(rel, sizeof(rel), "%s%s%s%s%s", g_csl_rel, sep, pack, sep, norm);
-    return create_from_rel(rel);
+    return create_from_rel(rel, slotOut);
 }
 
 /* 在绝对目录 dir 中查找 "{ICAO}*.obj"（跳过 *fan.obj），
@@ -736,6 +821,7 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
     int i, n;
 
     node->inst_count = 0;
+    for (i = 0; i < CSL_MAX_OBJS; i++) node->obj_slots[i] = -1;
     node->variant[0] = '\0';
     node->variant_name[0] = '\0';
     g_last_tier = MATCH_NONE;
@@ -759,8 +845,13 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
         if (vi >= 0) {
             for (i = 0; i < g_variants[vi].n && node->inst_count < CSL_MAX_OBJS;
                  i++) {
-                XPLMInstanceRef inst = load_obj(g_variants[vi].objs[i], pack);
-                if (inst) node->insts[node->inst_count++] = inst;
+                int slot = -1;
+                XPLMInstanceRef inst = load_obj(g_variants[vi].objs[i], pack,
+                                                &slot);
+                if (inst) {
+                    node->obj_slots[node->inst_count] = slot;
+                    node->insts[node->inst_count++] = inst;
+                }
             }
             if (node->inst_count > 0) {
                 strncpy(node->variant, g_variants[vi].code,
@@ -776,11 +867,13 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
         /* 没有真实航司涂装可随机：才退回包内基础 OBJ（{ICAO}.obj 白机）。 */
         {
             char rel[2048];
+            int slot = -1;
             snprintf(rel, sizeof(rel), "%s%s%s%s%s.obj",
                      g_csl_rel, sep, pack, sep, pack);
             {
-                XPLMInstanceRef inst = create_from_rel(rel);
+                XPLMInstanceRef inst = create_from_rel(rel, &slot);
                 if (inst) {
+                    node->obj_slots[node->inst_count] = slot;
                     node->insts[node->inst_count++] = inst;
                     snprintf(node->variant, sizeof(node->variant), "BASE");
                     g_last_tier = MATCH_TYPE;
@@ -796,8 +889,13 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
             if (vi < 0) vi = 0;
             for (i = 0; i < g_variants[vi].n && node->inst_count < CSL_MAX_OBJS;
                  i++) {
-                XPLMInstanceRef inst = load_obj(g_variants[vi].objs[i], pack);
-                if (inst) node->insts[node->inst_count++] = inst;
+                int slot = -1;
+                XPLMInstanceRef inst = load_obj(g_variants[vi].objs[i], pack,
+                                                &slot);
+                if (inst) {
+                    node->obj_slots[node->inst_count] = slot;
+                    node->insts[node->inst_count++] = inst;
+                }
             }
             if (node->inst_count > 0) {
                 strncpy(node->variant, g_variants[vi].code,
@@ -815,6 +913,7 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
     /* 2) 回退：CSL/{family}/{icao}.obj → CSL/{icao}.obj → CSL/{icao}/{icao}*.obj */
     {
         char rel[2048], dir[1300];
+        int slot;
         if (family && *family) {
             char fm[128];
             size_t k;
@@ -822,22 +921,39 @@ static int load_pack(CslNode* node, const char* pack, const char* family,
                 fm[k] = (char)toupper((unsigned char)family[k]);
             fm[k] = '\0';
             snprintf(rel, sizeof(rel), "%s%s%s%s%s.obj", g_csl_rel, sep, fm, sep, pack);
+            slot = -1;
             {
-                XPLMInstanceRef inst = create_from_rel(rel);
-                if (inst) { node->insts[node->inst_count++] = inst; return node->inst_count; }
+                XPLMInstanceRef inst = create_from_rel(rel, &slot);
+                if (inst) {
+                    node->obj_slots[node->inst_count] = slot;
+                    node->insts[node->inst_count++] = inst;
+                    return node->inst_count;
+                }
             }
         }
         snprintf(rel, sizeof(rel), "%s%s%s.obj", g_csl_rel, sep, pack);
+        slot = -1;
         {
-            XPLMInstanceRef inst = create_from_rel(rel);
-            if (inst) { node->insts[node->inst_count++] = inst; return node->inst_count; }
+            XPLMInstanceRef inst = create_from_rel(rel, &slot);
+            if (inst) {
+                node->obj_slots[node->inst_count] = slot;
+                node->insts[node->inst_count++] = inst;
+                return node->inst_count;
+            }
         }
         snprintf(dir, sizeof(dir), "%s%s%s", g_csl_abs, sep, pack);
         {
             char found[1024];
             if (find_icao_obj_in_dir(dir, pack, found, sizeof(found))) {
-                XPLMInstanceRef inst = create_from_rel(found);
-                if (inst) { node->insts[node->inst_count++] = inst; return node->inst_count; }
+                slot = -1;
+                {
+                    XPLMInstanceRef inst = create_from_rel(found, &slot);
+                    if (inst) {
+                        node->obj_slots[node->inst_count] = slot;
+                        node->insts[node->inst_count++] = inst;
+                        return node->inst_count;
+                    }
+                }
             }
         }
     }
@@ -852,6 +968,10 @@ int csl_load(CslNode* node, const char* icao, const char* family,
     if (node->tried) return node->inst_count;   /* 已尝试过：返回缓存结果 */
     node->tried = 1;
     node->inst_count = 0;
+    {
+        int si;
+        for (si = 0; si < CSL_MAX_OBJS; si++) node->obj_slots[si] = -1;
+    }
     node->variant[0] = '\0';
     node->variant_name[0] = '\0';
 
@@ -917,6 +1037,10 @@ void csl_release_node(CslNode* node) {
 #endif
             node->insts[i] = NULL;
         }
+        /* 归还 OBJ 缓存引用；归零才真正 UnloadObject（释放显存）。
+         * 旧 SDK（<430）无缓存归属，slot 恒 -1，调用是安全的 no-op。 */
+        obj_cache_release(node->obj_slots[i]);
+        node->obj_slots[i] = -1;
     }
     node->inst_count = 0;
     node->tried = 0;

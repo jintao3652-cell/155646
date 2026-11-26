@@ -60,6 +60,11 @@ typedef struct {
     int have_first_fix;
     double last_seen;    /* xc_now_sec */
     double last_snap_log; /* 上次落地吸附诊断日志时间（节流） */
+    /* 地形探针限频：探针有成本（繁忙机场 N 人 × 20Hz 会拖累帧率），
+     * 每 PROBE_INTERVAL_SEC 秒探一次，结果缓存在下面两个字段里复用 */
+    double last_probe_t;  /* 上次地形探针时刻 */
+    double probe_msl;     /* 最近一次探针的地形海拔（米 MSL） */
+    int    probe_ok;      /* 最近一次探针是否命中地形 */
     double tire_angle;   /* 轮胎累计转角（由地速积分） */
     double last_anim_t;  /* 上次动画更新时间（积分 dt） */
     /* 远端 ACC 机模部件（客户端合并后随 roster 下发） */
@@ -107,7 +112,8 @@ void interpolate_player(Player* p, double now);
 /* 取第 i 帧（0 = 最新）；返回 NULL 表示越界 */
 const PositionFix* fix_at(const Player* p, int i);
 
-/* 每帧：超时清理 → CSL 加载 → 插值 → 写入 CSL 实例。持有玩家表锁。 */
+/* 每帧：超时清理 → CSL 加载（每 tick 限 1 个新模型）→ 插值 → 写入 CSL 实例。
+ * 持有玩家表锁。 */
 void update_players(double now);
 
 #endif /* XCONNECT_PLAYERS_H */

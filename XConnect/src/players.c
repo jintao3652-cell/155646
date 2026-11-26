@@ -222,6 +222,12 @@ void update_players(double now) {
     float anim[CSL_MAX_DATAREFS];
     double sim_time;
     int i;
+    /* 每 tick 最多加载 1 个新玩家模型：XPLMLoadObject 是同步解析+纹理上传，
+     * 一次加载几十~几百毫秒。roster 一次性到达几十人时，旧实现会在同一个
+     * tick 里全部同步加载 → XP 冻结数秒（分发的用户反馈"卡爆"的主因）。
+     * 限流后玩家模型在 ~2 秒内陆续出现（20Hz），单帧最多卡一次；
+     * 同变体的 OBJ 又有缓存（csl.c obj cache），实际大多数是缓存命中秒开。 */
+    int new_loads = 0;
     static XPLMDataRef s_sim_time_ref = NULL;
     static XPLMDataTypeID s_sim_time_type = xplmType_Unknown;
     if (!s_sim_time_ref) {
@@ -258,6 +264,8 @@ void update_players(double now) {
         }
         if (p->model.inst_count <= 0) {
             if (!p->model.tried) {
+                if (new_loads >= 1) continue;   /* 本 tick 加载预算已用完，下帧再试 */
+                new_loads++;
                 csl_load(&p->model, p->icao, p->family, p->airline, p->reg,
                          p->callsign);
                 if (p->model.inst_count > 0) {
@@ -287,6 +295,8 @@ void update_players(double now) {
                     strncmp(p->model_reg, p->reg,
                             sizeof(p->model_reg)) != 0)) {
             /* 机型 / 涂装 / 注册号变化：释放旧模型并重载 */
+            if (new_loads >= 1) continue;       /* 重载同样受每 tick 预算限制 */
+            new_loads++;
             xconnect_logf("csl: %s icao %s->%s airline %s->%s reg %s->%s (reload)",
                           p->callsign, p->model_icao, p->icao,
                           p->model_airline, p->airline,
@@ -488,8 +498,20 @@ void update_players(double now) {
             if (!ground && f->agl >= 0.0 && f->agl <= 1.5) ground = 1;
 
             if (ground || f->gs < 80.0 || p->cur_alt < 300.0) {
-                int hit = 0;
-                double terrain = csl_terrain_msl(p->cur_lat, p->cur_lon, alt, &hit);
+                int hit;
+                double terrain;
+                /* 探针限频：地面/近地玩家每 tick 都探会很贵（繁忙机场
+                 * N 人 × 20Hz）；0.5s 探一次，间隔内复用缓存值。
+                 * 地面玩家位置变化慢，0.5s 的地形高度不会过时。 */
+                if (now - p->last_probe_t >= 0.5) {
+                    p->last_probe_t = now;
+                    p->probe_msl = csl_terrain_msl(p->cur_lat, p->cur_lon,
+                                                   alt, &hit);
+                    p->probe_ok = hit;
+                } else {
+                    terrain = p->probe_msl;
+                    hit = p->probe_ok;
+                }
                 if (hit) {
                     double agl = alt - terrain;
                     double snapped = 0.0;

@@ -34,6 +34,8 @@
 /* 玩家渲染实例（由主程序持有）。一个 CSL 变体可能含多个 OBJ，逐个实例化。 */
 typedef struct {
     XPLMInstanceRef insts[CSL_MAX_OBJS]; /* 各 OBJ 的实例（NULL 未使用） */
+    int             obj_slots[CSL_MAX_OBJS]; /* 各实例对应的 OBJ 缓存槽
+                                              * （-1 = 无缓存归属），释放时减引用 */
     int             inst_count;          /* 已创建实例数（0 = 未加载） */
     int             tried;               /* 是否已尝试加载（失败则不再试） */
     char            variant[16];         /* 已加载变体码（涂装），用于换漆重载 */
