@@ -11,7 +11,7 @@
     <el-col :span="2" class="screen-left-button">
       <ScreenButton direction="right" :onClick="() => router.push('/settings/account')"></ScreenButton>
       <ScreenButton direction="right" :onClick="() => router.push('/settings/login_info')"></ScreenButton>
-      <ScreenButton direction="right"></ScreenButton>
+      <ScreenButton direction="right" :onClick="() => router.push('/settings/cabin')"></ScreenButton>
       <ScreenButton direction="right" :onClick="() => router.back()"></ScreenButton>
     </el-col>
     <el-col :span="20">
@@ -25,7 +25,9 @@
             <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblLoginInfo') }}</span>
             <span class="lbl">{{ t('settings.lblLanguage') }}<span class="arrow">&gt;</span></span>
           </div>
-          <div class="lcd-row lcd-item" style="border-bottom: 1px solid #fff"></div>
+          <div class="lcd-row lcd-item" style="border-bottom: 1px solid #fff">
+            <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblCabin') }}</span>
+          </div>
           <div class="lcd-row lcd-item">
             <span class="lbl"><span class="arrow">&lt;</span>{{ t('settings.lblReturn') }}</span>
           </div>

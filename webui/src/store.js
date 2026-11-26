@@ -19,7 +19,8 @@ export const store = reactive({
        com1s: '———', com2s: '———', com3s: '———',
        xpdr: '———', xpdrMode: '', xpdrPwr: '', xpdrSys: '',
        tcasMode: '', tcasAlt: '',
-       gs: '—', alt: '—' },
+       gs: '—', alt: '—',
+       lat: null, lon: null },   // 本机位置（在线列表算距离用）
   fsdState: 'Disconnected',   // Online / Connecting / WaitLogin / Disconnected / ...
   xpState: 'waiting',          // waiting / connected / failed / disconnected
   cslLoaded: [],
@@ -29,12 +30,13 @@ export const store = reactive({
   log: [],
   msgs: [],
   msgTo: '', msgText: '',
-  fp: { type: 'I', aircraft: '', speed: '450', alt: 'FL350', dep: '',
+  fp: { type: 'I', speed: '450', alt: 'FL350', dep: '',
         dest: '', altapt: '', plan_time: '0000', actual: '0000',
         enrh: 0, enrm: 0, fuelh: 0, fuelm: 0, remarks: '', route: '' },
   set: { real_name: '', cid: '', password: '', remember: true,
          callsign: '', airline: '',
-         host: '', port: 6809, xphost: '', xpport: 51001, debug: false,
+         server_host: '', server_port: 6809,
+         xconnect_host: '', xconnect_port: 51001, debug: false,
          language: getLocale() },
   overlays: { msg: false, set: false, fp: false },
   newMsg: false,
@@ -126,6 +128,26 @@ export function onCallsignInput() {
   store.airline = (store.callsign || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase()
 }
 
+/* 把后端 get_settings() 结果整份灌入 store.set（供设置弹窗与 LCD 设置页共用）。
+ * 必须以完整对象替换，字段命名与 config（server_host/server_port/
+ * xconnect_host/xconnect_port）保持一致，否则 LCD 设置页读取不到。 */
+function applySettings(s) {
+  store.set = {
+    real_name: s.real_name || '',
+    cid: s.cid || '',
+    password: s.password || '',
+    remember: !!s.remember_password,
+    callsign: s.callsign || '',
+    airline: s.airline_icao || '',
+    server_host: s.server_host || '',
+    server_port: s.server_port || 6809,
+    xconnect_host: s.xconnect_host || '',
+    xconnect_port: s.xconnect_port || 51001,
+    debug: !!s.debug_mode,
+    language: normalizeLocale(s.language),
+  }
+}
+
 /* ---------- 初始化 ---------- */
 export async function initStore() {
   try {
@@ -134,7 +156,7 @@ export async function initStore() {
     if (!store.aircraft) store.aircraft = s.aircraft_icao
     if (!store.airline) store.airline = s.airline_icao
     onCallsignInput()
-    store.set.real_name = s.real_name || ''
+    applySettings(s)
     store.api.set_debug(!!s.debug_mode)
     const loc = setLocale(normalizeLocale(s.language))
     store.lang = loc
@@ -234,6 +256,8 @@ function updateFlight(fd) {
     : (TCAS_ALT_MODES[fd.tcas_filter] || '—')
   store.st.gs = `${fd.groundspeed.toFixed(0)} kn`
   store.st.alt = `${fd.altitude_msl.toFixed(0)} ft`
+  store.st.lat = fd.latitude
+  store.st.lon = fd.longitude
   if (fd.aircraft_icao && fd.aircraft_icao !== store.aircraft) {
     store.aircraft = fd.aircraft_icao.toUpperCase()
     addLog(t('log.aircraftDetected', { icao: store.aircraft }), 'in')
@@ -243,6 +267,39 @@ function updateFlight(fd) {
 export function fmtFreq(milli) {
   if (milli <= 0) return '———'
   return `${Math.floor(milli / 1000)}.${String(milli % 1000).padStart(3, '0')}`
+}
+
+/* ---------- 在线列表工具（距离 / 时长） ---------- */
+
+/** 大圆距离（海里）；任一坐标为无效值返回 null。 */
+export function haversineNm(lat1, lon1, lat2, lon2) {
+  const ok = (v) => typeof v === 'number' && isFinite(v)
+  if (!ok(lat1) || !ok(lon1) || !ok(lat2) || !ok(lon2)) return null
+  const R = 3440.065   // 地球半径（海里）
+  const r = (d) => (d * Math.PI) / 180
+  const dLat = r(lat2 - lat1)
+  const dLon = r(lon2 - lon1)
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
+}
+
+/** 与目标（ATC/飞行员）的距离文本，如 "12.3nm"；无本机位置/坐标时 "—"。 */
+export function distText(lat, lon) {
+  const d = haversineNm(store.st.lat, store.st.lon, lat, lon)
+  if (d == null) return '—'
+  return d < 100 ? `${d.toFixed(1)}nm` : `${d.toFixed(0)}nm`
+}
+
+/** 在线时长文本：H:MM:SS（<1h 时 M:SS）。 */
+export function fmtDuration(sec) {
+  sec = Math.max(0, Math.floor(sec || 0))
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  const mm = String(m).padStart(2, '0')
+  const ss = String(s).padStart(2, '0')
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
 }
 
 export function addLog(msg, cls = '') {
@@ -315,15 +372,7 @@ export async function sendMsg() {
 /* ---------- 设置 ---------- */
 export async function openSettings() {
   const s = await store.api.get_settings()
-  store.set = {
-    real_name: s.real_name, cid: s.cid, password: s.password,
-    remember: !!s.remember_password,
-    callsign: s.callsign, airline: s.airline_icao,
-    host: s.server_host, port: s.server_port,
-    xphost: s.xconnect_host, xpport: s.xconnect_port,
-    debug: !!s.debug_mode,
-    language: normalizeLocale(s.language),
-  }
+  applySettings(s)
   store.overlays.set = true
 }
 
@@ -335,10 +384,10 @@ export async function saveSettings() {
     remember_password: store.set.remember,
     callsign: store.set.callsign.trim().toUpperCase(),
     airline_icao: store.set.airline.trim().toUpperCase(),
-    server_host: store.set.host.trim(),
-    server_port: parseInt(store.set.port, 10),
-    xconnect_host: store.set.xphost.trim(),
-    xconnect_port: parseInt(store.set.xpport, 10),
+    server_host: store.set.server_host.trim(),
+    server_port: parseInt(store.set.server_port, 10),
+    xconnect_host: store.set.xconnect_host.trim(),
+    xconnect_port: parseInt(store.set.xconnect_port, 10),
     debug_mode: store.set.debug,
     language: normalizeLocale(store.set.language),
   }
@@ -421,7 +470,6 @@ export function openFlightPlan() {
     message(t('flightPlan.connectFirst'), true)
     return
   }
-  if (!store.fp.aircraft) store.fp.aircraft = store.aircraft
   store.overlays.fp = true
 }
 
@@ -431,7 +479,6 @@ export async function submitFlightPlan() {
   if (!dep || !dest) { message(t('flightPlan.fillAirports'), true); return }
   const r = await store.api.submit_flight_plan({
     type: store.fp.type,
-    aircraft: store.fp.aircraft.trim(),
     cruise_speed: store.fp.speed.trim() || '450',
     cruise_alt: store.fp.alt.trim() || 'FL350',
     dep, dest,

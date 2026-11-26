@@ -246,14 +246,15 @@ class Api:
             return {"ok": True}
         return {"ok": False, "code": "not_connected"}
 
-    _FP_KEYS = ("type", "aircraft", "cruise_speed", "cruise_alt", "dep",
+    _FP_KEYS = ("type", "cruise_speed", "cruise_alt", "dep",
                 "dest", "alt", "plan_time", "actual_time", "enroute_h",
                 "enroute_m", "fuel_h", "fuel_m", "remarks", "route")
 
     def _send_flight_plan(self, fsd, fp: dict) -> None:
         fsd.send_flight_plan(
             flight_type=str(fp.get("type", "I")).upper(),
-            aircraft=str(fp.get("aircraft") or self._cfg.aircraft_icao).upper(),
+            # 机型不再由计划填写：始终用当前机型（模拟器自动识别/配置）
+            aircraft=self._cfg.aircraft_icao.upper(),
             cruise_speed=str(fp.get("cruise_speed", "450")),
             dep_airport=str(fp.get("dep", "")).upper(),
             plan_time=str(fp.get("plan_time", "0000")),
@@ -302,6 +303,18 @@ class Api:
             "atc": atc,
             "players": players,
         }
+
+    # ---------- 在线列表（ATC / 飞行员） ----------
+
+    def get_atc_list(self) -> list:
+        """在线管制列表（未连线/无数据返回空列表）。"""
+        model = self._model
+        return model.online_atc() if model is not None else []
+
+    def get_pilot_list(self) -> list:
+        """在线飞行员列表（未连线/无数据返回空列表）。"""
+        model = self._model
+        return model.online_pilots() if model is not None else []
 
     # ---------- 窗口控制（frameless 自绘标题栏） ----------
 

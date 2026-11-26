@@ -41,6 +41,9 @@ class PlayerTrack:
     aircraft: str = "A320"
     family: str = ""
     airline: str = ""   # 涂装/航司码（PI AIRLINE 优先，否则取呼号前三位）
+    real_name: str = "" # 机长（服务器广播 #AP 时可得，否则未知）
+    dep: str = ""       # 起飞机场（$FP）
+    dest: str = ""      # 降落机场（$FP）
 
 
 _FACILITY_NAMES = {1: "FSS", 2: "DEL", 3: "GND", 4: "TWR", 5: "APP", 6: "CTR"}
@@ -72,7 +75,10 @@ class NetworkModel:
         self._players: dict[str, PlayerTrack] = {}
         self._atc_last_seen: dict[str, float] = {}
         self._pl_last_seen: dict[str, float] = {}
+        self._pl_first_seen: dict[str, float] = {}  # 玩家首次出现（在线时长）
         self._model_req_at: dict[str, float] = {}   # 远程机型 PIR 请求节流
+        self._fp_req_at: dict[str, float] = {}      # 飞行计划查询节流（起降机场）
+        self._err_dedupe: dict[str, float] = {}     # $ER 同文案去重（防刷屏）
 
         self.fsd: Optional[FsdSession] = None
         # 插件客户端可注入共享实例（应用级监听插件上线，生命周期由调用方管理）
@@ -207,8 +213,11 @@ class NetworkModel:
             self.on_fsd_state_changed(state)
 
     def _on_fsd_error_text(self, text: str) -> None:
-        """服务器 $ER 提示（非致命错误不再断链，仅显示）。"""
-        self._log(f"[fsd] {text}")
+        """服务器 $ER 提示（非致命错误不断链，仅显示；同文案 20s 内去重防刷屏）。"""
+        now = time.monotonic()
+        if now - self._err_dedupe.get(text, 0.0) >= 20.0:
+            self._err_dedupe[text] = now
+            self._log(f"[fsd] {text}")
         if self.on_fsd_error is not None:
             self.on_fsd_error(text)
 
@@ -218,6 +227,7 @@ class NetworkModel:
             self._players.clear()
             self._atc_last_seen.clear()
             self._pl_last_seen.clear()
+            self._pl_first_seen.clear()
         if self.on_roster_changed:
             self.on_roster_changed()
         self.push_roster()  # 立即通知插件清空场景
@@ -242,6 +252,7 @@ class NetworkModel:
                     tr = self._players.get(pp.callsign)
                     if tr is None:
                         tr = PlayerTrack(callsign=pp.callsign)
+                        self._pl_first_seen[pp.callsign] = time.monotonic()
                     is_fast = p.kind != "@"
                     _update_from_pbh(tr, pp, overwrite_gs=not is_fast)
                     self._players[pp.callsign] = tr
@@ -259,6 +270,7 @@ class NetworkModel:
             with self._gate:
                 self._players.pop(p.from_, None)
                 self._pl_last_seen.pop(p.from_, None)
+                self._pl_first_seen.pop(p.from_, None)
             changed = True
 
         elif p.kind == "#DA":
@@ -268,12 +280,20 @@ class NetworkModel:
             changed = True
 
         elif p.kind == "#AP":
+            # #AP<呼号>:SERVER:<cid>:<pw>:<rating>:<rev>:<sim>:<真实姓名>
+            # 部分服务器会把其他飞行员登录广播过来，可借此拿到"机长"姓名。
             if p.flds and p.from_ != self.my_callsign:
+                real = p.flds[4].strip() if len(p.flds) > 4 else ""
                 with self._gate:
-                    if p.from_ not in self._players:
-                        self._players[p.from_] = PlayerTrack(callsign=p.from_)
-                        self._pl_last_seen[p.from_] = time.monotonic()
+                    tr = self._players.get(p.from_)
+                    if tr is None:
+                        tr = PlayerTrack(callsign=p.from_)
+                        self._players[p.from_] = tr
+                        self._pl_first_seen[p.from_] = time.monotonic()
                         changed = True
+                    if real:
+                        tr.real_name = real
+                    self._pl_last_seen[p.from_] = time.monotonic()
 
         elif p.kind == "#AA":
             with self._gate:
@@ -348,26 +368,30 @@ class NetworkModel:
 
     def _on_flight_plan_received(self, from_callsign: str, fp_type: str,
                                  flds: list[str], raw: str) -> None:
-        """远程客户端飞行计划（$FP，服务器转发）→ 机型兜底匹配。
+        """远程客户端飞行计划（$FP，服务器转发）。
 
-        仅当 PIR 请求未返回（机型仍是默认 A320 未知态）时使用计划中的
-        aircraft 字段做 CSL 匹配；已有 PIR 结果则保留（更准确）。"""
+        flds = [机型, 巡航速度, 起飞机场, 计划时间, 实际时间, 巡航高度, 目的地, ...]
+        - 起降机场：用于在线列表展示；
+        - 机型：仅当 PIR 未返回（仍为默认 A320）时做 CSL 匹配兜底。"""
         try:
-            aircraft = (flds[0] or "").strip().upper()
+            aircraft = _clean_plan_aircraft((flds[0] or "").strip().upper())
+            dep = (flds[2] or "").strip().upper() if len(flds) > 2 else ""
+            dest = (flds[6] or "").strip().upper() if len(flds) > 6 else ""
         except (IndexError, AttributeError):
-            return
-        aircraft = _clean_plan_aircraft(aircraft)
-        if not aircraft:
             return
         with self._gate:
             tr = self._players.get(from_callsign)
             if tr is None:
                 return
-            if tr.aircraft != "A320":
-                return  # 已有机型信息（PIR 应答），不覆盖
-            tr.aircraft = aircraft
+            if dep:
+                tr.dep = dep
+            if dest:
+                tr.dest = dest
+            if aircraft and tr.aircraft == "A320":
+                tr.aircraft = aircraft   # 已有 PIR 结果则保留（更准确）
             self._pl_last_seen[from_callsign] = time.monotonic()
-        self._log(f"[fsd] flight plan aircraft from {from_callsign}: {aircraft}")
+        self._log(f"[fsd] flight plan from {from_callsign}: "
+                  f"{dep or '?'}->{dest or '?'} ({aircraft or '-'})")
 
     # ---------- 后台循环 ----------
 
@@ -386,6 +410,7 @@ class NetworkModel:
                     if now - self._pl_last_seen[cs] > PLAYER_TIMEOUT:
                         self._players.pop(cs, None)
                         self._pl_last_seen.pop(cs, None)
+                        self._pl_first_seen.pop(cs, None)
                         changed = True
             if changed and self.on_roster_changed:
                 self.on_roster_changed()
@@ -444,13 +469,12 @@ class NetworkModel:
         self._request_unknown_models()
 
     def _request_unknown_models(self, limit: int = 5) -> None:
-        """远程玩家机型识别（FSD 位置包不带机型，默认 A320 需外部补齐）：
-        1) 服务器飞行计划查询 $CQ:...:SERVER:FP:<呼号> → $FP 应答含机型
-           （swift 同款做法，对任意 FSD 服务器通用，依赖服务器缓存了计划）；
-        2) 客户端机型请求 #SB ... :PIR → PI:GEN EQUIPMENT 应答（同为本客户端的
-           对端才会应答，精确度最高）；
-        3) 两者都无 → 收到 $FP 广播时由 _on_flight_plan_received 兜底。
-        每目标 30s 节流，每轮最多 limit 个，避免刷屏。"""
+        """远程玩家信息补齐（位置包不带机型/计划）：
+        1) 机型：默认 A320 未知态 → #SB ... :PIR → PI:GEN EQUIPMENT（同本客户端的
+           对端应答最准），并顺带 $CQ ... :SERVER:FP 查询计划机型兜底；
+        2) 起降机场：计划为空 → $CQ ... :SERVER:FP:<呼号> → $FP 应答含起降场。
+        分项节流：PIR 30s；FP 120s（服务器多无计划，避免 NoFlightPlan 刷屏）。
+        每轮最多 limit 个目标。"""
         fsd = self.fsd
         if fsd is None or fsd.state != STATE_ONLINE:
             return
@@ -461,15 +485,59 @@ class NetworkModel:
         for tr in items:
             if req >= limit:
                 break
-            if tr.aircraft != "A320":
+            need_pir = tr.aircraft == "A320"
+            need_fp = not (tr.dep and tr.dest)
+            if not need_pir and not need_fp:
                 continue
-            if now - self._model_req_at.get(tr.callsign, 0.0) < 30.0:
-                continue  # 30s 内已请求过，不重复骚扰
-            self._model_req_at[tr.callsign] = now
-            tr.model_requested = True
-            req += 1
-            fsd.request_flight_plan(tr.callsign)
-            fsd.send_plane_info_request(tr.callsign)
+            acted = False
+            if need_pir and now - self._model_req_at.get(tr.callsign, 0.0) >= 30.0:
+                self._model_req_at[tr.callsign] = now
+                fsd.send_plane_info_request(tr.callsign)
+                acted = True
+            if need_fp and now - self._fp_req_at.get(tr.callsign, 0.0) >= 120.0:
+                self._fp_req_at[tr.callsign] = now
+                fsd.request_flight_plan(tr.callsign)
+                acted = True
+            if acted:
+                tr.model_requested = True
+                req += 1
+
+    # ---------- 在线列表（供前端 ATC/TEL 显示） ----------
+
+    def online_atc(self) -> list[dict]:
+        """在线管制列表快照（前端计算与本地飞机的距离）。"""
+        with self._gate:
+            items = list(self._atc.values())
+        return [{
+            "callsign": a.callsign,
+            "frequency": pk.khz_to_display(a.freq_khz),
+            "type": facility_name(a.facility),
+            "latitude": a.lat,
+            "longitude": a.lon,
+            "rating": a.rating,
+        } for a in items]
+
+    def online_pilots(self) -> list[dict]:
+        """在线飞行员列表快照（含起降机场与在线时长秒数）。"""
+        now = time.monotonic()
+        with self._gate:
+            items = list(self._players.values())
+            seen = dict(self._pl_first_seen)
+        out = []
+        for tr in items:
+            first = seen.get(tr.callsign)
+            out.append({
+                "callsign": tr.callsign,
+                "real_name": tr.real_name,
+                "aircraft": tr.aircraft,
+                "dep": tr.dep,
+                "dest": tr.dest,
+                "latitude": tr.lat,
+                "longitude": tr.lon,
+                "altitude": tr.alt_ft,
+                "online_seconds": int(now - first) if first else 0,
+            })
+        return out
 
     # ---------- 插件飞行数据 → FSD 上报 ----------
 

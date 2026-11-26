@@ -20,7 +20,6 @@ const { t } = useI18n()
             <el-option :label="t('flightPlan.rules.D')" value="D" />
               </el-select>
             </label>
-            <label>{{ t('flightPlan.aircraft') }} <el-input v-model="store.fp.aircraft" size="small" /></label>
             <label>{{ t('flightPlan.cruiseSpeed') }} <el-input v-model="store.fp.speed" placeholder="450" size="small" /></label>
             <label>{{ t('flightPlan.cruiseAlt') }} <el-input v-model="store.fp.alt" placeholder="FL350" size="small" /></label>
           </fieldset>

@@ -30,10 +30,10 @@ const LANGS = [
       </fieldset>
       <fieldset>
         <legend>{{ t('settings.server') }}</legend>
-        <label>{{ t('settings.fsdServer') }} <el-input v-model="store.set.host" size="small" /></label>
-        <label>{{ t('settings.fsdPort') }} <el-input v-model="store.set.port" size="small" /></label>
-        <label>{{ t('settings.pluginAddr') }} <el-input v-model="store.set.xphost" size="small" /></label>
-        <label>{{ t('settings.pluginPort') }} <el-input v-model="store.set.xpport" size="small" /></label>
+        <label>{{ t('settings.fsdServer') }} <el-input v-model="store.set.server_host" size="small" /></label>
+        <label>{{ t('settings.fsdPort') }} <el-input v-model="store.set.server_port" size="small" /></label>
+        <label>{{ t('settings.pluginAddr') }} <el-input v-model="store.set.xconnect_host" size="small" /></label>
+        <label>{{ t('settings.pluginPort') }} <el-input v-model="store.set.xconnect_port" size="small" /></label>
         <el-checkbox v-model="store.set.debug">{{ t('settings.debugMode') }}</el-checkbox>
         <p class="tip">{{ t('settings.pluginTip') }}</p>
       </fieldset>

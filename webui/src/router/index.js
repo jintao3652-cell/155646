@@ -45,6 +45,13 @@ const router = createRouter({
       },
     },
     {
+      path: "/settings/cabin",
+      name: "cabin",
+      components: {
+        screen: () => import("../components/Screen/Settings/Cabin.vue"),
+      },
+    },
+    {
       path: "/settings",
       name: "settings",
       components: {
@@ -56,6 +63,20 @@ const router = createRouter({
       name: "log",
       components: {
         screen: () => import("../components/Screen/Log.vue"),
+      },
+    },
+    {
+      path: "/atc",
+      name: "atc",
+      components: {
+        screen: () => import("../components/Screen/Online/AtcList.vue"),
+      },
+    },
+    {
+      path: "/pilots",
+      name: "pilots",
+      components: {
+        screen: () => import("../components/Screen/Online/PilotList.vue"),
       },
     },
     {

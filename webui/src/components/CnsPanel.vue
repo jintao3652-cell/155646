@@ -2,7 +2,7 @@
   import { computed } from 'vue'
   import { useRoute } from 'vue-router'
   import { useI18n } from 'vue-i18n'
-  import { store, openFlightPlan, openSettings, noop, doConnect, doDisconnect, cslTag } from '../store.js'
+  import { store, openFlightPlan, openSettings, noop, doConnect, doDisconnect, cslTag, message } from '../store.js'
   import { winMin, winClose } from '../store.js'
   import router from '@/router'
   import ScreenButton from './RMP/ScreenButton.vue'
@@ -17,8 +17,21 @@
   const toggleFsdConnection = () => store.connected ? doDisconnect() : doConnect()
   const route = useRoute()
 
+  /* 在线列表（ATC / 飞行员）：必须先连线 FSD，否则提示 */
+  function openOnline(path) {
+    if (!store.connected) {
+      message(t('online.notConnectedFsd'), true)
+      return
+    }
+    router.push(path)
+  }
+  const openOnlineAtc = () => openOnline('/atc')
+  const openOnlinePilots = () => openOnline('/pilots')
+
   /* 下方功能键指示灯 */
   const fsdActive = computed(() => store.connected)
+  /* TEL/ATC 指示灯：未连线 info，连线后 success */
+  const onlineStatus = computed(() => store.connected ? 'success' : 'info')
   const xplActive = computed(() => store.xpState === 'connected')
   const cslActive = computed(() => cslTag.value === 'success')
   const cslDanger = computed(() => cslTag.value === 'danger')
@@ -35,8 +48,8 @@
         <div class="rmp-status-light-group">
           <ScreenStatusLight :text="t('cns.vhf')" status="success"></ScreenStatusLight>
           <ScreenStatusLight :text="t('cns.hf')" status="success"></ScreenStatusLight>
-          <ScreenStatusLight :text="t('cns.tel')" status="success"></ScreenStatusLight>
-          <ScreenStatusLight :text="t('cns.atc')" status="success"></ScreenStatusLight>
+          <ScreenStatusLight :text="t('cns.tel')" :status="onlineStatus" :onClick="openOnlinePilots"></ScreenStatusLight>
+          <ScreenStatusLight :text="t('cns.atc')" :status="onlineStatus" :onClick="openOnlineAtc"></ScreenStatusLight>
           <ScreenStatusLight text="" status="info"></ScreenStatusLight>
           <ScreenStatusLight :text="t('cns.min')" status="info" :onClick="winMin"></ScreenStatusLight>
           <ScreenStatusLight :text="t('cns.exit')" status="danger" :onClick="winClose"></ScreenStatusLight>
