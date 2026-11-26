@@ -223,6 +223,7 @@ __marimo__/
 config.json
 
 # Local build / debug / agent artifacts
+build-vs2026/
 *.obj
 /_t.c
 /_t.exe

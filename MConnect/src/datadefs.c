@@ -691,7 +691,7 @@ void datadefs_build_flight_json(char* out, int size) {
                  g_flight.light_landing, g_flight.light_taxi,
                  g_flight.light_beacon, flaps_pct,
                  g_flight.gear_ratio, g_flight.spoilers_ratio,
-                 (int)eng);
+                 en);
         if (strcmp(key, last_key) != 0) {
             snprintf(last_key, sizeof(last_key), "%s", key);
             xc_logf("raw: nav=%d strobe=%d landing=%d taxi=%d beacon=%d "
