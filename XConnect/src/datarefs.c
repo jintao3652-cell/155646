@@ -115,6 +115,13 @@ static const char* kDrefNames[DR_COUNT] = {
      * 写进 @ 包高度修正字段，尾号/引擎也都是错的）。 */
     "sim/aircraft/engine/acf_num_engines",
     "sim/cockpit2/gauges/indicators/altitude_ft_pilot",
+    /* XP12 灯光亮度数组（实际点亮状态；次序与 DrIndex 严格对应） */
+    "sim/flightmodel2/lights/landing_lights_brightness_ratio",
+    "sim/flightmodel2/lights/taxi_lights_brightness_ratio",
+    "sim/flightmodel2/lights/nav_lights_brightness_ratio",
+    "sim/flightmodel2/lights/beacon_brightness_ratio",
+    "sim/flightmodel2/lights/strobe_brightness_ratio",
+    "sim/flightmodel2/lights/generic_lights_brightness_ratio",
 };
 
 static XPLMDataRef g_drefs[DR_COUNT];
@@ -128,8 +135,9 @@ typedef char dref_names_must_match_enum[
 /* 机模部件（ACC 配置上报）当前值，build_flight_data 每帧刷新 */
 static int g_parts_nav = 0, g_parts_strobe = 0, g_parts_landing = 0;
 static int g_parts_taxi = 0, g_parts_beacon = 0;
-/* X-Plane 没有独立的 logo/recognition/cabin/wing 灯 dataref；
- * 仍上报这些 ACC 键（由现有灯光派生/置 false），保证字段齐全。 */
+/* XP 没有独立的 logo/recognition/cabin/wing 灯标准 dataref；
+ * 仍上报这些 ACC 键保证字段齐全——737-800 从泛化亮度槽位读真实
+ * 开关，其余机模一律置 0（旧"随 nav/taxi 派生"与实际开关不符） */
 static int g_parts_logo = 0, g_parts_recognition = 0;
 static int g_parts_cabin = 0, g_parts_wing = 0;
 static int g_parts_gear = 1, g_parts_flaps = 0, g_parts_onground = 1;
@@ -841,6 +849,62 @@ void load_all_datarefs(void) {
     }
 }
 
+/* ---------------- 灯光状态采集（XP12 亮度优先） ----------------
+ *
+ * 部分机模（如 Laminar 737-800）已迁到 landing_lights_switch[16] /
+ * generic_lights_switch 数组，旧标量 landing_lights_on 在它们上面
+ * 不再镜像真实开关 → 以前上报的 logo/landing 跟机鼻灯对不上。
+ * XP12 的 *_brightness_ratio 数组是"灯实际亮没亮"的权威来源：
+ * 开关开着但灯收起（retractable）时亮度为 0，上报 off 才与观感一致。
+ * dataref 缺失（老版本 X-Plane）时回退开关标量。 */
+
+/* 亮度数组任一元素 >0.05 视为亮。返回 -1 = dataref 缺失（调用方回退）。 */
+static int light_bri_any(int dr_index, int count) {
+    float v[16];
+    int i, n = count > 16 ? 16 : count;
+    if (!g_drefs[dr_index]) return -1;
+    memset(v, 0, sizeof(v));
+    XPLMGetDatavf(g_drefs[dr_index], v, 0, n);
+    for (i = 0; i < n; i++)
+        if (v[i] > 0.05f && v[i] <= 1.0f) return 1;
+    return 0;
+}
+
+static int switch_on(int switch_dr) {
+    return g_drefs[switch_dr] ? dref_int(g_drefs[switch_dr]) > 0 : 0;
+}
+
+/* 固定灯（nav/taxi/beacon/strobe）：开关 ∨ 实际亮度 并集——
+ * 老机模不写亮度数组时不漏报，新机模开关没联动标量时也不漏报 */
+static int light_state(int bri_dr, int count, int switch_dr) {
+    return (light_bri_any(bri_dr, count) > 0) || switch_on(switch_dr);
+}
+
+/* 可收放灯（landing）：以实际亮度为准——开关开着但灯收起时
+ * 亮不起来，上报 off 才与观感一致；亮度缺失回退开关 */
+static int light_state_actual(int bri_dr, int count, int switch_dr) {
+    int r = light_bri_any(bri_dr, count);
+    if (r >= 0) return r;
+    return switch_on(switch_dr);
+}
+
+/* 泛化数组单槽位（读前 8 项；槽位语义由机模定义，见 737 槽位表） */
+static int gen_slot_on(int slot) {
+    float v[8];
+    if (!g_drefs[DR_LT_GEN_BRI]) return 0;
+    if (slot < 0 || slot >= 8) return 0;
+    memset(v, 0, sizeof(v));
+    XPLMGetDatavf(g_drefs[DR_LT_GEN_BRI], v, 0, 8);
+    return v[slot] > 0.05f && v[slot] <= 1.0f;
+}
+
+/* Laminar 737-800 / Zibo（ICAO B738，兼容 B737）的泛化灯槽位，
+ * 由机模 OBJ 的 ANIM 绑定注释实证：
+ *   generic[0]=wing [1]=logo [2]/[3]=runway turnoff L/R [5]=wheel well */
+static int light_profile_737(const char* icao) {
+    return icao && (strcmp(icao, "B738") == 0 || strcmp(icao, "B737") == 0);
+}
+
 void build_flight_data(char* out, int size) {
     /* 先把机型/尾号读出来，供机型覆盖表选择（它决定频率用哪个 dataref） */
     char icao[16], reg[16], ui_name[128], flight_id[16];
@@ -934,17 +998,28 @@ void build_flight_data(char* out, int size) {
         if (g_num_engines < 0) g_num_engines = 0;
         if (g_num_engines > MAX_ENGINES) g_num_engines = MAX_ENGINES;
         if (g_drefs[DR_N1]) XPLMGetDatavf(g_drefs[DR_N1], n1, 0, MAX_ENGINES);
-        g_parts_nav = dref_int(g_drefs[DR_NAV_LT]) > 0;
-        g_parts_strobe = dref_int(g_drefs[DR_STROBE_LT]) > 0;
-        g_parts_landing = dref_int(g_drefs[DR_LANDING_LT]) > 0;
-        g_parts_taxi = dref_int(g_drefs[DR_TAXI_LT]) > 0;
-        g_parts_beacon = dref_int(g_drefs[DR_BEACON_LT]) > 0;
-        /* 派生额外 ACC 灯光字段（无独立 dataref）：logo 随航行灯，
-         * recognition/wing 随滑行/着陆灯；cabin 无可靠来源先报 false。 */
-        g_parts_logo = g_parts_nav;
-        g_parts_recognition = g_parts_taxi || g_parts_landing;
+        g_parts_nav = light_state(DR_LT_NAV_BRI, 1, DR_NAV_LT);
+        g_parts_strobe = light_state(DR_LT_STROBE_BRI, 4, DR_STROBE_LT);
+        g_parts_landing = light_state_actual(DR_LT_LAND_BRI, 16, DR_LANDING_LT);
+        g_parts_beacon = light_state(DR_LT_BEACON_BRI, 4, DR_BEACON_LT);
+        g_parts_taxi = light_state(DR_LT_TAXI_BRI, 1, DR_TAXI_LT);
+        /* logo/wing/recognition：XP 没有独立标准 dataref，旧派生
+         * （logo 随 nav、wing/recognition 随 taxi）与实际开关对不上
+         * ——用户实测报告"灯光识别有问题"。现在只认机模槽位表：
+         * 737-800 从泛化数组读真实开关；其余机模报 0（宁可保守不误报）。
+         * 737 的 runway turnoff 归并进 taxi 位（swift 惯例，
+         * 对端 CSL 的机鼻灯组由 taxi_lites_on 驱动）。
+         * wheel well 无协议槽位，不上报。 */
+        if (light_profile_737(icao)) {
+            g_parts_logo = gen_slot_on(1);
+            g_parts_wing = gen_slot_on(0);
+            if (gen_slot_on(2) || gen_slot_on(3)) g_parts_taxi = 1;
+        } else {
+            g_parts_logo = 0;
+            g_parts_wing = 0;
+        }
+        g_parts_recognition = 0;
         g_parts_cabin = 0;
-        g_parts_wing = g_parts_taxi;
         /* 起落架：deploy_ratio 是 float[10] 数组（0=收起，1=放下），
          * 不能用 dref_float 当标量读。
          * 判定"放下"取所有条目里的最大值（前几项是主轮、后面可能是尾轮；

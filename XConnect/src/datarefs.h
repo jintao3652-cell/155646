@@ -65,6 +65,15 @@ typedef enum {
     DR_NUM_ENGINES,  /* 发动机数量：sim/aircraft/engine/acf_num_engines
                       * （A333=2、B744=4；只上报真实数量，不补零到 4） */
     DR_ALT_IND,      /* 座舱高度表指示高度：用于 @ 包 pressure−true 修正字段 */
+    /* XP12 灯光**实际亮度**（权威来源；部分机模不再镜像旧开关标量）。
+     * 泛化数组的槽位语义由机模定义，737-800 实证：
+     *   generic[0]=wing  [1]=logo  [2]/[3]=rwy turnoff L/R  [5]=wheel well */
+    DR_LT_LAND_BRI,  /* landing_lights_brightness_ratio float[16] */
+    DR_LT_TAXI_BRI,  /* taxi_lights_brightness_ratio float[1] */
+    DR_LT_NAV_BRI,   /* nav_lights_brightness_ratio float[1] */
+    DR_LT_BEACON_BRI,/* beacon_brightness_ratio float[4] */
+    DR_LT_STROBE_BRI,/* strobe_brightness_ratio float[4] */
+    DR_LT_GEN_BRI,   /* generic_lights_brightness_ratio float[128] */
     DR_COUNT
 } DrIndex;
 
