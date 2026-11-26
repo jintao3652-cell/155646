@@ -128,11 +128,11 @@ int control_init(void) {
     ok &= map_event(CEV_COM1_SWAP,     "COM1_RADIO_SWAP");
     ok &= map_event(CEV_COM2_SWAP,     "COM2_RADIO_SWAP");
     ok &= map_event(CEV_COM3_SWAP,     "COM3_RADIO_SWAP");
-    /* 发射台选择与"全收"：语音通讯必需（XVoice 靠读 COM TRANSMIT /
-     * PILOT TRANSMITTER TYPE 判断，写侧用这四个事件）。 */
-    ok &= map_event(CEV_COM1_XMIT,     "COM1_TRANSMIT_SELECT");
-    ok &= map_event(CEV_COM2_XMIT,     "COM2_TRANSMIT_SELECT");
-    ok &= map_event(CEV_COM3_XMIT,     "COM3_TRANSMIT_SELECT");
+    /* 发射台选择：统一 PILOT_TRANSMITTER_SET（COMn_TRANSMIT_SELECT 已废弃
+     * 且 COM3 根本不存在——官方 DevSupport 2022 年确认，实测 2020 真机
+     * NAME_UNRECOGNIZED）。语音通讯必需（XVoice 靠读 PILOT TRANSMITTER TYPE
+     * 判断在哪个频率讲话）。 */
+    ok &= map_event(CEV_PILOT_XMIT_SET, "PILOT_TRANSMITTER_SET");
     ok &= map_event(CEV_COM_RECV_ALL,  "COM_RECEIVE_ALL_SET");
     /* 收听开关（XConnect monitor 字段互通，逐台 toggle） */
     ok &= map_event(CEV_COM1_RECV,     "COM1_RECEIVE_SELECT");
@@ -389,7 +389,11 @@ static int try_rpn_fallback(const Command* c) {
         break;
 
     case CMD_COM_XMIT:
-        snprintf(rpn, sizeof(rpn), "1 (>K:COM%d_TRANSMIT_SELECT)", c->com_index);
+        /* 选定发射台。官方 DevSupport 确认：COM3_TRANSMIT_SELECT **不存在**，
+         * COMn_TRANSMIT_SELECT 系列已废弃；统一用 PILOT_TRANSMITTER_SET，
+         * 参数 0=COM1 1=COM2 2=COM3（索引从 0 起）。 */
+        snprintf(rpn, sizeof(rpn), "%d (>K:PILOT_TRANSMITTER_SET)",
+                 c->com_index - 1);
         break;
 
     case CMD_COM_RECV_ALL:
@@ -627,11 +631,9 @@ static int exec_command(const Command* c) {
         break;
 
     case CMD_COM_XMIT:
-        /* 选定发射台。事件名是 COM{n}_TRANSMIT_SELECT，data 必须给 1
-         * （给 0 在多数机型上无效，个别机型会解释为"取消"）。 */
-        evid = (c->com_index == 2) ? CEV_COM2_XMIT
-             : (c->com_index == 3) ? CEV_COM3_XMIT : CEV_COM1_XMIT;
-        data = 1;
+        /* 统一走 PILOT_TRANSMITTER_SET（参数 0=COM1），COM3 才有事件可用 */
+        evid = CEV_PILOT_XMIT_SET;
+        data = (DWORD)(c->com_index - 1);
         break;
 
     case CMD_COM_RECV_ALL:

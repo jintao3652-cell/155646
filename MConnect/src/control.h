@@ -37,10 +37,11 @@
 #define CEV_COM1_SWAP       209
 #define CEV_COM2_SWAP       210
 #define CEV_COM3_SWAP       211
-#define CEV_COM1_XMIT       212   /* COM1_TRANSMIT_SELECT */
-#define CEV_COM2_XMIT       213   /* COM2_TRANSMIT_SELECT */
-#define CEV_COM3_XMIT       214   /* COM3_TRANSMIT_SELECT */
+#define CEV_COM1_XMIT       212   /* 已废弃，仅保留枚举位（见 control.c） */
+#define CEV_COM2_XMIT       213   /* 同上 */
+#define CEV_COM3_XMIT       214   /* MSFS 2020 无此事件，勿用于映射 */
 #define CEV_COM_RECV_ALL    215   /* COM_RECEIVE_ALL_SET */
+#define CEV_PILOT_XMIT_SET  220   /* PILOT_TRANSMITTER_SET，参数 0=COM1 */
 /* 收听开关（XConnect "monitor" 字段互通）：逐台 toggle */
 #define CEV_COM1_RECV       216   /* COM1_RECEIVE_SELECT */
 #define CEV_COM2_RECV       217   /* COM2_RECEIVE_SELECT */

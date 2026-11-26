@@ -480,9 +480,30 @@ static void CALLBACK dispatch_proc(SC_RECV* pData, DWORD cbData, void* ctx) {
         const SC_RECV_EXCEPTION* e = (const SC_RECV_EXCEPTION*)pData;
         /* 常见有意义的几个：SIZE_MISMATCH(2) / UNRECOGNIZED_ID(3) /
          * CREATE_OBJECT_FAILED(0x16) / NAME_UNRECOGNIZED(7) */
-        xc_logf("sc: EXCEPTION 0x%02lx sendID=%lu index=%lu",
-                (unsigned long)e->dwException,
-                (unsigned long)e->dwSendID, (unsigned long)e->dwIndex);
+        static const char* kExcNames[] = {
+            "NONE", "ERROR", "SIZE_MISMATCH", "UNRECOGNIZED_ID", "UNOPENED",
+            "VERSION_MISMATCH", "TOO_MANY_GROUPS", "NAME_UNRECOGNIZED",
+            "INDEX_OUT_OF_BOUNDS", "STRING_MISMATCH", "GROUP_NEVER_DEFINED",
+            "GROUP_NOT_CREATABLE", "SYSTEM_NEVER_DEFINED", "SYSTEM_NOT_SUBSCRIBED",
+            "SYSTEM_ALREADY_SUBSCRIBED", "DATA_AREA_INVALID",
+            "DATA_AREA_NOT_AVAILABLE", "DUPLICATE_ID", "DUPLICATE_REQUEST",
+            "INTERNAL_ERROR", "OBJECT_TYPE_MISMATCH",
+            "OPERATION_INVALID_FOR_OBJECT_TYPE", "TOO_MANY_REQUESTS",
+            "EXTERNAL_EVENT_CREATION_FAILED", "EXTERNAL_EVENT_SIGNAL_FAILED",
+            "ALREADY_SUBSCRIBED", "ALREADY_CREATED", "UNKNOWN_EVENT_ID",
+            "UNKNOWN_CLIENT_EVENT_ID", "CLIENT_DATA_NOT_FOUND",
+            "CLIENT_DATA_DUPLICATE_DEFINE_ID", "CLIENT_DATA_INVALID_SIZE",
+            "CLIENT_DATA_INVALID_ACCESS"
+        };
+        if (e->dwException < sizeof(kExcNames) / sizeof(kExcNames[0]))
+            xc_logf("sc: EXCEPTION 0x%02lx(%s) sendID=%lu index=%lu",
+                    (unsigned long)e->dwException,
+                    kExcNames[e->dwException],
+                    (unsigned long)e->dwSendID, (unsigned long)e->dwIndex);
+        else
+            xc_logf("sc: EXCEPTION 0x%02lx sendID=%lu index=%lu",
+                    (unsigned long)e->dwException,
+                    (unsigned long)e->dwSendID, (unsigned long)e->dwIndex);
         break;
     }
 

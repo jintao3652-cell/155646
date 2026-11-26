@@ -240,13 +240,16 @@ int main(void) {
     flush();
     feed("{\"type\":\"Send:RADIO\",\"com\":2,\"xmit\":true}");
     control_drain();
-    check_int((int)g_cap.last_evid, CEV_COM2_XMIT, "事件 = COM2_TRANSMIT_SELECT");
-    check_long((long)g_cap.last_data, 1L, "参数 = 1（选中）");
+    /* 统一走 PILOT_TRANSMITTER_SET（COMn_TRANSMIT_SELECT 已废弃且
+     * COM3 不存在），参数 0=COM1 1=COM2 2=COM3 */
+    check_int((int)g_cap.last_evid, CEV_PILOT_XMIT_SET, "事件 = PILOT_TRANSMITTER_SET");
+    check_long((long)g_cap.last_data, 1L, "参数 = 1（COM2 → 索引1）");
 
     flush();
     feed("{\"type\":\"Send:RADIO\",\"com\":3,\"xmit\":true}");
     control_drain();
-    check_int((int)g_cap.last_evid, CEV_COM3_XMIT, "COM3 发射台");
+    check_int((int)g_cap.last_evid, CEV_PILOT_XMIT_SET, "COM3 发射台（PILOT_TRANSMITTER_SET）");
+    check_long((long)g_cap.last_data, 2L, "参数 = 2（COM3 → 索引2）");
 
     printf("\n[6c] xmit:false 被忽略（必须有台在发）\n");
     flush();

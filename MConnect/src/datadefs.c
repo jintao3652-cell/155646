@@ -204,11 +204,15 @@ int datadefs_init(void) {
     hr |= add(h, DEF_FLIGHT, "TURB ENG N1:3", "Percent", SC_DATATYPE_FLOAT64);
     hr |= add(h, DEF_FLIGHT, "TURB ENG N1:4", "Percent", SC_DATATYPE_FLOAT64);
 
-    /* 机型/尾号/涂装：字符串必须显式给 STRING256（不同长度会错位） */
-    hr |= add(h, DEF_FLIGHT, "TITLE",       "NULL", SC_DATATYPE_STRING256);
-    hr |= add(h, DEF_FLIGHT, "ATC ID",      "NULL", SC_DATATYPE_STRING32);
-    hr |= add(h, DEF_FLIGHT, "ATC AIRLINE", "NULL", SC_DATATYPE_STRING32);
-    hr |= add(h, DEF_FLIGHT, "ATC MODEL",   "NULL", SC_DATATYPE_STRING32);
+    /* 机型/尾号/涂装：字符串必须显式给 STRING256（不同长度会错位）。
+     * units 参数：字符串 SimVar **不能传 "NULL" 字符串**——实测 MSFS 2020
+     * 真机会抛 NAME_UNRECOGNIZED（官方论坛同例确认），必须传**空串**。
+     * 数值字段尺寸不受影响（SimConnect 按变量自身类型返回），但字符串
+     * 一旦被拒整个定义的包体就少 352 字节，主遥测直接解析失败。 */
+    hr |= add(h, DEF_FLIGHT, "TITLE",       "", SC_DATATYPE_STRING256);
+    hr |= add(h, DEF_FLIGHT, "ATC ID",      "", SC_DATATYPE_STRING32);
+    hr |= add(h, DEF_FLIGHT, "ATC AIRLINE", "", SC_DATATYPE_STRING32);
+    hr |= add(h, DEF_FLIGHT, "ATC MODEL",   "", SC_DATATYPE_STRING32);
 
     hr |= add(h, DEF_FLIGHT, "BRAKE PARKING POSITION", "Bool", SC_DATATYPE_INT32);
 
@@ -383,8 +387,8 @@ int datadefs_register_aux(void) {
     HRESULT hr = S_OK;
 
     if (!h) return -1;
-    hr |= add(h, DEF_FLIGHT_AUX, "ATC FLIGHT NUMBER", "NULL",
-              SC_DATATYPE_STRING32);
+    hr |= add(h, DEF_FLIGHT_AUX, "ATC FLIGHT NUMBER", "",
+              SC_DATATYPE_STRING32);   /* 字符串 units 必须为空串（见上） */
     hr |= add(h, DEF_FLIGHT_AUX, "COM RECEIVE:1", "Bool", SC_DATATYPE_INT32);
     hr |= add(h, DEF_FLIGHT_AUX, "COM RECEIVE:2", "Bool", SC_DATATYPE_INT32);
     hr |= add(h, DEF_FLIGHT_AUX, "COM RECEIVE:3", "Bool", SC_DATATYPE_INT32);
@@ -416,8 +420,8 @@ int datadefs_register_aux(void) {
 int datadefs_register_ai_atcid(void) {
     HRESULT hr;
     if (!g_sc_handle) return -1;
-    hr = add(g_sc_handle, DEF_AI_ATCID, "ATC ID", "NULL",
-             SC_DATATYPE_STRING32);
+    hr = add(g_sc_handle, DEF_AI_ATCID, "ATC ID", "",
+             SC_DATATYPE_STRING32);   /* 字符串 units 必须为空串 */
     if (FAILED(hr)) {
         xc_logf("datadefs: ATC ID definition failed hr=0x%08lx",
                 (unsigned long)hr);
