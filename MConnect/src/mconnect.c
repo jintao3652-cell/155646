@@ -273,8 +273,16 @@ static void handle_player_list(const Json* root) {
         /* 机型串清洗：他机可能发 "B738/W"、"b738 " 这类脏值 */
         if (p->icao[0]) {
             char clean[16];
+            const char* canon;
             catalog_sanitize_icao(p->icao, clean, sizeof(clean));
-            snprintf(p->icao, sizeof(p->icao), "%s", clean);
+            /* 非标码规范化（A350-900→A359）；对端旧版客户端可能上报
+             * "ATCCOM" 这类 ATC 通用值 —— 无法映射时按无机型处理 */
+            canon = catalog_canonical_icao(clean);
+            if (canon) snprintf(p->icao, sizeof(p->icao), "%s", canon);
+            else if ((clean[0] | 0x20) == 'a' && (clean[1] | 0x20) == 't' &&
+                     (clean[2] | 0x20) == 'c')
+                p->icao[0] = '\0';   /* ATCCOM/ATCPVT 等 ATC 通用值 */
+            else snprintf(p->icao, sizeof(p->icao), "%s", clean);
         }
 
         p->last_seen = now;
@@ -478,6 +486,9 @@ static void CALLBACK dispatch_proc(SC_RECV* pData, DWORD cbData, void* ctx) {
 
     case SC_RECV_ID_EXCEPTION: {
         const SC_RECV_EXCEPTION* e = (const SC_RECV_EXCEPTION*)pData;
+        /* UNRECOGNIZED_ID 风暴检测：AI 对象被模拟器回收后 50Hz 写全部
+         * 异步报此异常（同步 hr S_OK），players 里按速率判定并重建。 */
+        players_on_sc_exception(e->dwException);
         /* 常见有意义的几个：SIZE_MISMATCH(2) / UNRECOGNIZED_ID(3) /
          * CREATE_OBJECT_FAILED(0x16) / NAME_UNRECOGNIZED(7) */
         static const char* kExcNames[] = {

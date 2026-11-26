@@ -24,6 +24,35 @@ DWORD players_next_request_id(void) {
 static int g_skip_catalog_wait = 0;
 void players_set_probe_mode(int on) { g_skip_catalog_wait = on; }
 
+/* ---------------- UNRECOGNIZED_ID 风暴检测 ----------------
+ *
+ * AI 对象被模拟器单方面回收（Generic 静态机会被 AI 系统自动清理）后，
+ * 50Hz 的位置/部件写每次都**异步**报 UNRECOGNIZED_ID —— 同步 hr 仍是
+ * S_OK，现有的"写失败重建"路径永远不会触发。实测一场 23 分钟会话
+ * 刷了 11.6 万条异常（日志巨量 I/O，对性能也有影响）。
+ * 这里维护 1s 滑动窗口：速率超阈值 → 判定活跃对象已死 → 全部重建
+ * （走正常 FAILED 退避逻辑，不会死循环）。 */
+#define EXC_WIN 32                    /* 滑动窗口槽位数（2 的幂） */
+static double g_exc_ts[EXC_WIN];      /* 最近异常的时间戳 */
+static int    g_exc_idx = 0;
+static double g_exc_last_react = 0.0; /* 上次触发重建的时间（限日志） */
+
+void players_on_sc_exception(unsigned long exc) {
+    if (exc != 3) return;   /* 只关心 UNRECOGNIZED_ID */
+    LOCK_ENTER(g_players_lock);
+    g_exc_ts[g_exc_idx] = xc_now_sec();
+    g_exc_idx = (g_exc_idx + 1) & (EXC_WIN - 1);
+    LOCK_LEAVE(g_players_lock);
+}
+
+/* 返回 now-1s 窗口内的 UNRECOGNIZED_ID 条数（持锁调用）。 */
+static int exc_rate_1s(double now) {
+    int i, n = 0;
+    for (i = 0; i < EXC_WIN; i++)
+        if (now - g_exc_ts[i] < 1.0) n++;
+    return n;
+}
+
 /* ---------------- 平滑插值（与 XConnect 同构） ---------------- */
 
 static double angle_delta(double a, double b) {
@@ -515,6 +544,29 @@ static void ai_write_parts(Player* p, const PositionFix* f) {
 void update_players(double now) {
     int i;
     LOCK_ENTER(g_players_lock);
+
+    /* UNRECOGNIZED_ID 风暴：1s 窗口 >16 条 → 活跃 AI 对象已被模拟器
+     * 删除（写全部异步失败）。把 ACTIVE/PENDING 玩家全部置 FAILED
+     * 触发重建；FAILED 有指数退避（5..60s），不会无限循环。 */
+    if (now - g_exc_last_react > 3.0 && exc_rate_1s(now) > 16) {
+        int n = 0;
+        for (i = 0; i < PLAYER_MAX; i++) {
+            Player* p = &g_players[i];
+            if (!p->active) continue;
+            if (p->state == AI_STATE_ACTIVE || p->state == AI_STATE_PENDING) {
+                p->state = AI_STATE_FAILED;
+                p->retry_at = now + 2.0;
+                p->object_id = 0;
+                n++;
+            }
+        }
+        if (n) {
+            xc_logf("ai: UNRECOGNIZED_ID 风暴（>16/s），疑似 AI 对象被模拟器"
+                    "回收，重建 %d 个玩家对象", n);
+            g_exc_last_react = now;
+        }
+    }
+
     for (i = 0; i < PLAYER_MAX; i++) {
         Player* p = &g_players[i];
         const PositionFix* f;

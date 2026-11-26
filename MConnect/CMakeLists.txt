@@ -88,7 +88,7 @@ mconnect_add_test(control_test
     src/control.c src/inputev.c src/aircraftdb.c src/wasmbridge.c
     src/pmdgbridge.c src/json.c)
 mconnect_add_test(radio_test
-    src/datadefs.c src/aircraftdb.c src/pmdgbridge.c src/wasmbridge.c
+    src/datadefs.c src/catalog.c src/ini.c src/aircraftdb.c src/pmdgbridge.c src/wasmbridge.c
     src/json.c)
 mconnect_add_test(aircraftcaps_test
     src/aircraftcaps.c src/inputev.c src/wasmbridge.c)

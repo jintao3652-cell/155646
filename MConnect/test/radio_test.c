@@ -56,15 +56,8 @@ void xc_infof(const char* fmt, ...) {
 static const char* g_exe = ".";
 const char* xc_exe_dir(void) { return g_exe; }
 
-/* catalog.c 依赖 */
-const char* catalog_icao_for_title(const char* title) { (void)title; return NULL; }
-void catalog_sanitize_icao(const char* raw, char* out, int cap) {
-    int n = 0;
-    out[0] = '\0';
-    if (!raw) return;
-    while (*raw && n < cap - 1) out[n++] = *raw++;
-    out[n] = '\0';
-}
+/* catalog.c 依赖：catalog.c 现已直接链接进来（datadefs 引用
+ * catalog_canonical_icao），不再需要 stub。 */
 
 /* sc.c 依赖（报文里带 sim 字段） */
 const char* sc_sim_name(void) { return "2020"; }

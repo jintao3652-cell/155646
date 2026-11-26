@@ -724,19 +724,44 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
                 g_flight.title);
     }
 
-    /* ICAO 机型：TITLE → 机型目录反查（catalog 里 icao_type_designator）。
-     * 反查失败时退化为 ATC MODEL（很多机型在这里直接给 "A20N"/"B738"）。 */
-    if (!g_icao[0] || strncmp(g_icao, "?", 1) == 0) {
-        const char* by_title = catalog_icao_for_title(g_flight.title);
-        if (by_title && by_title[0]) {
-            snprintf(g_icao, sizeof(g_icao), "%s", by_title);
-        } else if (g_flight.atc_model[0]) {
-            catalog_sanitize_icao(g_flight.atc_model, g_icao, sizeof(g_icao));
+    /* ICAO 机型识别，四级来源（逐级回退）：
+     *   1. TITLE → 目录精确反查（catalog 里 icao_type_designator）
+     *   2. TITLE → 关键词猜测（"FenixA320 IAE ..." 连写涂装也能认出 A320）
+     *   3. ATC MODEL（很多机型在这里直接给 "A20N"/"B738"）
+     * 任何来源的结果都要过规范化（A350-900 → A359），并且 ATC MODEL 的
+     * 通用值（"ATCCOM"/"ATCPVT"…，机模没设 icao 时 MSFS 给的占位）不算
+     * 机型 —— 实测 Fenix A320 就返回 ATCCOM，老代码曾直接上报导致
+     * 对端机型/涂装匹配全灭。 */
+    {
+        char canon[24];
+        const char* norm;
+        int have = 0;
+
+        if (g_icao[0] && strncmp(g_icao, "?", 1) != 0) {
+            /* 已识别（本轮 title 未变）——只需保证规范 */
+            snprintf(canon, sizeof(canon), "%s", g_icao);
+            have = 1;
+        } else {
+            const char* by_title = catalog_icao_for_title(g_flight.title);
+            if (by_title && by_title[0]) {
+                snprintf(canon, sizeof(canon), "%s", by_title);
+                have = 1;
+            } else if (g_flight.atc_model[0] &&
+                       strnicmp_chk(g_flight.atc_model, "ATC", 3) != 0) {
+                catalog_sanitize_icao(g_flight.atc_model, canon,
+                                      (int)sizeof(canon));
+                if (canon[0]) have = 1;
+            }
         }
-        if (g_icao[0]) {
-            snprintf(g_flight.icao_type, sizeof(g_flight.icao_type), "%s", g_icao);
-            xc_logf("datadefs: local aircraft title=\"%s\" -> ICAO %s",
-                    g_flight.title, g_icao);
+        if (have) {
+            norm = catalog_canonical_icao(canon);
+            if (!norm) norm = canon;
+            if (strncmp(g_icao, norm, sizeof(g_icao)) != 0) {
+                snprintf(g_icao, sizeof(g_icao), "%s", norm);
+                xc_logf("datadefs: local aircraft title=\"%s\" -> ICAO %s",
+                        g_flight.title, g_icao);
+            }
+            snprintf(g_flight.icao_type, sizeof(g_flight.icao_type), "%s", norm);
         }
     }
 
