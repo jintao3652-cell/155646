@@ -475,6 +475,7 @@ export async function openSettings() {
     host: s.server_host, port: s.server_port,
     xphost: s.xconnect_host, xpport: s.xconnect_port,
     debug: !!s.debug_mode,
+    msfs_labels: !!s.msfs_toggle_labels,
     language: normalizeLocale(s.language),
   }
   store.overlays.set = true
@@ -507,6 +508,7 @@ export async function saveSettings() {
     xconnect_host: store.set.xphost.trim(),
     xconnect_port: parseInt(store.set.xpport, 10),
     debug_mode: store.set.debug,
+    msfs_toggle_labels: !!store.set.msfs_labels,
     language: normalizeLocale(store.set.language),
   }
   store.api.set_debug(d.debug_mode)

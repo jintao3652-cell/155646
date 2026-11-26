@@ -110,6 +110,8 @@ export default {
     pluginPort: '插件端口',
     debugMode: '调试模式（显示插件原始报文）',
     pluginTip: '客户端连接 X-Plane 内的 XConnect 插件（默认 127.0.0.1:51001），插件离线时禁止连线',
+    msfsLabels: 'MSFS 呼号铭牌',
+    msfsLabelsTip: '启动 MConnect 时发送一次"机模标签"开关事件，让 AI 铭牌显示远端呼号（toggle 语义，原本已开则会被关掉）。注意：MSFS 2020 已废弃此事件（无效），需在模拟器 选项→常规选项→交通→显示交通铭牌 手动开关；铭牌位置由模拟器固定绘制，无法贴机身。X-Plane 由 XConnect 自绘标签，无需此开关',
     language: '语言',
     languageTip: '选择界面语言',
     cancel: '取消',

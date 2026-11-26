@@ -110,6 +110,8 @@ export default {
     pluginPort: '外掛連接埠',
     debugMode: '除錯模式（顯示外掛原始封包）',
     pluginTip: '用戶端連接 X-Plane 內的 XConnect 外掛（預設 127.0.0.1:51001），外掛離線時禁止連線',
+    msfsLabels: 'MSFS 呼號銘牌',
+    msfsLabelsTip: '啟動 MConnect 時發送一次「機模標籤」開關事件，讓 AI 銘牌顯示遠端呼號（toggle 語義，原本已開則會被關掉）。注意：MSFS 2020 已棄用此事件（無效），需在模擬器 選項→一般選項→交通→顯示交通銘牌 手動開關；銘牌位置由模擬器固定繪製，無法貼機身。X-Plane 由 XConnect 自繪標籤，無需此開關',
     language: '語言',
     languageTip: '選擇介面語言',
     cancel: '取消',

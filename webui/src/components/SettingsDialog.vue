@@ -35,7 +35,9 @@ const LANGS = [
         <label>{{ t('settings.pluginAddr') }} <el-input v-model="store.set.xphost" size="small" /></label>
         <label>{{ t('settings.pluginPort') }} <el-input v-model="store.set.xpport" size="small" /></label>
         <el-checkbox v-model="store.set.debug">{{ t('settings.debugMode') }}</el-checkbox>
+        <el-checkbox v-model="store.set.msfs_labels">{{ t('settings.msfsLabels') }}</el-checkbox>
         <p class="tip">{{ t('settings.pluginTip') }}</p>
+        <p class="tip">{{ t('settings.msfsLabelsTip') }}</p>
       </fieldset>
       <fieldset>
         <legend>{{ t('settings.language') }}</legend>
