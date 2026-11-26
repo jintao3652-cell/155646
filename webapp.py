@@ -92,9 +92,11 @@ class Api:
         if self._cfg.auto_start_mconnect:
             self._bridge.start()
 
-        # XConnect 插件客户端：应用级生命周期，启动即持续监听插件上线
+        # 桥接客户端：应用级生命周期，同时探测 XConnect(51001) 与
+        # MConnect(51002/51003/51004)，XP11/XP12/MSFS20/24 任一在线即可连线
         self._xconnect = XConnectClient(
-            self._cfg.xconnect_host, self._cfg.xconnect_port)
+            self._cfg.xconnect_host, self._cfg.xconnect_port,
+            mconnect_port=self._cfg.mconnect_port)
         self._xconnect.on_log = lambda m: self._push("log", self._tr(m))
         self._xconnect.on_connected = lambda: self._push("xconnect", "connected")
         self._xconnect.on_disconnected = \
@@ -148,6 +150,9 @@ class Api:
                 "connected": bool(xc and xc.connected),
                 "plugin": getattr(xc, "plugin", ""),
                 "plugin_version": getattr(xc, "plugin_version", ""),
+                "sim": getattr(xc, "sim", ""),
+                "active_port": getattr(xc, "active_port", 0),
+                "candidate_ports": list(getattr(xc, "ports", [])),
                 "protocol": getattr(xc, "protocol_version", 0),
                 "capabilities": sorted(getattr(xc, "capabilities", set()) or []),
             }

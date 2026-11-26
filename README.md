@@ -17,10 +17,11 @@
 - 模型匹配应答（PI:GEN / FSIPI），自动请求并记录对方机型
 - 60s 保活（`#TM...:SERVER:ping`），断线自动清理本地 roster
 - VATSIM 风格认证（clientId=55538，MD5 challenge/response，`$ZC`/`$ZR`）
-- **XConnect 插件桥接**：启动即持续监听插件上线；飞行数据 5Hz 经插件传输；
-  在线玩家/管制列表推送给插件 → X-Plane 场景中渲染 CSL 飞机
+- **双桥接自动探测**：启动即同时监听 XConnect(XP) 与 MConnect(MSFS)，
+  **任一在线即可连线**；飞行数据 5Hz 经桥接传输；在线玩家/管制列表推送给
+  插件 → 在模拟器场景中渲染飞机
 
-## 数据源：XConnect 插件
+## 数据源：XConnect 插件（X-Plane 11 / 12）
 
 客户端不再直连 X-Plane UDP，而是连接 X-Plane 内的 **XConnect 插件**
 （TCP 51001，编译/安装见 `XConnect/README.md`）：
@@ -31,8 +32,9 @@
 - **CSL 渲染**：客户端把在线玩家/管制 roster（含位置、姿态、机型 ICAO）
   推送给插件（`Send:OPD:FSD9` / `Send:ATC`），插件用 XPLMInstance 在
   X-Plane 中渲染 CSL 模型并跟随移动
-- **连线规则**：插件未上线时禁止连线 FSD；插件断开（X-Plane 关闭）后
-  自动断开 FSD 连接并复位界面
+- **连线规则**：客户端同时探测 XConnect 与 MConnect 端口，**任一在线即可
+  连线 FSD**（XP11/XP12/MSFS2020/2024 三选一）；所有桥都离线时禁止连线，
+  当前桥断开后自动断开 FSD 并复位界面
 
 协议细节见 `XConnect/PROTOCOL.md`；`tools/xconnect_bridge.py` 为演示客户端。
 
@@ -41,8 +43,9 @@
 `MConnect/` 是同一套协议的 **Microsoft Flight Simulator** 实现，形态为外部
 exe（SimConnect 官方推荐的 out-of-process 方式）：
 
-- **协议完全兼容**：同样监听 `127.0.0.1:51001`，报文格式与 XConnect 一致，
-  客户端只需把 `xconnect_port` 指过来，无需改代码
+- **协议完全兼容**：报文格式与 XConnect 一致，默认监听 `127.0.0.1:51002`
+  （占用时退 51003/51004）。客户端启动即自动探测这些端口，**无需手动改端口**：
+  X-Plane 与 MSFS 可同时开，哪个在线就连哪个（XConnect 优先）
 - **双版本兼容**：`SimConnect.dll` 运行时动态装载，`_EX1` 创建接口与涂装枚举
   按能力探测——2020 走基础版 `AICreateNonATCAircraft`，2024 走 `_EX1` + 涂装，
   同一份 exe 两边都能跑

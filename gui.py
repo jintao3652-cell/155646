@@ -53,9 +53,10 @@ class XflyGui:
         self._build_status()
         root.after(100, self._pump)
 
-        # XConnect 插件客户端：应用级生命周期，启动即持续监听插件上线
+        # 桥接客户端：同时探测 XConnect(51001) 与 MConnect(51002/51003/51004)
         self._xconnect = XConnectClient(
-            self.cfg.xconnect_host, self.cfg.xconnect_port)
+            self.cfg.xconnect_host, self.cfg.xconnect_port,
+            mconnect_port=self.cfg.mconnect_port)
         self._xconnect.on_log = lambda m: self._post("log", m)
         # 未连线也显示飞行数据（连线后由 NetworkModel 接管）
         self._xconnect.on_flight_data = lambda fd: self._post("flight", fd)
@@ -188,8 +189,8 @@ class XflyGui:
 
         if not self._xconnect.connected:
             messagebox.showerror(
-                "拒绝连线", "XConnect 插件未上线（未连接 51001），禁止连线 FSD。\n"
-                           "请确认 X-Plane 已运行且 XConnect 插件已安装。")
+                "拒绝连线", "未发现任何在线模拟机，禁止连线 FSD。\n"
+                           "请确认 X-Plane(XConnect) 或 MSFS(MConnect) 已运行且插件已加载。")
             return
 
         from xfly_client.model import NetworkModel
@@ -303,8 +304,8 @@ class XflyGui:
                        selectcolor=BG2, font=("Segoe UI", 9)
                        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=12)
 
-        tip = tk.Label(win, text="提示: 客户端连接 X-Plane 内的 XConnect 插件\n"
-                                 "（默认 127.0.0.1:51001），插件离线时禁止连线",
+        tip = tk.Label(win, text="提示: 客户端自动探测 XConnect(51001) 与\n"
+                                 "MConnect(51002/51003/51004)，任一在线即可连线",
                        bg=BG, fg="#c9a227", font=("Segoe UI", 8),
                        justify=tk.LEFT)
         tip.grid(row=4, column=0, columnspan=2, sticky="w", padx=12)

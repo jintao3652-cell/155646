@@ -1,7 +1,12 @@
-"""XConnect 插件客户端：TCP JSON 行协议。
+"""桥接客户端（XConnect / MConnect）：TCP JSON 行协议。
 
-连接 X-Plane 内的 XConnect 插件（默认 127.0.0.1:51001）：
-- 持续监听插件是否上线：连接失败时周期性重试（RECONNECT_INTERVAL）
+历史上本类只连 X-Plane 的 XConnect（127.0.0.1:51001）。现在 MSFS 侧的
+MConnect 用完全相同的协议（默认 51002，占用时退 51003/51004），因此本类
+升级为**多端点自动探测**：
+
+- 按候选端口列表逐个尝试连接，任一桥在线即视为"模拟机在线"（connected=True）
+- 覆盖了 XP11/XP12（XConnect）与 MSFS2020/2024（MConnect）三类模拟器
+- 连接断开后回到候选列表重新探测，可在 XP / MSFS 之间无缝切换
 - 接收插件推送的 flight_data（本机飞行数据，5Hz）
 - 向插件推送在线玩家/管制列表 → 插件渲染 CSL 模型
 
@@ -21,8 +26,26 @@ from ..version import BRIDGE_PROTOCOL, CLIENT_NAME, CLIENT_VERSION
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 51001
+# MConnect 默认 51002，占用时依次退 51003/51004（见 MConnect/src/mconnect.c）
+MCONNECT_FALLBACK_PORTS = (51002, 51003, 51004)
 RECONNECT_INTERVAL = 3.0
+# 多端点探测时单个端口的连接超时，避免某一端口无响应拖垮整轮扫描
+PROBE_CONNECT_TIMEOUT = 1.5
 RX_LINE_LIMIT = 1 << 16
+
+
+def build_bridge_ports(xconnect_port: int = DEFAULT_PORT,
+                       mconnect_port: int = MCONNECT_FALLBACK_PORTS[0]) -> list[int]:
+    """构造桥接候选端口列表：XConnect 优先，随后 MConnect 及其退避端口。
+
+    X-Plane 的 XConnect 独占 51001，MSFS 的 MConnect 用 51002（占用时退
+    51003/51004）。三个模拟器任一在线都能被探测到。去重且保持顺序稳定。
+    """
+    ports: list[int] = []
+    for p in (xconnect_port, mconnect_port, *MCONNECT_FALLBACK_PORTS):
+        if p not in ports:
+            ports.append(p)
+    return ports
 
 
 @dataclass
@@ -145,9 +168,17 @@ _CAP_BITS = {
 
 
 class XConnectClient:
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
+                 ports: Optional[list[int]] = None,
+                 mconnect_port: int = MCONNECT_FALLBACK_PORTS[0]) -> None:
         self.host = host
-        self.port = port
+        self._mconnect_port = int(mconnect_port)
+        # 候选端口：XConnect 优先，随后 MConnect 及退避端口。
+        # 显式传 ports 时以其为准（工具/测试用），否则由 port + mconnect_port 构造。
+        self.ports: list[int] = (
+            list(dict.fromkeys(int(p) for p in ports)) if ports is not None
+            else build_bridge_ports(int(port), self._mconnect_port))
+        self.active_port = 0          # 当前实际连上的端口（0=未连接）
         self._sock: Optional[socket.socket] = None
         self._stop = threading.Event()
         self._tx_lock = threading.Lock()
@@ -158,6 +189,7 @@ class XConnectClient:
         self.protocol_version = 0
         self.plugin = ""
         self.plugin_version = ""
+        self.sim = ""                 # "xplane" / "msfs"
         self.capabilities: set[str] = set()
         self.handshake_ok = False
         self.on_handshake: Optional[Callable[[dict], None]] = None
@@ -243,8 +275,17 @@ class XConnectClient:
         return "standard"
 
     @property
+    def port(self) -> int:
+        """首选端口（兼容旧调用方读取/设置）；设置时重建候选列表。"""
+        return self.ports[0] if self.ports else DEFAULT_PORT
+
+    @port.setter
+    def port(self, value: int) -> None:
+        self.ports = build_bridge_ports(int(value), self._mconnect_port)
+
+    @property
     def connected(self) -> bool:
-        """插件是否在线（TCP 连接已建立）。"""
+        """任一桥接（XConnect/MConnect）在线（TCP 连接已建立）。"""
         return self._sock is not None
 
     # ---------- 生命周期 ----------
@@ -265,25 +306,39 @@ class XConnectClient:
             self._rx_thread.join(timeout=2.0)
         self._rx_thread = None
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
+    def _connect_any(self) -> tuple[Optional[socket.socket], int]:
+        """按候选端口顺序探测，返回首个连上的 (socket, port)。"""
+        for port in self.ports:
+            if self._stop.is_set():
+                return None, 0
             try:
                 sock = socket.create_connection(
-                    (self.host, self.port), timeout=4.0)
+                    (self.host, port), timeout=PROBE_CONNECT_TIMEOUT)
+                return sock, port
             except OSError:
+                continue
+        return None, 0
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            sock, port = self._connect_any()
+            if sock is None:
                 if not self._ever_connected:
-                    self._log("[xconnect] 未发现模拟机")
+                    self._log("[xconnect] 未发现模拟机"
+                              f"（已探测端口 {', '.join(map(str, self.ports))}）")
                 self._stop.wait(RECONNECT_INTERVAL)
                 continue
             self._ever_connected = True
             sock.settimeout(1.0)
             self._sock = sock
+            self.active_port = port
             self.handshake_ok = False
             self.plugin = ""
             self.plugin_version = ""
+            self.sim = ""
             self.protocol_version = 0
             self.capabilities = set()
-            self._log("[xconnect] 已发现模拟机")
+            self._log(f"[xconnect] 已发现模拟机（端口 {port}）")
             # Bridge Protocol v1：插件也会主动推 connected，这里再发 hello
             self._send(json.dumps({
                 "type": "hello", "protocol": BRIDGE_PROTOCOL,
@@ -330,6 +385,7 @@ class XConnectClient:
             self.handshake_ok = True
             self.plugin = str(doc.get("plugin") or "")
             self.plugin_version = str(doc.get("version") or "")
+            self.sim = str(doc.get("sim") or "")
             self.capabilities = set(doc.get("capabilities") or [])
             raw_ver = doc.get("version")
             if self.plugin:
@@ -476,6 +532,7 @@ class XConnectClient:
 
     def _close(self) -> None:
         sock, self._sock = self._sock, None
+        self.active_port = 0
         if sock is not None:
             try:
                 sock.close()

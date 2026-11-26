@@ -50,6 +50,8 @@ class AppConfig:
     xconnect_port: int = 51001
     # MSFS 的 MConnect 端口。必须与 X-Plane 错开：两者同时开时 51001 会被
     # X-Plane 占住（实测 X-Plane 12 独占），MConnect 用 51002。
+    # 客户端同时探测 xconnect_port 与本端口（含退避 51003/51004），
+    # XP11/XP12/MSFS2020/2024 任一在线即可连线 FSD。
     mconnect_port: int = 51002
     # 客户端启动时自动拉起 MConnect.exe（无窗口模式）。X-Plane 用户可关掉。
     auto_start_mconnect: bool = True

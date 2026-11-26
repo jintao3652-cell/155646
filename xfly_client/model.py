@@ -195,10 +195,14 @@ class NetworkModel:
 
     # ---------- 生命周期 ----------
 
-    def start_xconnect(self, host: str | None = None, port: int | None = None) -> None:
+    def start_xconnect(self, host: str | None = None, port: int | None = None,
+                       mconnect_port: int | None = None) -> None:
         if host:
             self.xconnect.host = host
+        if mconnect_port:
+            self.xconnect._mconnect_port = int(mconnect_port)
         if port:
+            # port setter 按当前 _mconnect_port 重建候选列表（XConnect+MConnect）
             self.xconnect.port = port
         self.xconnect.start()
 
