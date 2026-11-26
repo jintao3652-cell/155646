@@ -136,6 +136,10 @@ void update_players(double now);
 /* 处理 ASSIGNED_OBJECT_ID（创建成功回包）。 */
 void players_on_assigned_object(DWORD request_id, DWORD object_id);
 
+/* SimConnect 异步异常回调（UNRECOGNIZED_ID 风暴检测入口）。
+ * 在 SimConnect 派发线程调用，非阻塞。 */
+void players_on_sc_exception(unsigned long exc);
+
 /* 移除全部 AI 对象（断开连接/退出时）。 */
 void players_remove_all(void);
 

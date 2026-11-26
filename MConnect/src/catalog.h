@@ -59,8 +59,17 @@ int  catalog_builtin_count(void);
 void catalog_match(const char* icao, const char* airline, const char* reg,
                    CatalogMatch* out);
 
-/* 由本机 TITLE 反查 ICAO（机型识别用）。找不到返回 NULL。 */
+/* 由本机 TITLE 反查 ICAO（机型识别用）。找不到返回 NULL。
+ * 内部顺序：目录精确匹配 → 内置表 → title 关键词猜测（见下）。 */
 const char* catalog_icao_for_title(const char* title);
+
+/* title 关键词机型猜测（子串匹配，处理 FenixA320 这类连写涂装 title）。
+ * 精确反查失败时的兜底，独立暴露便于测试与调用方分级打日志。 */
+const char* catalog_icao_from_title_keywords(const char* title);
+
+/* 非标准机型码 → 标准 ICAO（A350-900→A359 等）。查不到返回 NULL，
+ * 调用者保留原值。上报服务器前必须过一遍。 */
+const char* catalog_canonical_icao(const char* icao);
 
 /* 机型串清洗：仅保留字母数字与 '-'，转大写，2~6 位（ICAO 机型代码格式）。 */
 void catalog_sanitize_icao(const char* raw, char* out, int cap);
