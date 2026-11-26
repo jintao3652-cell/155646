@@ -57,9 +57,16 @@ class AppConfig:
     auto_start_mconnect: bool = True
     # 客户端退出时是否一并终止 MConnect（默认否：保留 SimConnect 会话便于重连）
     mconnect_stop_on_exit: bool = False
-    # MConnect 启动时带 --labels：翻转一次 MSFS 内置"机模标签"。
-    # 标签显示的是 AI 的 ATC ID（MConnect 已写成远端呼号），开启后能看到
-    # 他机呼号。注意 toggle 语义：标签原本已开启时会被关闭。
+    # MConnect 启动时带 --labels：翻转一次 MSFS 内置"交通铭牌"（Traffic
+    # Nameplates）。铭牌显示的是 AI 的 ATC ID（MConnect 已写成远端呼号）。
+    # 注意 toggle 语义：铭牌原本已开启时会被关闭。
+    # 限制（模拟器硬约束，代码无法绕过）：
+    #   1. 铭牌只能整体开/关，位置由模拟器固定绘制（锚在飞机包围球上方一段
+    #      屏幕偏移），做不到贴机身；
+    #   2. TOGGLE_AIRCRAFT_LABELS 事件在 MSFS 2020 已废弃（官方确认无替代），
+    #      2020 上此开关无效，需在 选项→常规选项→交通→显示交通铭牌 手动设置；
+    #   3. 事件只在 MConnect 启动时发一次，改配置后需重启 MConnect。
+    #   4. X-Plane 侧呼号标签由 XConnect 自绘（贴机身），无需此开关。
     msfs_toggle_labels: bool = False
 
     @classmethod

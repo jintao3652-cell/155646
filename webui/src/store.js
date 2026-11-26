@@ -523,7 +523,16 @@ export async function swapCom(com) {
 /* ---------- 设置 ---------- */
 export async function openSettings() {
   const s = await store.api.get_settings()
-  applySettings(s)
+  store.set = {
+    real_name: s.real_name, cid: s.cid, password: s.password,
+    remember: !!s.remember_password,
+    callsign: s.callsign, airline: s.airline_icao,
+    host: s.server_host, port: s.server_port,
+    xphost: s.xconnect_host, xpport: s.xconnect_port,
+    debug: !!s.debug_mode,
+    msfs_labels: !!s.msfs_toggle_labels,
+    language: normalizeLocale(s.language),
+  }
   store.overlays.set = true
 }
 
@@ -554,6 +563,7 @@ export async function saveSettings() {
     xconnect_host: store.set.xconnect_host.trim(),
     xconnect_port: parseInt(store.set.xconnect_port, 10),
     debug_mode: store.set.debug,
+    msfs_toggle_labels: !!store.set.msfs_labels,
     language: normalizeLocale(store.set.language),
   }
   store.api.set_debug(d.debug_mode)

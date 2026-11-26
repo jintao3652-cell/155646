@@ -110,6 +110,8 @@ export default {
     pluginPort: 'Plugin Port',
     debugMode: 'Debug mode (show raw plugin packets)',
     pluginTip: 'Client connects to the XConnect plugin inside X-Plane (default 127.0.0.1:51001); connecting is blocked while the plugin is offline',
+    msfsLabels: 'MSFS callsign nameplates',
+    msfsLabelsTip: 'Sends one "aircraft labels" toggle event when MConnect starts, so AI nameplates show remote callsigns (toggle semantics: turns them off if already on). Note: deprecated and non-functional in MSFS 2020 — toggle manually in Options > General Options > Traffic > Show Traffic Nameplates; nameplate position is drawn by the sim and cannot hug the fuselage. X-Plane uses XConnect-drawn labels and does not need this',
     language: 'Language',
     languageTip: 'Select the interface language',
     cancel: 'Cancel',
