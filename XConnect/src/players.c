@@ -223,12 +223,27 @@ void update_players(double now) {
     double sim_time;
     int i;
     static XPLMDataRef s_sim_time_ref = NULL;
-    if (!s_sim_time_ref)
+    static XPLMDataTypeID s_sim_time_type = xplmType_Unknown;
+    if (!s_sim_time_ref) {
         s_sim_time_ref = XPLMFindDataRef("sim/time/total_running_time_sec");
-    /* sim/time/total_running_time_sec 是 double；GetDataf 会降精度，
-     * 但真正的卡扇根因是部分 CSL 旋转曲线的输入上限仅 0.1s，
-     * 下方按各动画用到的周期归一化。 */
-    sim_time = s_sim_time_ref ? XPLMGetDatad(s_sim_time_ref) : now; 
+        if (s_sim_time_ref) s_sim_time_type = XPLMGetDataRefTypes(s_sim_time_ref);
+    }
+    /* XP12 的 sim/time/total_running_time_sec 实际是 **float**（DataRefs.txt
+     * 确认），旧代码固定用 XPLMGetDatad 读它 → 恒返回 0 → anim[34]=0 →
+     * OBJ 的 ANIM_rotate(...sim/time/total_running_time_sec) 扇叶不转、
+     * 频闪 fmod(0,...) 恒灭。这里按运行时实际类型选 getter。 */
+    if (!s_sim_time_ref) {
+        sim_time = now;
+    } else if (s_sim_time_type & xplmType_Double) {
+        sim_time = XPLMGetDatad(s_sim_time_ref);
+    } else if (s_sim_time_type & xplmType_Float) {
+        sim_time = XPLMGetDataf(s_sim_time_ref);
+    } else if (s_sim_time_type & xplmType_Int) {
+        sim_time = XPLMGetDatai(s_sim_time_ref);
+    } else {
+        sim_time = now;
+    }
+    if (sim_time <= 0.0) sim_time = now;   /* 类型不符/未初始化时兜底 */
     LOCK_ENTER(g_players_lock);
     for (i = 0; i < PLAYER_MAX; i++) {
         Player* p = &g_players[i];

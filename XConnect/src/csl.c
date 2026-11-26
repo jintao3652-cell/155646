@@ -10,6 +10,7 @@
 #include "xconnect.h"   /* xconnect_logf：机型/涂装回退诊断日志 */
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -23,6 +24,7 @@
 #endif
 
 #include "XPLMUtilities.h"
+#include "XPLMDataAccess.h" /* XPLMRegisterDataAccessor / XPLMGetDataRefTypes */
 #include "XPLMGraphics.h"   /* XPLMWorldToLocal / XPLMLocalToWorld（XPLMDrawInfo_t 经 XPLMInstance.h 引入） */
 #include "XPLMScenery.h"    /* XPLMCreateProbe / XPLMProbeTerrainXYZ（地面钳制） */
 
@@ -99,6 +101,80 @@ static const char* kCslDataRefs[CSL_MAX_DATAREFS] = {
 };
 #define CSL_DATAREF_COUNT ((int)(sizeof(kCslDataRefs) / sizeof(kCslDataRefs[0])))
 
+/* ---------------------------------------------------------------------------
+ * libxplanemp/* 自定义 dataref 注册
+ *
+ * XPLMInstance.h 明确要求：OBJ 里用到的自定义 dataref **必须在 XPLMLoadObject
+ * 之前注册**，即使数值是通过 XPLMCreateInstance 的实例 dataref 列表提供的。
+ * 之前插件从未注册这些名字 —— X-Plane 的 DataRefs.txt 里 0 条 libxplanemp ——
+ * 于是 XPLMInstanceSetPosition 传进去的动画值没有任何 ANIM 绑定：机身位置/涂装
+ * 照常显示（走 info 结构体），但起落架/襟翼/灯光/发动机全部不动。这正是
+ * "看得见飞机、部件全不显示"的根因。
+ *
+ * 每个 dataref 给一个独立的 float 存储槽：X-Plane 会读这些 accessor（部分
+ * 版本在实例之外也解析 OBJ），读写都落到槽里；实例数据仍由 SetPosition 覆盖。
+ * ------------------------------------------------------------------------- */
+static XPLMDataRef g_csl_owned_refs[CSL_MAX_DATAREFS];  /* 本插件注册的句柄 */
+static int         g_csl_owned_count = 0;
+static float       g_csl_dref_slots[CSL_MAX_DATAREFS];
+
+static float csl_dref_get_f(void* refcon) {
+    int idx = (int)(intptr_t)refcon;
+    return (idx >= 0 && idx < CSL_MAX_DATAREFS) ? g_csl_dref_slots[idx] : 0.0f;
+}
+static void csl_dref_set_f(void* refcon, float value) {
+    int idx = (int)(intptr_t)refcon;
+    if (idx >= 0 && idx < CSL_MAX_DATAREFS) g_csl_dref_slots[idx] = value;
+}
+
+/* 在 csl_init() 里调用：必须早于任何 XPLMLoadObject。 */
+static void csl_register_datarefs(void) {
+    int i;
+    memset(g_csl_owned_refs, 0, sizeof(g_csl_owned_refs));
+    memset(g_csl_dref_slots, 0, sizeof(g_csl_dref_slots));
+    g_csl_owned_count = 0;
+    for (i = 0; i < CSL_DATAREF_COUNT; ++i) {
+        const char* name = kCslDataRefs[i];
+        XPLMDataRef existing;
+        XPLMDataRef ref;
+        if (!name) continue;
+        /* sim/time/* 是 X-Plane 内建，不能也不需要注册 */
+        if (strncmp(name, "libxplanemp/", 12) != 0) continue;
+        /* 已存在（例如 XPMP2 已注册）就复用，绝对不要重复注册同名 dataref */
+        existing = XPLMFindDataRef(name);
+        if (existing) continue;
+        ref = XPLMRegisterDataAccessor(
+                  name, xplmType_Float, 1,
+                  NULL, NULL,                       /* int    */
+                  csl_dref_get_f, csl_dref_set_f,   /* float  */
+                  NULL, NULL,                       /* double */
+                  NULL, NULL, NULL, NULL,           /* int/float arrays */
+                  NULL, NULL,                       /* binary data */
+                  (void*)(intptr_t)i,               /* read refcon  = 槽下标 */
+                  (void*)(intptr_t)i);              /* write refcon */
+        if (ref) {
+            g_csl_owned_refs[i] = ref;
+            ++g_csl_owned_count;
+        } else {
+            xconnect_logf("csl: [!] register dataref FAILED: %s", name);
+        }
+    }
+    xconnect_logf("csl: registered %d/%d libxplanemp datarefs "
+                  "(must precede any XPLMLoadObject)",
+                  g_csl_owned_count, CSL_DATAREF_COUNT);
+}
+
+static void csl_unregister_datarefs(void) {
+    int i;
+    for (i = 0; i < CSL_DATAREF_COUNT; ++i) {
+        if (g_csl_owned_refs[i]) {
+            XPLMUnregisterDataAccessor(g_csl_owned_refs[i]);
+            g_csl_owned_refs[i] = NULL;
+        }
+    }
+    g_csl_owned_count = 0;
+}
+
 static char g_csl_rel[1024] = "";   /* 相对 X-System 根（XPLMLoadObject 用） */
 static char g_csl_abs[1024] = "";   /* 绝对路径（存在性检查用） */
 
@@ -111,6 +187,9 @@ int csl_dataref_count(void) {
 void csl_init(void) {
     char sys[1024];
     const char* sep = XPLMGetDirectorySeparator();
+    /* 第一件事：注册 OBJ 动画依赖的自定义 dataref。必须在任何
+     * XPLMLoadObject 之前完成，否则实例动画不会绑定（SDK 硬性要求）。 */
+    csl_register_datarefs();
     snprintf(g_csl_rel, sizeof(g_csl_rel),
              "Resources%splugins%sXConnect%sCSL", sep, sep, sep);
     XPLMGetSystemPath(sys);   /* SDK 430: void XPLMGetSystemPath(char*) */
@@ -122,6 +201,7 @@ void csl_shutdown(void) {
         XPLMDestroyProbe(g_probe);
         g_probe = NULL;
     }
+    csl_unregister_datarefs();
 }
 
 static int path_exists(const char* absPath) {
