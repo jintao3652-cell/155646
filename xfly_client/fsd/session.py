@@ -366,6 +366,40 @@ class FsdSession:
         except ValueError:
             return None
 
+    @staticmethod
+    def _acfg_swift_shape(cfg: dict) -> dict:
+        """engines 嵌入 config.aircraft.engines（swift 的 ACC 形状）。
+
+        swift 的 CAircraftConfiguration::toJson() 把含引擎状态的
+        CAircraftModel::toJson() 放在 "aircraft" 键下，服务器
+        （api.xflysim.com）只从 aircraft.engines 读引擎状态——实测
+        swift 客户端 engines 全部入库，而 config 顶层 engines 被忽略
+        （站点 JSON engines=null）。顶层副本保留：自家客户端 roster
+        解析认的是顶层。"""
+        out = dict(cfg)
+        eng = out.get("engines")
+        if isinstance(eng, dict) and eng:
+            ac = dict(out.get("aircraft") or {})
+            ac["engines"] = eng
+            out["aircraft"] = ac
+        return out
+
+    @staticmethod
+    def _flatten_swift_acfg(cfg: dict) -> dict:
+        """swift 形状 → 内部扁平形状（接收侧）。
+
+        swift 客户端的 engines 嵌在 config.aircraft.engines、襟翼键是
+        flapsDown（0..100 百分比）；内部用顶层 engines / flaps_pct。
+        灯光的裸键名（beacon/landing…）由 AircraftParts 别名表处理，
+        这里不重复。不修改入参。"""
+        out = dict(cfg)
+        ac = out.get("aircraft")
+        if isinstance(ac, dict) and "engines" in ac and "engines" not in out:
+            out["engines"] = ac["engines"]
+        if "flaps_pct" not in out and "flapsDown" in out:
+            out["flaps_pct"] = out["flapsDown"]
+        return out
+
     def notify_aircraft_parts(self, parts: Optional[dict]) -> None:
         """飞行数据中的机模部件变化 → 增量 ACC 上报（$CQ:@94836）。
 
@@ -382,7 +416,8 @@ class FsdSession:
         diff = {k: v for k, v in norm.items() if prev.get(k) != v}
         if not diff:
             return
-        payload = self._acfg_dump({"config": diff})
+        payload = self._acfg_dump(
+            {"config": self._acfg_swift_shape(diff)})
         if payload is None:
             return
         # 第 ② 级诊断：组装后的 ACC JSON（与插件 raw/anim 日志对照）
@@ -397,7 +432,8 @@ class FsdSession:
             return
         full = dict(self._acfg_full)
         full["is_full_data"] = True
-        payload = self._acfg_dump({"config": full})
+        payload = self._acfg_dump(
+            {"config": self._acfg_swift_shape(full)})
         if payload is None:
             return
         self._send(pk.aircraft_config(self.callsign, to, payload))
@@ -493,7 +529,8 @@ class FsdSession:
         elif isinstance(obj, dict) and self.on_aircraft_config_received:
             cfg = obj.get("config", obj)
             if isinstance(cfg, dict):
-                self.on_aircraft_config_received(sender, cfg)
+                self.on_aircraft_config_received(
+                    sender, self._flatten_swift_acfg(cfg))
 
     def _maybe_disable_unsupported(self, code: int) -> bool:
         """004 Syntax error 与最近发送的 ^ / VI 相关联 → 关闭对应报文。
@@ -591,7 +628,8 @@ class FsdSession:
             return
         full = dict(self._acfg_full)
         full["is_full_data"] = True       # 重播必须整块覆盖，不能当增量
-        payload = self._acfg_dump({"config": full})
+        payload = self._acfg_dump(
+            {"config": self._acfg_swift_shape(full)})
         if payload is None:
             return
         self._send(pk.aircraft_config(self.callsign, ACFG_BROADCAST_TO, payload))

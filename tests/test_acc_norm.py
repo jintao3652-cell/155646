@@ -35,6 +35,54 @@ class TestAccNorm(unittest.TestCase):
         FsdSession._norm_parts(raw)
         self.assertEqual(raw, {"lights": {"beacon_on": 1}})
 
+    def test_swift_shape_nests_engines(self):
+        """engines 必须嵌进 config.aircraft.engines（服务器只认 swift 形状）。
+
+        实测 api.xflysim.com：swift 客户端 engines 全部入库，顶层 engines
+        被忽略（站点 JSON engines=null）。顶层副本保留给自家客户端 roster。"""
+        cfg = {
+            "lights": {"beacon_on": True},
+            "engines": {"1": {"on": True}, "2": {"on": False}},
+            "gear_down": True,
+        }
+        out = FsdSession._acfg_swift_shape(cfg)
+
+        self.assertEqual(out["aircraft"]["engines"],
+                         {"1": {"on": True}, "2": {"on": False}})
+        self.assertEqual(out["engines"],
+                         {"1": {"on": True}, "2": {"on": False}})
+
+        # 原字典不被修改（send 端在 diff 之后才做形状变换）
+        self.assertNotIn("aircraft", cfg)
+
+        # 无引擎时不产生空 aircraft 对象（避免覆盖服务器的机型字段）
+        empty = FsdSession._acfg_swift_shape({"lights": {"beacon_on": True}})
+        self.assertNotIn("aircraft", empty)
+
+    def test_flatten_swift_acfg(self):
+        """接收侧：swift 客户端的嵌套 engines / flapsDown 归一化为内部形状。"""
+        swift_cfg = {
+            "aircraft": {"icaoCode": "A388", "engineCount": 4,
+                         "engines": {"1": {"on": True}, "2": {"on": True},
+                                     "3": {"on": True}, "4": {"on": True}}},
+            "flapsDown": 15,
+            "gearDown": False,
+            "lights": {"beacon": True, "nav": True},
+        }
+        out = FsdSession._flatten_swift_acfg(swift_cfg)
+
+        self.assertEqual(out["engines"]["4"]["on"], True)
+        self.assertEqual(out["flaps_pct"], 15)
+        self.assertEqual(out["gearDown"], False)   # 别名由 from_raw 处理
+
+        # 入参不被修改；顶层 engines 优先（自家客户端形状）
+        self.assertNotIn("engines", swift_cfg)
+        both = FsdSession._flatten_swift_acfg({
+            "engines": {"1": {"on": False}},
+            "aircraft": {"engines": {"1": {"on": True}}},
+        })
+        self.assertIs(both["engines"]["1"]["on"], False)
+
     def test_throttle_ratio_in_acc(self):
         """油门进 ACC（功能对等）：归一化后带 5% 量化值，随增量上报。"""
         raw = {

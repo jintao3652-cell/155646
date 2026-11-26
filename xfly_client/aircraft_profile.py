@@ -240,7 +240,9 @@ class AircraftParts:
             except (TypeError, ValueError):
                 pass
 
-        flaps = raw.get("flaps_pct", raw.get("flapsPercent"))
+        flaps = raw.get("flaps_pct")
+        if flaps is None:
+            flaps = raw.get("flapsPercent", raw.get("flapsDown"))
         if flaps is None and "flaps_ratio" in raw:
             try:
                 flaps = float(raw["flaps_ratio"]) * 100.0
