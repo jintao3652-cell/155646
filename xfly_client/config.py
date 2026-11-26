@@ -51,6 +51,10 @@ class AppConfig:
     # MSFS 的 MConnect 端口。必须与 X-Plane 错开：两者同时开时 51001 会被
     # X-Plane 占住（实测 X-Plane 12 独占），MConnect 用 51002。
     mconnect_port: int = 51002
+    # 客户端启动时自动拉起 MConnect.exe（无窗口模式）。X-Plane 用户可关掉。
+    auto_start_mconnect: bool = True
+    # 客户端退出时是否一并终止 MConnect（默认否：保留 SimConnect 会话便于重连）
+    mconnect_stop_on_exit: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "AppConfig":

@@ -14,6 +14,7 @@ X-Plane 设置：设置 → 数据输出 → 开启 UDP 协议（X-Plane 默认�
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 
@@ -247,8 +248,19 @@ def main(argv: list[str] | None = None) -> int:
         if arg:
             setattr(cfg, attr, arg)
 
-    app = CliApp(cfg, SIM_TYPES[args.sim])
-    app.run()
+    bridge = None
+    if cfg.auto_start_mconnect:
+        from xfly_client.bridge_launcher import BridgeLauncher
+        bridge = BridgeLauncher(
+            os.path.dirname(os.path.abspath(__file__)),
+            on_log=lambda m: print(f"[bridge] {m}"))
+        bridge.start()
+    try:
+        app = CliApp(cfg, SIM_TYPES[args.sim])
+        app.run()
+    finally:
+        if bridge is not None and cfg.mconnect_stop_on_exit:
+            bridge.stop()
     return 0
 
 

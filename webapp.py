@@ -20,6 +20,7 @@ from typing import Optional
 import webview
 
 from xfly_client import aircraft_db
+from xfly_client.bridge_launcher import BridgeLauncher
 from xfly_client.config import AppConfig, load_config, save_config
 from xfly_client.diagnostics import collect as collect_diagnostics
 from xfly_client.diagnostics import export as export_diagnostics_file
@@ -83,6 +84,13 @@ class Api:
         # 最近一次插件上报的机型名 / 引擎数（connect() 兜底推断用）
         self._last_ac_name: str = ""
         self._last_eng: int = 0
+
+        # MConnect 自动启动（无窗口；仅当 exe 存在且未运行时拉起）
+        self._bridge = BridgeLauncher(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            on_log=lambda m: self._push("log", self._tr(m)))
+        if self._cfg.auto_start_mconnect:
+            self._bridge.start()
 
         # XConnect 插件客户端：应用级生命周期，启动即持续监听插件上线
         self._xconnect = XConnectClient(
@@ -585,6 +593,8 @@ class Api:
         if model is not None:
             model.shutdown()
         self._xconnect.stop()
+        if self._cfg.mconnect_stop_on_exit:
+            self._bridge.stop()
 
 
 def _find_windows_by_pid(pid: int) -> list:

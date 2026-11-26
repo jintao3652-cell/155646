@@ -183,9 +183,16 @@ SimBrief 计划映射（68 项断言，纯离线，不联网）。
   "server_host": "ol.xflysim.com",
   "server_port": 6809,
   "xconnect_host": "127.0.0.1",
-  "xconnect_port": 51001
+  "xconnect_port": 51001,
+  "auto_start_mconnect": true,
+  "mconnect_stop_on_exit": false
 }
 ```
+
+`auto_start_mconnect`（默认 `true`）：客户端启动时自动拉起无窗口的
+`MConnect.exe`（MSFS 桥接），已运行则复用、不重复启动；X-Plane 用户可设为
+`false`。`mconnect_stop_on_exit`（默认 `false`）：退出客户端时是否关闭插件，
+默认保留以便下次快速重连。诊断请用 `MConnectConsole.exe`（见 `MConnect/README.md`）。
 
 ## 协议要点（与 C# 版一致）
 

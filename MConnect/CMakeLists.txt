@@ -49,10 +49,21 @@ endfunction()
 
 # ---------------- 主程序 ----------------
 
-add_executable(MConnect ${MCONNECT_SOURCES})
+# 默认产物 MConnect.exe 用 GUI 子系统（WIN32 关键字 → /SUBSYSTEM:WINDOWS），
+# 双击/随客户端启动时不再弹黑色控制台窗口。日志照常写入 exe 同目录的
+# mconnect.log（xc_logf/xc_infof 都落盘），因此无窗口不影响排查。
+# 另编一个 MConnectConsole.exe（控制台子系统），供 --help / --dump-* /
+# --scan-only 等需要直接看 stdout 的诊断场景使用，源码完全相同。
+add_executable(MConnect WIN32 ${MCONNECT_SOURCES})
 target_include_directories(MConnect PRIVATE src)
 target_link_libraries(MConnect PRIVATE ws2_32 advapi32)
+target_compile_definitions(MConnect PRIVATE MCONNECT_GUI)
 mconnect_output_to_build_root(MConnect)
+
+add_executable(MConnectConsole ${MCONNECT_SOURCES})
+target_include_directories(MConnectConsole PRIVATE src)
+target_link_libraries(MConnectConsole PRIVATE ws2_32 advapi32)
+mconnect_output_to_build_root(MConnectConsole)
 
 # ---------------- 单元测试（不需要模拟器 / SimConnect.dll）----------------
 # 每个测试自带必要的桩（g_sc、xc_logf 等），只链接被测模块。

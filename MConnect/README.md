@@ -94,11 +94,22 @@ cmake --build build --config Release
 ## 使用
 
 1. 先启动 MSFS 2020/2024，进入主菜单或载入飞行
-2. 运行 `MConnect.exe`
-3. 启动 XFlySim-Client，把 `xconnect_port` 指向 MConnect 实际监听的端口
+2. **XFlySim-Client 会自动拉起 `MConnect.exe`**（无窗口模式，默认开启）
+   —— 不需要手动运行。X-Plane 用户可在配置里关掉 `auto_start_mconnect`
+3. 把 `xconnect_port` 指向 MConnect 实际监听的端口（51002/51003/51004，
+   看 `mconnect.log` 首行）
+
+### 两个可执行文件
+
+| 文件 | 子系统 | 用途 |
+|---|---|---|
+| `MConnect.exe` | **GUI（无控制台窗口）** | 日常运行，随客户端自动启动；日志写入同目录 `mconnect.log` |
+| `MConnectConsole.exe` | Console（有窗口） | 诊断专用：`--help` / `--scan-only` / `--dump-*` / `--parts-probe` 需看到 stdout 时用 |
+
+无窗口版本带 `--help` 等诊断参数时会在 `mconnect.log` 里提示改用 Console 版。
 
 ```
-MConnect.exe [选项]
+MConnectConsole.exe [选项]
 
   --port <n>         TCP 监听端口（默认 51002；占用时自动换 51003/51004）
   --scan <dir>       只用指定目录作为机型目录

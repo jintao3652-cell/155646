@@ -123,6 +123,20 @@ make SDK=SDK
 
 > CSL 模型包可从 fly.vatsim.net / X-CSL 分发获取（自由使用协议因包而异）。
 
+**单独一个 `XConnect.xpl` 即可工作**：数据收发（读本机 dataref → 发
+`flight_data`，收 `Send:OPD:FSD9` → 驱动 CSL）不依赖 CSL 包或 `radio.json`
+——两者都可选：无 CSL 时他机回退白色 `ZZZZ` 通用机，无 `radio.json` 时用
+通用 dataref。`.xpl` 是 x64 DLL，静态链接 CRT，只依赖 XP 自带的
+`XPLM_64.dll` 与 Windows 系统 DLL，无需额外运行库。
+
+验证工具：
+
+```bash
+python tools/xconnect_selftest.py          # 离线：PE 依赖 + 双向协议回环
+python tools/xconnect_check.py             # 真机：连插件读 10 秒 flight_data
+python tools/xconnect_selftest.py --live   # 离线检查 + 真机验证
+```
+
 ## 客户端配合
 
 插件启动后等待客户端连接。客户端需要：

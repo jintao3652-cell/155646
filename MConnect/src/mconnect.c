@@ -675,8 +675,32 @@ int main(int argc, char** argv) {
     int dump_profiles = 0;
     int parts_probe = 0;
 
-    SetConsoleOutputCP(CP_UTF8);
     init_paths();
+
+#ifdef MCONNECT_GUI
+    /* GUI 子系统（无控制台）：stdout 不可见。诊断类参数改从 MConnectConsole.exe
+     * 运行才能看到输出；这里先写日志，避免用户以为命令没生效。 */
+    {
+        int k;
+        int diagnostic = 0;
+        for (k = 1; k < argc; k++) {
+            if (_stricmp(argv[k], "--help") == 0 || _stricmp(argv[k], "-h") == 0 ||
+                _stricmp(argv[k], "--dump-input") == 0 ||
+                _stricmp(argv[k], "--dump-wasm") == 0 ||
+                _stricmp(argv[k], "--dump-profiles") == 0 ||
+                _stricmp(argv[k], "--parts-probe") == 0 ||
+                _stricmp(argv[k], "--scan-only") == 0)
+                diagnostic = 1;
+        }
+        if (diagnostic) {
+            /* init_paths() 已完成，日志路径可用 */
+            xc_logf("提示：本程序为无窗口模式，诊断输出请改用 "
+                    "MConnectConsole.exe（同目录）运行相同参数。");
+        }
+    }
+#else
+    SetConsoleOutputCP(CP_UTF8);
+#endif
 
     /* 参数：--port N / --scan <dir> / --simconnect <dll|dir> / --verbose */
     for (i = 1; i < argc; i++) {
@@ -995,3 +1019,13 @@ int main(int argc, char** argv) {
     xc_logf("==== MConnect end ====");
     return 0;
 }
+
+#ifdef MCONNECT_GUI
+/* GUI 子系统（/SUBSYSTEM:WINDOWS）的 CRT 入口是 WinMain，不是 main。
+ * 这里把命令行原样转给 main，业务逻辑只有一份。 */
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                   LPSTR lpCmdLine, int nCmdShow) {
+    (void)hInstance; (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
+    return main(__argc, __argv);
+}
+#endif
