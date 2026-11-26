@@ -123,6 +123,16 @@ typedef struct {
     char   atc_airline[32];
     char   atc_model[32];
     DWORD  parking_brake;
+    /* IniBuilds A350 外部灯开关 LVar 直读（见 add() 末尾的说明）。
+     * 非 A350 机模这些 LVar 不存在，SimConnect 恒返回 0 —— 由
+     * apply_ini_lights() 按 title/ICAO 判定后才用于覆盖标准灯。 */
+    double ini_beacon;
+    double ini_landing;
+    double ini_logo;
+    double ini_nav;
+    double ini_strobe;
+    double ini_wing;
+    double ini_nose;
 } FlightPkt;
 #pragma pack(pop)
 
@@ -215,6 +225,36 @@ int datadefs_init(void) {
     hr |= add(h, DEF_FLIGHT, "ATC MODEL",   "", SC_DATATYPE_STRING32);
 
     hr |= add(h, DEF_FLIGHT, "BRAKE PARKING POSITION", "Bool", SC_DATATYPE_INT32);
+
+    /* IniBuilds A350 外部灯开关 LVar。
+     *
+     * A350 的灯光系统全部在机模 WASM 内实现，**不写标准 LIGHT SimVar**
+     * （实测 BEACON/LOGO/WING/NAV/STROBE 拨到 ON 后标准 SimVar 仍是 false，
+     * 只有部分灯走标准通道），导致上报的灯光几乎全灭。这里直接读面板
+     * 开关 LVar —— SimConnect 变量名支持 calculator 形式的 L: 读取
+     * （与 MobiFlight 同款做法，无需 WASM 桥）。
+     * 档位语义经 HubHop 全量预置核对：
+     *   BEACON / LANDING / WING: 0=OFF 1=ON（2 态）
+     *   LOGO:   0=OFF 1=AUTO 2=ON
+     *   NAV:    0=OFF 1=NAV2 2=NAV1（1/2 两档导航灯都亮）
+     *   STROBE: 0=OFF 1=AUTO 2=ON（AUTO 空中闪、地面灭）
+     *   NOSE:   0=OFF 1=TAXI 2=T.O.（TO 位起落架灯亮，并入 landing）
+     * LVar 不存在的机模恒返回 0 —— 覆盖只在 title/ICAO 判定为
+     * IniBuilds A350 后进行，见 apply_ini_lights()。 */
+    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_BEACON, number)",  "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_LANDING, number)", "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_LOGO, number)",    "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_NAV, number)",     "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_STROBE, number)",  "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_WING, number)",    "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_NOSE, number)",    "number",
+              SC_DATATYPE_FLOAT64);
 
     if (FAILED(hr)) {
         xc_logf("datadefs: AddToDataDefinition failed hr=0x%08lx",
@@ -469,6 +509,78 @@ static int mhz_to_mhz1000(double mhz) {
     return (int)(mhz * 1000.0 + 0.5);
 }
 
+/* A350 灯开关 LVar 暂存（DEF_FLIGHT 每帧更新，apply_ini_lights 消费）。
+ * 顺序：0=BEACON 1=LANDING 2=LOGO 3=NAV 4=STROBE 5=WING 6=NOSE */
+static double g_ini_lt[7];
+
+/* IniBuilds A350 外部灯覆盖。
+ *
+ * A350 的外部灯开关（EXT LT 面板）只驱动机模私有 LVar，标准 LIGHT
+ * SimVar 大多不更新 —— 默认机/其它机模读标准 SimVar 是对的，A350 会
+ * 把几乎全部灯报成 false（用户实测：BEACON/WING/LOGO/NAV/STROBE 全
+ * 开，上报仍全 false）。title 含 "iniBuilds" 且 ICAO 为 A35 系
+ * （A359/A35K/A35F）时改用 LVar 覆盖。
+ *
+ * 条件里 title 匹配在前、ICAO 在后：ICAO 反查失败时（新装涂装目录
+ * 未被 catalog 收录）title 里也带 "A350" 字样，同样生效。
+ *
+ * 档位语义见 datadefs_init 里 add() 的注释（HubHop 核对）。
+ * AUX 遥测（LIGHT LOGO/WING 走标准 SimVar）到达时会把覆盖结果冲掉，
+ * 因此 AUX 解析分支末尾也要调用本函数。 */
+
+/* 大小写不敏感的定长比较（C 标准库无 strnicmp，自带一个） */
+static int strnicmp_chk(const char* s, const char* lit, int n) {
+    int i;
+    for (i = 0; i < n; i++) {
+        if (!s[i]) return -1;
+        if ((s[i] | 0x20) != (lit[i] | 0x20)) return 1;
+    }
+    return 0;
+}
+
+static void apply_ini_lights(void) {
+    const char* t;
+    int is_ini = 0;
+    int is_a35 = 0;
+    int i;
+
+    t = g_flight.title;
+    if (!t[0]) return;
+    /* title 含 "inibuilds"（大小写不敏感） */
+    for (i = 0; t[i]; i++) {
+        if ((t[i] | 0x20) == 'i' && strnicmp_chk(&t[i], "inibuilds", 9) == 0) {
+            is_ini = 1;
+            break;
+        }
+    }
+    if (!is_ini) return;
+    /* ICAO 前缀 A35，或 title 含 "a350"（大小写不敏感） */
+    if (g_flight.icao_type[0] == 'A' && g_flight.icao_type[1] == '3' &&
+        g_flight.icao_type[2] == '5') {
+        is_a35 = 1;
+    }
+    if (!is_a35) {
+        for (i = 0; t[i]; i++) {
+            if ((t[i] | 0x20) == 'a' && strnicmp_chk(&t[i], "a350", 4) == 0) {
+                is_a35 = 1;
+                break;
+            }
+        }
+    }
+    if (!is_a35) return;
+
+    g_flight.light_beacon  = g_ini_lt[0] > 0.5;
+    g_flight.light_landing = g_ini_lt[1] > 0.5 ||
+                             g_ini_lt[6] > 1.5;   /* NOSE T.O. 位并灯 */
+    g_flight.light_taxi    = g_ini_lt[6] > 0.5;   /* TAXI 与 T.O. 都亮 */
+    g_flight.light_nav     = g_ini_lt[3] > 0.5;
+    g_flight.light_logo    = g_ini_lt[2] > 0.5;
+    g_flight.light_wing    = g_ini_lt[5] > 0.5;
+    /* STROBE：ON 常亮；AUTO 空中闪、地面灭（与实机一致） */
+    g_flight.light_strobe  = g_ini_lt[4] > 1.5 ||
+                             (g_ini_lt[4] > 0.5 && !g_flight.on_ground);
+}
+
 void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     const SC_RECV_SIMOBJECT_DATA* d = (const SC_RECV_SIMOBJECT_DATA*)pkt;
     const FlightPkt* p;
@@ -493,6 +605,8 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
         g_flight.light_recog = a->lt_recog != 0;
         g_flight.light_cabin = a->lt_cabin != 0;
         g_flight.aux_valid = 1;
+        /* AUX 的标准 SimVar 会冲掉 A350 LVar 覆盖结果，补一次覆盖 */
+        apply_ini_lights();
         return;
     }
 
@@ -576,6 +690,14 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     g_flight.light_nav = p->lt_nav != 0;
     g_flight.light_beacon = p->lt_beacon != 0;
     g_flight.light_strobe = p->lt_strobe != 0;
+    /* A350 面板开关 LVar 暂存（覆盖判定在 apply_ini_lights） */
+    g_ini_lt[0] = p->ini_beacon;
+    g_ini_lt[1] = p->ini_landing;
+    g_ini_lt[2] = p->ini_logo;
+    g_ini_lt[3] = p->ini_nav;
+    g_ini_lt[4] = p->ini_strobe;
+    g_ini_lt[5] = p->ini_wing;
+    g_ini_lt[6] = p->ini_nose;
     g_flight.num_engines = (int)p->num_engines;
     if (g_flight.num_engines < 0) g_flight.num_engines = 0;
     if (g_flight.num_engines > 4) g_flight.num_engines = 4;
@@ -617,6 +739,9 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
                     g_flight.title, g_icao);
         }
     }
+
+    /* IniBuilds A350 外部灯 LVar 覆盖（需 ICAO 判定，见函数注释） */
+    apply_ini_lights();
 
     if (!g_flight.valid) {
         g_flight.valid = 1;
@@ -818,6 +943,12 @@ void datadefs_build_flight_json(char* out, int size) {
                     g_flight.light_landing, g_flight.light_taxi,
                     g_flight.light_beacon, g_flight.gear_ratio,
                     flaps_pct, spoilers_out, g_flight.on_ground, en);
+            if (g_flight.title[0] &&
+                strnicmp_chk(g_flight.title, "inibuilds", 9) == 0)
+                xc_logf("raw: INI lt bc=%.0f ldg=%.0f logo=%.0f nav=%.0f "
+                        "str=%.0f wing=%.0f nose=%.0f",
+                        g_ini_lt[0], g_ini_lt[1], g_ini_lt[2], g_ini_lt[3],
+                        g_ini_lt[4], g_ini_lt[5], g_ini_lt[6]);
         }
     }
 
