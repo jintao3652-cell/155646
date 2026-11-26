@@ -125,6 +125,10 @@ typedef enum {
     XCMD_COM_FLIP,     /* 主备互换走 sim/radios/comN_standy_flip 命令 */
     XCMD_AUDIO_TX,     /* 发话通道：sim/audio_panel/transmit_audio_comN */
     XCMD_AUDIO_MON,    /* 收听开关：sim/audio_panel/monitor_audio_comN（toggle） */
+    /* 全收开关（MConnect 的 recv_all 字段互通）：XP 没有"全收"命令，用
+     * audio_selection_com1..3 的当前读数决定对哪几台触发 monitor toggle——
+     * on = 把没在收的台打开，off = 把在收的台关掉。active 字段复用为 on/off。 */
+    XCMD_AUDIO_RECV_ALL,   /* active = 目标开关值（1=全收 0=全关） */
     XCMD_COM_POWER     /* COM 电源：sim/radios/power_comN_on/off */
 } XCmdKind;
 

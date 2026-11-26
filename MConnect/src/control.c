@@ -134,6 +134,12 @@ int control_init(void) {
     ok &= map_event(CEV_COM2_XMIT,     "COM2_TRANSMIT_SELECT");
     ok &= map_event(CEV_COM3_XMIT,     "COM3_TRANSMIT_SELECT");
     ok &= map_event(CEV_COM_RECV_ALL,  "COM_RECEIVE_ALL_SET");
+    /* 收听开关（XConnect monitor 字段互通，逐台 toggle） */
+    ok &= map_event(CEV_COM1_RECV,     "COM1_RECEIVE_SELECT");
+    ok &= map_event(CEV_COM2_RECV,     "COM2_RECEIVE_SELECT");
+    ok &= map_event(CEV_COM3_RECV,     "COM3_RECEIVE_SELECT");
+    /* 内置机模标签开关（呼号标签显示，--labels 用；失败只影响该功能） */
+    map_event(CEV_TOGGLE_LABELS,       "TOGGLE_AIRCRAFT_LABELS");
 
     g_evt_ready = ok ? 1 : 0;
     xc_logf("control: event mapping %s", ok ? "ok" : "PARTIAL (see above)");
@@ -633,6 +639,14 @@ static int exec_command(const Command* c) {
         data = c->on ? 1 : 0;
         break;
 
+    case CMD_COM_RECV:
+        /* 收听开关 toggle（XP monitor 语义）：按一次切一次，
+         * 状态回读靠 flight_data 的 audio_sel_comN（COM RECEIVE:n）。 */
+        evid = (c->com_index == 2) ? CEV_COM2_RECV
+             : (c->com_index == 3) ? CEV_COM3_RECV : CEV_COM1_RECV;
+        data = 0;
+        break;
+
     case CMD_XPNDR_CODE:
         evid = CEV_XPNDR_SET;
         data = squawk_to_bcd(c->code);
@@ -721,6 +735,22 @@ unsigned control_profile_caps(void) {
     return p ? p->caps : 0u;
 }
 
+int control_toggle_aircraft_labels(void) {
+    if (!g_evt_ready || !g_sc.TransmitClientEvent) return 0;
+    {
+        HRESULT hr = g_sc.TransmitClientEvent(
+            g_sc_handle, SC_OBJECT_ID_USER, CEV_TOGGLE_LABELS, 0,
+            PRIO_HIGHEST, EVT_FLAG_GROUP_IS_PRIORITY);
+        if (FAILED(hr)) {
+            xc_logf("control: TOGGLE_AIRCRAFT_LABELS failed hr=0x%08lx",
+                    (unsigned long)hr);
+            return 0;
+        }
+    }
+    xc_logf("control: 已翻转 MSFS 内置机模标签（TOGGLE_AIRCRAFT_LABELS）");
+    return 1;
+}
+
 void control_drain(void) {
     Command batch[CMD_QUEUE_MAX];
     int n = 0, i;
@@ -764,8 +794,12 @@ static int jstr2(const Json* obj, const char* key, char* dst, int cap) {
 /* Send:RADIO
  *   {"type":"Send:RADIO","com":1,"active":true,"freq":122800}
  *   {"type":"Send:RADIO","com":1,"swap":true}
- *   {"type":"Send:RADIO","com":2,"xmit":true}     → 选定 COM2 为发射台
- *   {"type":"Send:RADIO","recv_all":true}         → 全收开关
+ *   {"type":"Send:RADIO","com":1,"flip":true}        同上（XConnect 别名）
+ *   {"type":"Send:RADIO","com":1,"tx":true}          切发话通道（XConnect 字段互通）
+ *   {"type":"Send:RADIO","com":1,"xmit":true}        选定 COM2 为发射台
+ *   {"type":"Send:RADIO","com":1,"monitor":true}     收听开关 toggle（XConnect 字段互通）
+ *   {"type":"Send:RADIO","recv_all":true}            全收开关
+ *   {"type":"Send:RADIO","com":1,"power":0}          COM 电源（MSFS 无对应物，忽略）
  * freq 单位 MHz*1000（与 flight_data 的 com*_freq 一致，便于客户端原样回填）。 */
 static void handle_radio(const Json* root) {
     Command c;
@@ -790,6 +824,15 @@ static void handle_radio(const Json* root) {
         return;
     }
 
+    /* 切发话通道（XConnect 的 "tx" 是 toggle 语义；MSFS 的
+     * COMn_TRANSMIT_SELECT 是"选定"，重复发送无副作用，语义兼容） */
+    if (jnum2(root, "tx", &v) && v != 0.0) {
+        c.kind = CMD_COM_XMIT;
+        c.com_index = com;
+        control_post(&c);
+        return;
+    }
+
     /* 选定发射台（XVoice 读 PILOT TRANSMITTER TYPE，写侧对应本字段） */
     if (jnum2(root, "xmit", &v)) {
         if (v != 0.0) {
@@ -800,6 +843,21 @@ static void handle_radio(const Json* root) {
         return;   /* xmit:false 无意义（必须有一台在发），忽略 */
     }
 
+    /* 收听开关 toggle（XConnect "monitor"，XP 命令就是 toggle 语义） */
+    if (jnum2(root, "monitor", &v) && v != 0.0) {
+        c.kind = CMD_COM_RECV;
+        c.com_index = com;
+        control_post(&c);
+        return;
+    }
+
+    /* COM 电源：MSFS 没有单台 COM 电源 SimVar/事件（XP 的
+     * sim/radios/power_comN_on/off 无对应物）。显式记日志，别静默吞掉。 */
+    if (json_get(root, "power")) {
+        xc_logf("control: RADIO power 字段 MSFS 不支持（忽略）");
+        return;
+    }
+
     jnum2(root, "active", &v);
     {
         /* active 可能是 bool 也可能是 0/1；缺省按主频处理 */
@@ -808,6 +866,7 @@ static void handle_radio(const Json* root) {
                                                : (int)(t->num != 0.0);
     }
     if (jnum2(root, "swap", &v) && v != 0.0) swap = 1;
+    if (jnum2(root, "flip", &v) && v != 0.0) swap = 1;   /* XConnect 别名 */
 
     if (swap) {
         c.kind = CMD_COM_SWAP;

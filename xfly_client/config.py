@@ -57,6 +57,10 @@ class AppConfig:
     auto_start_mconnect: bool = True
     # 客户端退出时是否一并终止 MConnect（默认否：保留 SimConnect 会话便于重连）
     mconnect_stop_on_exit: bool = False
+    # MConnect 启动时带 --labels：翻转一次 MSFS 内置"机模标签"。
+    # 标签显示的是 AI 的 ATC ID（MConnect 已写成远端呼号），开启后能看到
+    # 他机呼号。注意 toggle 语义：标签原本已开启时会被关闭。
+    msfs_toggle_labels: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "AppConfig":

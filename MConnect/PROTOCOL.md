@@ -51,7 +51,15 @@ MSFS 侧的取值说明：
 | `gear_deploy` | `GEAR TOTAL PCT EXTENDED` | >0.5 视为放下 |
 | `flaps_ratio` | `FLAPS HANDLE PERCENT` | 0..1 |
 | `throttle_ratio` | `GENERAL ENG THROTTLE LEVER POSITION:1` | 0..1 |
-| `parts.lights.*` | `LIGHT LANDING/TAXI/NAV/BEACON/STROBE` | Bool |
+| `flight_id` | `ATC FLIGHT NUMBER` | Mode-S 航班标识（AUX 遥测，失败时为空串） |
+| `com1/2/3_power` | `ELECTRICAL MASTER BATTERY`（兜底） | MSFS 无单台 COM 电源 SimVar |
+| `audio_sel_com1/2/3` | `COM RECEIVE:1..3` | 收听状态（AUX 遥测，失败时恒 0） |
+| `audio_vol_com1/2` | 收听状态派生 | MSFS 无音量 SimVar：收听=1.0 否则 0.0 |
+| `audio_sel/vol_*_copilot` | 同机长（单音频面板） | MSFS 音频面板不区分机长/副驾 |
+| `tx_com` | `pilot_xmit + 1` | 1-based 发射台，`pilot_xmit=-1` 时为 0 |
+| `xpdr_sys/pwr/tcas_*` | 固定 `-1` | X-Plane 机型自定义 dataref，MSFS 无对应物 |
+| `tcas_filter/alert/advisory` | 固定 `0` | MSFS 2020 无标准 TCAS 输出 SimVar |
+| `parts.lights.*` | `LIGHT LANDING/TAXI/NAV/BEACON/STROBE/LOGO/WING/RECOGNITION/CABIN` | Bool（后 4 项走 AUX 遥测，失败时恒 0） |
 | `parts.spoilers_out` | `SPOILERS HANDLE POSITION` | >0.1 为伸出 |
 | `parts.engines[].rpm_pct` | `TURB ENG N1:1..4` | 活塞机无 N1 → 0 |
 | `on_ground` | `SIM ON GROUND` | |
@@ -139,7 +147,10 @@ MSFS 侧的取值说明：
 {"type":"Send:RADIO","com":1,"active":true,"freq":122800}
 {"type":"Send:RADIO","com":2,"active":false,"freq":121500}
 {"type":"Send:RADIO","com":1,"swap":true}
+{"type":"Send:RADIO","com":1,"flip":true}      // swap 别名（XConnect 字段互通）
 {"type":"Send:RADIO","com":2,"xmit":true}
+{"type":"Send:RADIO","com":1,"tx":true}        // 切发话通道（XConnect 字段互通）
+{"type":"Send:RADIO","com":2,"monitor":true}   // 收听开关 toggle（XConnect 字段互通）
 {"type":"Send:RADIO","recv_all":true}
 ```
 
@@ -148,9 +159,11 @@ MSFS 侧的取值说明：
 | `com` | 1..3，越界拒收 |
 | `active` | `true`=主频，`false`=备频；缺省按主频 |
 | `freq` | **MHz×1000**（`122800` = 122.800 MHz），与 `flight_data` 的 `com*_freq` 同单位，可直接回填 |
-| `swap` | 为真时主备互换，忽略 `freq` |
-| `xmit` | 为真时把该 COM 选为**发射台**（对应读侧 `pilot_xmit`）；`false` 无意义，忽略 |
+| `swap` / `flip` | 为真时主备互换，忽略 `freq` |
+| `tx` / `xmit` | 为真时把该 COM 选为**发射台**（对应读侧 `pilot_xmit`）；`false` 无意义，忽略 |
+| `monitor` | 为真时 toggle 该 COM 收听（对应读侧 `audio_sel_comN`，XConnect 互通字段） |
 | `recv_all` | 全收开关，不涉及 `com` |
+| `power` | MSFS 无单台 COM 电源对应物，**忽略**（记日志） |
 
 底层用 SimConnect 事件（频率是**只读** SimVar，不能直接写）：
 
@@ -161,7 +174,15 @@ MSFS 侧的取值说明：
 | COM2 / COM3 | `COM2_RADIO_SET_HZ` / `COM3_RADIO_SET_HZ`（及 `_STBY_`） | Hz |
 | 主备互换 | `COM1/2/3_RADIO_SWAP` | — |
 | 选定发射台 | `COM1/2/3_TRANSMIT_SELECT` | 1 |
+| 收听 toggle | `COM1/2/3_RECEIVE_SELECT` | — |
 | 全收 | `COM_RECEIVE_ALL_SET` | 1/0 |
+
+### 呼号标签
+
+- 每个 AI 对象创建后把 `ATC ID` 写成远端**呼号**。
+- MSFS 内置"机模标签"（辅助选项）显示的就是 ATC ID：开启后他机头顶显示呼号。
+- `MConnect.exe --labels`（或客户端配置 `msfs_toggle_labels: true`）在启动时
+  翻转一次内置标签开关（toggle 语义：原本已开启会被关闭）。
 
 有效波段校验：`118000 ≤ freq ≤ 137000`（MHz×1000），越界直接拒收并记日志
 （客户端可能把 NAV 频率误发到 COM 通道）。

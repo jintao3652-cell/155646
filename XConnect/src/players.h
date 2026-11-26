@@ -68,6 +68,8 @@ typedef struct {
     int flaps_pct;       /* 0..100 */
     int gear_down;       /* 0/1 */
     int spoilers_out;    /* 0/1 */
+    double throttle;     /* 0..1：远端油门（ACC throttle_ratio，驱动 thrust_ratio） */
+    int has_throttle;    /* 是否收到过 throttle_ratio（0 = 用默认 0.8 兜底） */
     unsigned lights;     /* bit0 beacon, bit1 landing, bit2 taxi, bit3 nav,
 	                      * bit4 strobe, bit5 logo */
     int engines_on;      /* bit0..bit7 = 1..8 号引擎在运转（1-based） */

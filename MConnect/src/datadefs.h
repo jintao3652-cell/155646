@@ -25,6 +25,14 @@
                               * 不能占用 4/5：那两个是 REQ_SYSSTATE/REQ_CPU_LOAD */
 #define REQ_SYSSTATE    4
 #define REQ_CPU_LOAD    5
+/* 辅助遥测（与主遥测分离，**可选**）：flight_id / COM RECEIVE / 扩展灯光。
+ * 为什么单独一个定义：AddToDataDefinition 遇到未实现的 SimVar 会整体失败，
+ * 混进 DEF_FLIGHT 会连累位置/姿态等核心遥测（旧版模拟器缺变量时全部罢工）。
+ * AUX 失败只影响可选字段，主遥测照常。 */
+#define DEF_FLIGHT_AUX  7
+#define REQ_FLIGHT_AUX  7
+/* AI 飞机 ATC ID 写入（呼号标签：MSFS 内置机模标签显示的就是 ATC ID） */
+#define DEF_AI_ATCID    8
 
 /* AI 飞机位置写入结构。**字段顺序必须与 ai_define_position() 完全一致**，
  * 否则 SetDataOnSimObject 会报 SIZE_MISMATCH。
@@ -74,6 +82,11 @@ typedef struct {
     int    copilot_xmit_type;     /* COPILOT TRANSMITTER TYPE，同上 */
     int    com_receive_all;       /* COM RECEIVE ALL：是否全收 */
     int    audio_panel_on;        /* ELECTRICAL MASTER BATTERY（音频面板供电） */
+    /* 辅助遥测（DEF_FLIGHT_AUX，失败时恒 0）：收听与扩展灯光 */
+    int    aux_valid;             /* AUX 定义注册+收到过数据 */
+    int    com_recv[3];           /* COM RECEIVE:1..3（音频面板收听，0/1） */
+    char   flight_id[32];         /* ATC FLIGHT NUMBER（Mode-S 航班标识） */
+    int    light_logo, light_wing, light_recog, light_cabin;
     int    transponder;           /* 4 位八进制码（如 1234） */
     int    xpdr_state;            /* 0=Off 1=Stby 2=Test 3=On 4=Alt 5=Ground */
     int    on_ground;
@@ -103,13 +116,27 @@ int  datadefs_register_ai(void);
 /* 注册应答机模式写入定义（反向控制用，可写 SimVar TRANSPONDER STATE）。 */
 int  datadefs_register_xpdr(void);
 
+/* 注册辅助遥测定义（flight_id / COM RECEIVE / 扩展灯光）。
+ * 可选：失败（旧版模拟器缺变量）只影响这些字段，返回 -1 不影响主遥测。 */
+int  datadefs_register_aux(void);
+
+/* 注册 AI 飞机 ATC ID 写入定义（呼号标签）。 */
+int  datadefs_register_ai_atcid(void);
+
+/* 写 AI 飞机 ATC ID（= 呼号）。MSFS 内置"机模标签"（辅助选项里的
+ * 飞机标签）显示的就是 ATC ID —— 设成呼号后用户开启标签即可看到呼号。
+ * 返回 0 成功。 */
+int  datadefs_write_ai_atcid(DWORD object_id, const char* callsign);
+
 /* 注册 AI 部件写入定义。失败时返回 -1，调用方应禁用部件渲染而不是崩溃。 */
 int  datadefs_register_ai_parts(void);
 
-/* 把 canonical 部件状态填成 AiPartsRaw。 */
+/* 把 canonical 部件状态填成 AiPartsRaw。
+ * throttle_ratio：远端油门 0..1；<0 = 未上报（运转引擎用 0.8 兜底）。 */
 void datadefs_fill_ai_parts(AiPartsRaw* out, int gear_down,
                             int flaps_pct, int spoilers_out,
-                            unsigned engines_mask, int engine_count);
+                            unsigned engines_mask, int engine_count,
+                            double throttle_ratio);
 
 /* 处理 SIMCONNECT_RECV_SIMOBJECT_DATA（由派发回调转交）。 */
 void datadefs_on_simobject_data(const void* pkt, DWORD cbData);

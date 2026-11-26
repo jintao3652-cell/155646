@@ -100,6 +100,8 @@ typedef struct {
     int     gear_down;
     int     flaps_pct;
     int     spoilers_out;
+    double  throttle;         /* 0..1：远端油门（ACC throttle_ratio） */
+    int     has_throttle;     /* 是否收到过 throttle_ratio（0 = 用 0.8 兜底） */
     unsigned lights;          /* bit0 beacon ... bit5 logo */
     unsigned engines_on;      /* bit0..bit7 = 1..8 号发 */
     int     engine_count;
@@ -108,6 +110,8 @@ typedef struct {
     char    parts_source[16];
     unsigned lights_sent;     /* 已发过的灯状态，只在变化时触发事件 */
     int     parts_write_failed; /* 该 SimVar 对此 AI 不可写 → 全局禁用 */
+    int     catalog_wait_logged; /* 已打过"等待机型目录"日志（只打一次） */
+    int     atcid_written;    /* 已写过 ATC ID（呼号标签，只写一次） */
 
     int active;
 } Player;
@@ -141,6 +145,9 @@ void players_stats(int* active, int* pending, int* loaded_icao_n,
 
 /* 分配一个新的创建 RequestID（全局单调，避免与回包错配）。 */
 DWORD players_next_request_id(void);
+
+/* 探针模式：--parts-probe 跳过机型目录等待门（窗口只有 12s）。 */
+void players_set_probe_mode(int on);
 
 /* AI 部件/灯光写入能力探测结果（--parts-probe 用）。 */
 void players_parts_status(int* parts_writable, int* parts_tried,

@@ -29,6 +29,7 @@
 #include "XPLMUtilities.h"
 
 #include "csl.h"
+#include "XPLMDataAccess.h"   /* dataref 注册桩的类型（XPLMDataRef/回调 typedef） */
 
 /* ---------------- XPLM / 日志桩 ---------------- */
 
@@ -40,6 +41,31 @@ void XPLMGetSystemPath(char* outSystemPath) {
     strcpy(outSystemPath, g_sys);
 }
 const char* XPLMGetDirectorySeparator(void) { return "/"; }
+
+/* libxplanemp dataref 注册桩（csl_init 在 LoadObject 前注册，见 csl.c）：
+ * 测试里返回一个假句柄并接受注册/注销，不校验回调。 */
+XPLMDataRef XPLMFindDataRef(const char* inDatarefName) {
+    (void)inDatarefName;
+    return NULL;   /* 测试环境无真实 dataref，全部走"自行注册"分支 */
+}
+XPLMDataRef XPLMRegisterDataAccessor(
+    const char* inDatarefName, XPLMDataTypeID inDataType, int inIsWritable,
+    XPLMGetDatai_f inReadInt, XPLMSetDatai_f inWriteInt,
+    XPLMGetDataf_f inReadFloat, XPLMSetDataf_f inWriteFloat,
+    XPLMGetDatad_f inReadDouble, XPLMSetDatad_f inWriteDouble,
+    XPLMGetDatavi_f inReadIntArray, XPLMSetDatavi_f inWriteIntArray,
+    XPLMGetDatavf_f inReadFloatArray, XPLMSetDatavf_f inWriteFloatArray,
+    void* inReadRefcon, void* inWriteRefcon,
+    XPLMGetDatab_f inReadData, XPLMSetDatab_f inWriteData) {
+    (void)inDataType; (void)inIsWritable;
+    (void)inReadInt; (void)inWriteInt; (void)inReadFloat; (void)inWriteFloat;
+    (void)inReadDouble; (void)inWriteDouble; (void)inReadIntArray;
+    (void)inWriteIntArray; (void)inReadFloatArray; (void)inWriteFloatArray;
+    (void)inReadRefcon; (void)inWriteRefcon; (void)inReadData; (void)inWriteData;
+    return (XPLMDataRef)(size_t)(0x1000 +
+           (unsigned)strlen(inDatarefName ? inDatarefName : ""));
+}
+void XPLMUnregisterDataAccessor(XPLMDataRef inDataref) { (void)inDataref; }
 
 XPLMObjectRef XPLMLoadObject(const char* inPath) {
     (void)inPath;

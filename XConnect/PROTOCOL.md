@@ -35,8 +35,10 @@
  "tcas_filter":0,"tcas_alert":0,"tcas_advisory":0,
  "gear_deploy":0.0,"flaps_ratio":0.0,"throttle_ratio":0.3,
  "parts":{"lights":{"strobe_on":0,"landing_on":1,"taxi_on":0,
-                    "beacon_on":1,"nav_on":1},
+                    "beacon_on":1,"nav_on":1,"logo_on":0,
+                    "wing_on":0,"recognition_on":1,"cabin_on":1},
           "gear_down":1,"flaps_pct":15,"spoilers_out":0,
+          "throttle_ratio":0.35,
           "engines":{"1":{"on":true},"2":{"on":true}},
           "on_ground":1}}
 ```
@@ -211,7 +213,9 @@
 {"type":"Send:RADIO","com":1,"swap":true}       // 主备互换（命令路径）
 {"type":"Send:RADIO","com":1,"flip":true}       // 同 swap
 {"type":"Send:RADIO","com":1,"tx":true}         // 切发话通道
+{"type":"Send:RADIO","com":1,"xmit":true}       // 同 tx（MConnect 字段互通）
 {"type":"Send:RADIO","com":2,"monitor":true}    // 收听开关 toggle
+{"type":"Send:RADIO","recv_all":true}           // 全收开关（MConnect 字段互通）
 {"type":"Send:RADIO","com":1,"power":0}         // COM 电源 off（1=on）
 ```
 
@@ -221,8 +225,9 @@
 | `active` | `true`=主频，`false`=备频；缺省按主频 |
 | `freq` | **MHz×1000**（`122800` = 122.800 MHz），与 `flight_data.com*_freq` 同单位 |
 | `swap` / `flip` | 主备互换，走**命令** `sim/radios/comN_standy_flip`，忽略 `freq` |
-| `tx` | 切发话通道，走命令 `sim/audio_panel/transmit_audio_comN` |
+| `tx` / `xmit` | 切发话通道，走命令 `sim/audio_panel/transmit_audio_comN` |
 | `monitor` | 收听开关（toggle），走命令 `sim/audio_panel/monitor_audio_comN` |
+| `recv_all` | 全收开关：按 `audio_selection_com1..3` 当前读数对不符的台触发 monitor toggle（X-Plane 无"全收"命令），`true`=全收 `false`=全关 |
 | `power` | COM 电源，`1`/`0` → `sim/radios/power_comN_on/off` |
 
 **两种反写通道，各有适用场景**（照 MobiFlight 的 DataRef vs Command 双通道设计）：

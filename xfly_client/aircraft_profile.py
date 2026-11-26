@@ -188,6 +188,10 @@ class AircraftParts:
     gear_down: Optional[bool] = None
     flaps_pct: Optional[int] = None
     spoilers_out: Optional[bool] = None
+    # 油门 0..1（各发共用一个比值；None = 未上报）。
+    # 上报时量化到 5%（round(x*20)/20）：推油门是连续动作，不量化的话
+    # 每帧都变 → ACC 增量把令牌桶吃光，灯光/起落架更新会被饿死。
+    throttle_ratio: Optional[float] = None
     engines: dict[int, bool] = field(default_factory=dict)   # 1-based，1..n
     on_ground: Optional[bool] = None
     source: str = SOURCE_NOT_SET
@@ -226,6 +230,15 @@ class AircraftParts:
         p.gear_down = _as_tri(raw.get("gear_down", raw.get("gearDown")))
         p.spoilers_out = _as_tri(raw.get("spoilers_out", raw.get("spoilersOut")))
         p.on_ground = _as_tri(raw.get("on_ground", raw.get("onGround")))
+
+        if "throttle_ratio" in raw:
+            try:
+                t = float(raw["throttle_ratio"])
+                if math.isfinite(t):
+                    t = max(0.0, min(1.0, t))
+                    p.throttle_ratio = round(t * 20.0) / 20.0   # 5% 量化
+            except (TypeError, ValueError):
+                pass
 
         flaps = raw.get("flaps_pct", raw.get("flapsPercent"))
         if flaps is None and "flaps_ratio" in raw:
@@ -322,6 +335,8 @@ class AircraftParts:
             out["gear_down"] = bool(self.gear_down)
         if self.spoilers_out is not None:
             out["spoilers_out"] = bool(self.spoilers_out)
+        if self.throttle_ratio is not None:
+            out["throttle_ratio"] = float(self.throttle_ratio)
         if self.flaps_pct is not None:
             out["flaps_pct"] = int(self.flaps_pct)
         if self.on_ground is not None:
@@ -350,6 +365,7 @@ class AircraftParts:
                 gear_down=incoming.gear_down,
                 flaps_pct=incoming.flaps_pct,
                 spoilers_out=incoming.spoilers_out,
+                throttle_ratio=incoming.throttle_ratio,
                 engines=dict(incoming.engines),
                 on_ground=incoming.on_ground,
                 source=incoming.source or self.source,
@@ -359,12 +375,14 @@ class AircraftParts:
         out = AircraftParts(
             lights=dict(self.lights), gear_down=self.gear_down,
             flaps_pct=self.flaps_pct, spoilers_out=self.spoilers_out,
+            throttle_ratio=self.throttle_ratio,
             engines=dict(self.engines), on_ground=self.on_ground,
             source=self.source, is_full_data=False,
             timestamp_ms=self.timestamp_ms,
         )
         out.lights.update(incoming.lights)
-        for name in ("gear_down", "flaps_pct", "spoilers_out", "on_ground"):
+        for name in ("gear_down", "flaps_pct", "spoilers_out", "on_ground",
+                     "throttle_ratio"):
             val = getattr(incoming, name)
             if val is not None:
                 setattr(out, name, val)

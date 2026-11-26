@@ -276,6 +276,15 @@ static void handle_client_line(const char* line) {
                                     }
                                     if (jnum_field(parts, "spoilers_out", &pv))
                                         p->spoilers_out = pv != 0.0;
+                                    /* 远端油门（ACC throttle_ratio 0..1）：
+                                     * 驱动 CSL thrust_ratio（anim[9]）。
+                                     * 未上报时保持 has_throttle=0，渲染层用 0.8 兜底。 */
+                                    if (jnum_field(parts, "throttle_ratio", &pv)) {
+                                        if (pv < 0.0) pv = 0.0;
+                                        if (pv > 1.0) pv = 1.0;
+                                        p->throttle = pv;
+                                        p->has_throttle = 1;
+                                    }
                                     /* 引擎运转状态：{"1":{"on":true},"2":{"on":true}} */
                                     {
                                         const Json* eng = json_get(parts, "engines");
@@ -390,7 +399,9 @@ static int jnum_field(const Json* obj, const char* key, double* out) {
  *   {"type":"Send:RADIO","com":1,"swap":true}         主备互换（走命令）
  *   {"type":"Send:RADIO","com":1,"flip":true}         同上（别名）
  *   {"type":"Send:RADIO","com":1,"tx":true}           切发话通道（走命令）
+ *   {"type":"Send:RADIO","com":1,"xmit":true}         同上（MConnect 字段互通）
  *   {"type":"Send:RADIO","com":1,"monitor":true}      收听开关 toggle（走命令）
+ *   {"type":"Send:RADIO","recv_all":true}             全收开关（MConnect 字段互通）
  *   {"type":"Send:RADIO","com":1,"power":0}           COM 电源 on/off（走命令）
  *
  * 为什么互换/发话/收听/电源走命令而不是写 dataref：
@@ -403,6 +414,13 @@ static void handle_radio_command(const Json* root) {
     const Json* t;
 
     memset(&c, 0, sizeof(c));
+    /* 全收开关（MConnect 的字段，互通）：不涉及 com，先单独处理 */
+    if (jnum_field(root, "recv_all", &v)) {
+        c.kind = XCMD_AUDIO_RECV_ALL;
+        c.active = v != 0.0;
+        xconnect_control_post(&c);
+        return;
+    }
     if (jnum_field(root, "com", &v)) com = (int)v;
     if (com < 1 || com > 3) {
         xconnect_logf("control: RADIO bad com=%d", com);
@@ -430,6 +448,13 @@ static void handle_radio_command(const Json* root) {
     /* 只在值为真时触发。此前只看键是否存在，"tx": false / "monitor": false
      * 也会执行一次 toggle，语义错误。 */
     if (jnum_field(root, "tx", &v) && v != 0.0) {
+        c.kind = XCMD_AUDIO_TX;
+        c.com_index = com;
+        xconnect_control_post(&c);
+        return;
+    }
+    /* "xmit"：MConnect 侧字段（选定发射台），互通映射到同一条命令 */
+    if (jnum_field(root, "xmit", &v) && v != 0.0) {
         c.kind = XCMD_AUDIO_TX;
         c.com_index = com;
         xconnect_control_post(&c);

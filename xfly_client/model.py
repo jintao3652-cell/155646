@@ -805,7 +805,19 @@ class NetworkModel:
             if changed or reg_changed:
                 fsd.send_aircraft_info()
             # 机模部件变化 → 增量机模配置 ACC 上报（$CQ:@94836）
-            fsd.notify_aircraft_parts(fd.parts)
+            #
+            # 油门不在插件的 parts 里（它是 flight_data 顶层字段），这里合并进去：
+            # 对端用它驱动 CSL 推力动画 / AI 油门。服务器对 ACC JSON 原样转发
+            # （fsd.log 实测），未知键对旧客户端无副作用。
+            # 引擎全关时不合并（0 油门没有意义，避免关车瞬间多一条增量）。
+            acc_parts = dict(fd.parts or {})
+            engines_running = any(
+                bool((e or {}).get("on")) if isinstance(e, dict) else bool(e)
+                for e in (acc_parts.get("engines") or {}).values()
+            )
+            if engines_running:
+                acc_parts["throttle_ratio"] = round(fd.throttle_ratio, 3)
+            fsd.notify_aircraft_parts(acc_parts)
 
     # ---------- 注册号（尾号） ----------
 

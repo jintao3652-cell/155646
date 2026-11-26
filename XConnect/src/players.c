@@ -432,7 +432,12 @@ void update_players(double now) {
                 default:  rpm = 1200.0; break;
                 }
 
-                anim[9] = any_engine ? 0.8f : 0.0f;   /* 高速扇叶层 */
+                /* 推力比例：优先用远端 ACC 的 throttle_ratio（任务：机组推油门
+                 * 时对端扇叶/推力观感跟着变）。未上报（旧客户端）时维持 0.8 兜底。 */
+                anim[9] = any_engine
+                              ? (float)((p->has_parts && p->has_throttle)
+                                        ? p->throttle : 0.8)
+                              : 0.0f;
                 /* CSL OBJ 的 ANIM_rotate 周期有 0.1/0.9/1/5s 多种，
                  * 必须传累计运行时间让 OBJ 自己取模。 */
                 anim[34] = any_engine ? (float)sim_time : 0.0f;

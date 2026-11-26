@@ -1598,6 +1598,34 @@ void xconnect_control_drain(void) {
             break;
         }
 
+        case XCMD_AUDIO_RECV_ALL: {
+            /* XP 没有"全收"命令：按 audio_selection_com1..3 的当前读数，
+             * 只对与目标不符的台触发 monitor toggle（否则盲 toggle 会
+             * 把本来对着的台关掉）。 */
+            int ci, fired = 0;
+            /* DR_AUD_SEL_COM1..3 在枚举里连续（见 datarefs.h），直接下标取 */
+            static const int kSelIdx[3] = { DR_AUD_SEL_COM1, DR_AUD_SEL_COM2,
+                                            DR_AUD_SEL_COM3 };
+            for (ci = 0; ci < 3; ci++) {
+                int sel = dref_int(g_drefs[kSelIdx[ci]]);
+                int want = c->active ? 1 : 0;
+                if (sel == want) continue;
+                {
+                    char nm[56];
+                    snprintf(nm, sizeof(nm),
+                             "sim/audio_panel/monitor_audio_com%d", ci + 1);
+                    if (cmd_once(nm)) fired++;
+                }
+            }
+            if (fired)
+                xconnect_logf("control: audio recv_all=%d (%d 台切换)",
+                              c->active ? 1 : 0, fired);
+            else
+                xconnect_logf("control: audio recv_all=%d (已是目标状态)",
+                              c->active ? 1 : 0);
+            break;
+        }
+
         default:
             break;
         }

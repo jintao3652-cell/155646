@@ -19,6 +19,11 @@ DWORD players_next_request_id(void) {
     return AI_REQ_BASE + g_ai_req_seq;
 }
 
+/* 探针模式：跳过"等待机型目录"门（--parts-probe 只有 12s 窗口，
+ * 而全量扫描要 40s+；探针用内置 C172 即可）。 */
+static int g_skip_catalog_wait = 0;
+void players_set_probe_mode(int on) { g_skip_catalog_wait = on; }
+
 /* ---------------- 平滑插值（与 XConnect 同构） ---------------- */
 
 static double angle_delta(double a, double b) {
@@ -208,6 +213,26 @@ static void ai_create(Player* p) {
 
     if (!g_sc_handle) return;
 
+    /* 机型目录扫描未完成时不创建。FSLTL/AIG 全量扫描要 40s+，若在此
+     * 窗口内用内置兜底表建出来，扫完后虽会自动换模型（update 循环的
+     * model-change 检测），但用户会先看到一架 Asobo 通用白机再"跳"成
+     * AIG/FSLTL —— 观感上就是"映射没生效"。给 90s 上限：目录彻底失败
+     * 时也能开始渲染（届时退回内置表，比永远不显示好）。 */
+    if (!catalog_ready() && !g_skip_catalog_wait) {
+        static double s_scan_deadline = 0.0;
+        double now_c = xc_now_sec();
+        if (!s_scan_deadline) s_scan_deadline = now_c + 90.0;
+        if (now_c < s_scan_deadline) {
+            if (!p->catalog_wait_logged) {
+                xc_logf("ai: %s 等待机型目录扫描完成（已扫 %d 条，含 FSLTL/AIG）",
+                        p->callsign, catalog_count());
+                p->catalog_wait_logged = 1;
+            }
+            return;   /* 保持 IDLE，下一轮再试 */
+        }
+        /* 超时：放行，走内置兜底 */
+    }
+
     catalog_match(p->icao, p->airline, p->reg, &m);
     if (!m.found) {
         xc_logf("ai: %s no catalog match icao=%s airline=%s reg=%s",
@@ -216,6 +241,12 @@ static void ai_create(Player* p) {
         p->retry_at = xc_now_sec() + 30.0;   /* 机型目录可能还没扫完，晚点再试 */
         return;
     }
+
+    /* 匹配结果行：明确记录用了哪个来源的模型（AIGAIM_/FSLTL_/Asobo），
+     * 排查"映射没生效"时与 --scan-only 抽样对照 */
+    xc_logf("ai: %s match lvl=%d icao=%s airline=%s reg=%s -> \"%s\"/\"%s\"",
+            p->callsign, m.level, p->icao, p->airline, p->reg,
+            m.title, m.livery);
 
     /* 记住已选的模型（换型/换漆判断用） */
     snprintf(p->model_title, sizeof(p->model_title), "%s", m.title);
@@ -240,7 +271,12 @@ static void ai_create(Player* p) {
     p->state = AI_STATE_PENDING;
     p->create_attempts++;
 
-    /* 涂装名只在"模块化且确有涂装名"时才传；legacy 机型传空串。 */
+    /* 涂装传递策略（2024 SDK 实测语义：szLivery **先查涂装文件夹名**，
+     * 再查 livery.cfg 的 name，都找不到才用默认涂装）：
+     *   - 模块化机型：必须走 _EX1（legacy 基础版建不出来），有涂装名就传；
+     *   - legacy 机型（FSLTL/AIG 等 2020 包）：有 texture 文件夹名也传 ——
+     *     这正是 AIG/FSLTL 的航司涂装选择方式，传对了就显示对应航司涂装，
+     *     传错了 SDK 会自动退默认涂装，不会导致创建失败。 */
     use_ex1 = (g_sc.AICreateNonATCAircraft_EX1 != NULL) &&
               (m.modular || m.livery[0]);
 
@@ -458,7 +494,8 @@ static void ai_write_parts(Player* p, const PositionFix* f) {
     gear = p->has_gear ? p->gear_down : ((f && f->on_ground) ? 1 : 0);
     if (!p->has_gear && p->gear_type[0] == 'f') gear = 1;
     datadefs_fill_ai_parts(&raw, gear, p->flaps_pct, p->spoilers_out,
-                           p->engines_on, p->engine_count);
+                           p->engines_on, p->engine_count,
+                           p->has_throttle ? p->throttle : -1.0);
 
     hr = g_sc.SetDataOnSimObject(g_sc_handle, SC_DATA_SET_FLAG_DEFAULT,
                                  p->object_id, DEF_AI_PARTS, 1,
@@ -530,6 +567,14 @@ void update_players(double now) {
         ai_write_pose(p, now);
         ai_write_parts(p, f);
         ai_write_lights(p);
+
+        /* 呼号标签：把 ATC ID 写成呼号。MSFS 的内置"机模标签"显示的就是
+         * ATC ID —— 用户开启标签（或 MConnect --labels）后即可看到呼号。
+         * 只写一次；换模型（ai_remove 清零）后自动重写。 */
+        if (!p->atcid_written && p->callsign[0]) {
+            if (datadefs_write_ai_atcid(p->object_id, p->callsign) == 0)
+                p->atcid_written = 1;
+        }
 
         /* 部件写入诊断（节流 30s，卡断层用：raw → JSON → 动画三层对照） */
         if (p->has_parts && now - p->last_parts_log > 30.0) {

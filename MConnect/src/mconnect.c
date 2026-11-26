@@ -169,6 +169,13 @@ static void parse_player_parts(const Json* el, Player* p) {
         p->flaps_pct = fp;
     }
     if (jnum(parts, "spoilers_out", &v)) p->spoilers_out = v != 0.0;
+    /* 远端油门（ACC throttle_ratio 0..1）：写 AI 引擎油门杆 */
+    if (jnum(parts, "throttle_ratio", &v)) {
+        if (v < 0.0) v = 0.0;
+        if (v > 1.0) v = 1.0;
+        p->throttle = v;
+        p->has_throttle = 1;
+    }
 
     engines = json_get(parts, "engines");
     if (engines && engines->type == JSON_OBJ) {
@@ -674,6 +681,7 @@ int main(int argc, char** argv) {
     int dump_wasm = 0;
     int dump_profiles = 0;
     int parts_probe = 0;
+    int toggle_labels = 0;
 
     init_paths();
 
@@ -732,6 +740,10 @@ int main(int argc, char** argv) {
             /* 真机能力探针：注入一架带完整 canonical parts 的临时 AI 飞机，
              * 观察 SimVar 写入与灯光事件在当前 MSFS 版本是否被接受，打印结论后退出。 */
             parts_probe = 1;
+        } else if (_stricmp(arg, "--labels") == 0) {
+            /* 连上后翻转一次 MSFS 内置"机模标签"（显示的是 AI 的 ATC ID，
+             * 本插件把它写成远端呼号）。toggle 语义：标签已开启时会被关闭。 */
+            toggle_labels = 1;
         } else if (_stricmp(arg, "--help") == 0 || _stricmp(arg, "-h") == 0) {
             printf("MConnect %s — XFlySim MSFS 数据桥接 + AI 交通渲染\n\n"
                    "  MConnect.exe [选项]\n\n"
@@ -742,6 +754,7 @@ int main(int argc, char** argv) {
                    "  --dump-wasm        检查 WASM 桥（MobiFlight 模块）是否可用\n"
                    "  --dump-profiles    打印机型档案表（各机模的实测写法与限制）\n"
                    "  --parts-probe      真机探针：注入临时 AI 飞机，检测部件 SimVar/灯光事件是否可写\n"
+                   "  --labels           翻转 MSFS 内置机模标签（标签显示 AI 呼号，toggle 语义）\n"
                    "  --simconnect <p>   指定 SimConnect.dll 路径（或所在目录）\n"
                    "  --verbose, -v      详细日志（打印每批玩家/枚举分页）\n"
                    "  --help, -h         显示本帮助\n",
@@ -848,12 +861,22 @@ int main(int argc, char** argv) {
     if (datadefs_register_ai_parts() != 0) {
         xc_infof("[!] AI 部件写入不可用（位置/其余功能正常）");
     }
+    if (datadefs_register_aux() != 0) {
+        xc_infof("[!] 辅助遥测不可用（flight_id/收听状态/扩展灯光不上报）");
+    }
+    if (datadefs_register_ai_atcid() != 0) {
+        xc_infof("[!] AI 呼号标签（ATC ID）不可用");
+    }
 
     /* 4b. 反向控制事件映射（应答机/频率设置） */
     if (control_init() != 0) {
         xc_infof("[!] 反向控制事件注册不完整，部分写入可能无效（详见日志）");
     } else {
         xc_infof("  反向控制: 应答机 / COM1-3 频率 可写");
+    }
+    if (toggle_labels) {
+        xc_infof("  --labels: 翻转内置机模标签（AI 标签显示远端呼号）");
+        control_toggle_aircraft_labels();
     }
 
     /* 4c. 真机能力探针：用一架临时 AI 飞机把 canonical parts 完整走一遍。
@@ -873,6 +896,7 @@ int main(int argc, char** argv) {
         xc_infof("  parts 探针：注入临时 AI 飞机 XPROBE1，约 12 秒后输出结论");
         /* 探针提前返回，不会走到下面正常的后台扫描；这里先启动以便匹配 C172 容器标题 */
         catalog_start_scan(scan_dir[0] ? scan_dir : NULL);
+        players_set_probe_mode(1);   /* 探针不等扫描：12s 窗口，用内置 C172 */
         snprintf(probe_json, sizeof(probe_json),
                  "{\"data\":[{\"callsign\":\"XPROBE1\",\"aircraft\":\"C172\","
                  "\"latitude\":%.7f,\"longitude\":%.7f,\"altitude\":%.1f,"

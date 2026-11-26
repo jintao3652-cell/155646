@@ -257,7 +257,8 @@ def main(argv: list[str] | None = None) -> int:
         from xfly_client.bridge_launcher import BridgeLauncher
         bridge = BridgeLauncher(
             os.path.dirname(os.path.abspath(__file__)),
-            on_log=lambda m: print(f"[bridge] {m}"))
+            on_log=lambda m: print(f"[bridge] {m}"),
+            toggle_labels=getattr(cfg, "msfs_toggle_labels", False))
         bridge.start()
     try:
         app = CliApp(cfg, SIM_TYPES[args.sim])

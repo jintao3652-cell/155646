@@ -332,7 +332,8 @@ int datadefs_register_ai_parts(void) {
 
 void datadefs_fill_ai_parts(AiPartsRaw* out, int gear_down,
                             int flaps_pct, int spoilers_out,
-                            unsigned engines_mask, int engine_count) {
+                            unsigned engines_mask, int engine_count,
+                            double throttle_ratio) {
     int i;
     if (!out) return;
     memset(out, 0, sizeof(*out));
@@ -341,6 +342,11 @@ void datadefs_fill_ai_parts(AiPartsRaw* out, int gear_down,
     if (flaps_pct > 100) flaps_pct = 100;
     out->flaps_left = out->flaps_right = (double)flaps_pct / 100.0;
     out->spoilers = spoilers_out ? 1.0 : 0.0;
+    /* 远端油门：直接写 AI 的油门杆（对端推油门 → 本端 AI 引擎声音/推力变化）。
+     * 未上报（<0）时维持 0.8 兜底（与 XConnect 的 CSL thrust_ratio 兜底一致）：
+     * 运转中的引擎有一点推力观感，比恒 0 的"熄火样"合理。 */
+    if (throttle_ratio < 0.0) throttle_ratio = 0.8;
+    if (throttle_ratio > 1.0) throttle_ratio = 1.0;
     if (engine_count < 1) {
         /* 档案未知时按实测掩码最高位推断，不再默认 2 发 */
         for (i = 4; i >= 1; --i)
@@ -348,7 +354,94 @@ void datadefs_fill_ai_parts(AiPartsRaw* out, int gear_down,
     }
     if (engine_count > 4) engine_count = 4;
     for (i = 0; i < engine_count; ++i)
-        out->throttle[i] = (engines_mask & (1u << i)) ? 0.8 : 0.0;
+        out->throttle[i] = (engines_mask & (1u << i)) ? throttle_ratio : 0.0;
+}
+
+/* ---------------- 辅助遥测（可选字段，失败不影响主遥测） ----------------
+ *
+ * flight_id / COM RECEIVE:n / 扩展灯光（LOGO/WING/RECOGNITION/CABIN）。
+ * 与 XConnect flight_data 字段集对齐（功能对等修复）。
+ * 全部 Bool/String 类型简单字段；任何一项注册失败则整体放弃 AUX
+ * （这些字段在报文里填 0/空串，客户端按"未上报"处理）。 */
+#pragma pack(push, 1)
+typedef struct {
+    char   flight_id[32];    /* ATC FLIGHT NUMBER（String32） */
+    DWORD  com_recv_1;
+    DWORD  com_recv_2;
+    DWORD  com_recv_3;
+    DWORD  lt_logo;
+    DWORD  lt_wing;
+    DWORD  lt_recog;
+    DWORD  lt_cabin;
+} FlightAuxPkt;
+#pragma pack(pop)
+
+static int g_aux_valid = 0;   /* AUX 注册成功且收到过数据 */
+
+int datadefs_register_aux(void) {
+    HANDLE h = g_sc_handle;
+    HRESULT hr = S_OK;
+
+    if (!h) return -1;
+    hr |= add(h, DEF_FLIGHT_AUX, "ATC FLIGHT NUMBER", "NULL",
+              SC_DATATYPE_STRING32);
+    hr |= add(h, DEF_FLIGHT_AUX, "COM RECEIVE:1", "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT_AUX, "COM RECEIVE:2", "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT_AUX, "COM RECEIVE:3", "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT_AUX, "LIGHT LOGO",        "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT_AUX, "LIGHT WING",        "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT_AUX, "LIGHT RECOGNITION", "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT_AUX, "LIGHT CABIN",       "Bool", SC_DATATYPE_INT32);
+    if (FAILED(hr)) {
+        xc_logf("datadefs: AUX definition failed hr=0x%08lx "
+                "(flight_id/audio_sel/ext-lights disabled)",
+                (unsigned long)hr);
+        return -1;
+    }
+    hr = g_sc.RequestDataOnSimObject(g_sc_handle, REQ_FLIGHT_AUX,
+                                     DEF_FLIGHT_AUX, SC_OBJECT_ID_USER,
+                                     SC_PERIOD_SIM_FRAME,
+                                     SC_DATA_REQUEST_FLAG_DEFAULT, 0, 0, 0);
+    if (FAILED(hr)) {
+        xc_logf("datadefs: AUX request failed hr=0x%08lx", (unsigned long)hr);
+        return -1;
+    }
+    xc_logf("datadefs: aux definition ready (%d bytes)",
+            (int)sizeof(FlightAuxPkt));
+    return 0;
+}
+
+/* ---------------- AI ATC ID 写入（呼号标签） ---------------- */
+
+int datadefs_register_ai_atcid(void) {
+    HRESULT hr;
+    if (!g_sc_handle) return -1;
+    hr = add(g_sc_handle, DEF_AI_ATCID, "ATC ID", "NULL",
+             SC_DATATYPE_STRING32);
+    if (FAILED(hr)) {
+        xc_logf("datadefs: ATC ID definition failed hr=0x%08lx",
+                (unsigned long)hr);
+        return -1;
+    }
+    xc_logf("datadefs: AI ATC ID definition ready");
+    return 0;
+}
+
+int datadefs_write_ai_atcid(DWORD object_id, const char* callsign) {
+    char buf[32];
+    HRESULT hr;
+    if (!g_sc_handle || !g_sc.SetDataOnSimObject || !object_id) return -1;
+    memset(buf, 0, sizeof(buf));
+    snprintf(buf, sizeof(buf), "%s", callsign ? callsign : "");
+    hr = g_sc.SetDataOnSimObject(g_sc_handle, SC_DATA_SET_FLAG_DEFAULT,
+                                 object_id, DEF_AI_ATCID, 1,
+                                 (DWORD)sizeof(buf), buf);
+    if (FAILED(hr)) {
+        xc_logf("datadefs: AI ATC ID write failed hr=0x%08lx",
+                (unsigned long)hr);
+        return -1;
+    }
+    return 0;
 }
 
 /* ---------------- 接收解析 ---------------- */
@@ -378,6 +471,27 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     DWORD need = (DWORD)sizeof(FlightPkt);
 
     if (!d) return;
+
+    /* 辅助遥测（flight_id / 收听 / 扩展灯光）单独解析 */
+    if (d->dwRequestID == REQ_FLIGHT_AUX) {
+        const FlightAuxPkt* a;
+        if (cbData < sizeof(SC_RECV_SIMOBJECT_DATA) - sizeof(DWORD) +
+                     sizeof(FlightAuxPkt))
+            return;
+        a = (const FlightAuxPkt*)&d->dwData;
+        str_field(g_flight.flight_id, sizeof(g_flight.flight_id),
+                  a->flight_id, (int)sizeof(a->flight_id));
+        g_flight.com_recv[0] = a->com_recv_1 != 0;
+        g_flight.com_recv[1] = a->com_recv_2 != 0;
+        g_flight.com_recv[2] = a->com_recv_3 != 0;
+        g_flight.light_logo  = a->lt_logo != 0;
+        g_flight.light_wing  = a->lt_wing != 0;
+        g_flight.light_recog = a->lt_recog != 0;
+        g_flight.light_cabin = a->lt_cabin != 0;
+        g_flight.aux_valid = 1;
+        return;
+    }
+
     if (d->dwRequestID != REQ_FLIGHT) return;
     if (d->dwDefineID != DEF_FLIGHT) return;
     if (cbData < sizeof(SC_RECV_SIMOBJECT_DATA) - sizeof(DWORD) + need) {
@@ -736,6 +850,10 @@ void datadefs_build_flight_json(char* out, int size) {
          * 缺这个字段就只能上报空机型。MSFS 的 title 通常是
          * "PMDG 737-800 Lufthansa" 这种，含足够的型号信息可反查。 */
         "\"aircraft_name\":\"%s\","
+        /* flight_id（Mode-S 航班标识）：XConnect 读
+         * sim/cockpit2/radios/actuators/flight_id，MSFS 用 ATC FLIGHT NUMBER。
+         * AUX 定义失败时为空串 —— 客户端按"未上报"处理。 */
+        "\"flight_id\":\"%s\","
         "\"registration\":\"%s\",\"registration_src\":\"%s\","
         "\"engine_count\":%d,"
         "\"latitude\":%.6f,\"longitude\":%.6f,"
@@ -747,17 +865,38 @@ void datadefs_build_flight_json(char* out, int size) {
         "\"com1_standby\":%d,\"com2_standby\":%d,\"com3_standby\":%d,"
         "\"com_transmit\":[%d,%d,%d],"
         "\"pilot_xmit\":%d,\"copilot_xmit\":%d,"
+        /* 音频面板（与 XConnect 字段集互通）：
+         *   com*_power   MSFS 无单台 COM 电源 SimVar，用总电门兜底（同源
+         *                audio_panel_on，XConnect 缺 dataref 时也是这么兜底）
+         *   audio_sel_*  COM RECEIVE:n（收听，AUX 遥测，失败时恒 0）
+         *   audio_vol_*  MSFS 无音量 SimVar → 收听=1.0 否则 0.0
+         *   copilot      MSFS 是单音频面板，副驾驶与机长同源
+         *   tx_com       1-based 发射台（0=未选中），由 pilot_xmit 派生 */
+        "\"com1_power\":%d,\"com2_power\":%d,\"com3_power\":%d,"
+        "\"audio_sel_com1\":%d,\"audio_sel_com2\":%d,"
+        "\"audio_sel_com3\":%d,\"has_audio_sel_com3\":1,"
+        "\"audio_vol_com1\":%.2f,\"audio_vol_com2\":%.2f,"
+        "\"audio_sel_com1_copilot\":%d,\"audio_sel_com2_copilot\":%d,"
+        "\"audio_vol_com1_copilot\":%.2f,\"audio_vol_com2_copilot\":%.2f,"
+        "\"tx_com\":%d,"
         /* 同时发 avionics_on 与 audio_panel_on：两者在 MSFS 侧同源
          * （ELECTRICAL MASTER BATTERY），但字段名不同。
          * XConnect 用 `avionics_on`，MConnect 原来只用 `audio_panel_on`，
          * 客户端要写两套判断。统一成两个都发，客户端任一有值即可。 */
         "\"com_receive_all\":%d,\"audio_panel_on\":%d,\"avionics_on\":%d,"
         "\"transponder\":%d,\"xpdr_mode\":%d,\"squark\":\"%s\","
+        /* TCAS：MSFS 2020 没有标准 TCAS 输出 SimVar（XP 侧读真实 TCAS
+         * dataref），2024 的 TCAS INTRUDER/MODE 枚举语义未核实 → 发 0。
+         * xpdr_sys/pwr/tcas_* 是 X-Plane 机型自定义 dataref（ToLiss 等），
+         * MSFS 无对应物 → 发 -1（客户端语义 = 该机型无此字段）。 */
         "\"tcas_filter\":0,\"tcas_alert\":0,\"tcas_advisory\":0,"
+        "\"xpdr_sys\":-1,\"xpdr_pwr\":-1,\"xpdr_tcas_mode\":-1,\"xpdr_tcas_alt\":-1,"
         "\"gear_deploy\":%.2f,"
         "\"flaps_ratio\":%.2f,\"throttle_ratio\":%.2f,"
         "\"parts\":{\"lights\":{\"strobe_on\":%d,\"landing_on\":%d,\"taxi_on\":%d,"
-        "\"beacon_on\":%d,\"nav_on\":%d},\"gear_down\":%d,\"flaps_pct\":%d,"
+        "\"beacon_on\":%d,\"nav_on\":%d,\"logo_on\":%d,"
+        "\"wing_on\":%d,\"recognition_on\":%d,\"cabin_on\":%d},"
+        "\"gear_down\":%d,\"flaps_pct\":%d,"
         "\"spoilers_out\":%d,%s"
         "\"on_ground\":%d}}",
         sc_sim_name(),
@@ -765,6 +904,7 @@ void datadefs_build_flight_json(char* out, int size) {
         /* aircraft_name 的实参：用 title（"PMDG 737-800 Lufthansa" 这种）。
          * 必须和上面格式串里新增的 %s 位置严格对应，否则后面全部错位。 */
         g_flight.title,
+        g_flight.flight_id,
         g_flight.atc_id,
         g_flight.atc_id[0] ? "atc_id" : "",
         en,
@@ -784,12 +924,21 @@ void datadefs_build_flight_json(char* out, int size) {
         g_flight.com_transmit[0], g_flight.com_transmit[1],
         g_flight.com_transmit[2],
         g_flight.pilot_xmit_type, g_flight.copilot_xmit_type,
+        g_flight.audio_panel_on, g_flight.audio_panel_on,
+        g_flight.audio_panel_on,
+        g_flight.com_recv[0], g_flight.com_recv[1], g_flight.com_recv[2],
+        (double)g_flight.com_recv[0], (double)g_flight.com_recv[1],
+        g_flight.com_recv[0], g_flight.com_recv[1],
+        (double)g_flight.com_recv[0], (double)g_flight.com_recv[1],
+        (g_flight.pilot_xmit_type >= 0) ? g_flight.pilot_xmit_type + 1 : 0,
         g_flight.com_receive_all, g_flight.audio_panel_on, g_flight.audio_panel_on,
         g_flight.transponder, g_flight.xpdr_state, squark,
         g_flight.gear_ratio > 0.5 ? 1.0 : 0.0,
         g_flight.flaps_ratio, g_flight.throttle_ratio,
         g_flight.light_strobe, g_flight.light_landing, g_flight.light_taxi,
         g_flight.light_beacon, g_flight.light_nav,
+        g_flight.light_logo, g_flight.light_wing,
+        g_flight.light_recog, g_flight.light_cabin,
         g_flight.gear_ratio > 0.5 ? 1 : 0, flaps_pct, spoilers_out,
         eng,
         g_flight.on_ground);

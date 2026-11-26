@@ -88,7 +88,8 @@ class Api:
         # MConnect 自动启动（无窗口；仅当 exe 存在且未运行时拉起）
         self._bridge = BridgeLauncher(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            on_log=lambda m: self._push("log", self._tr(m)))
+            on_log=lambda m: self._push("log", self._tr(m)),
+            toggle_labels=getattr(self._cfg, "msfs_toggle_labels", False))
         if self._cfg.auto_start_mconnect:
             self._bridge.start()
 

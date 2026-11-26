@@ -41,6 +41,12 @@
 #define CEV_COM2_XMIT       213   /* COM2_TRANSMIT_SELECT */
 #define CEV_COM3_XMIT       214   /* COM3_TRANSMIT_SELECT */
 #define CEV_COM_RECV_ALL    215   /* COM_RECEIVE_ALL_SET */
+/* 收听开关（XConnect "monitor" 字段互通）：逐台 toggle */
+#define CEV_COM1_RECV       216   /* COM1_RECEIVE_SELECT */
+#define CEV_COM2_RECV       217   /* COM2_RECEIVE_SELECT */
+#define CEV_COM3_RECV       218   /* COM3_RECEIVE_SELECT */
+/* MSFS 内置机模标签开关（呼号标签的显示开关，--labels 用） */
+#define CEV_TOGGLE_LABELS   219   /* TOGGLE_AIRCRAFT_LABELS */
 
 /* 命令种类 */
 typedef enum {
@@ -49,6 +55,7 @@ typedef enum {
     CMD_COM_SWAP,       /* 主备频率互换 */
     CMD_COM_XMIT,       /* 选定发射台（com_index = 1..3） */
     CMD_COM_RECV_ALL,   /* 设置"全收"开关 */
+    CMD_COM_RECV,       /* 收听开关 toggle（XConnect monitor 字段互通） */
     CMD_XPNDR_CODE,     /* 设置应答机 4 位码 */
     CMD_XPNDR_STATE,    /* 设置应答机模式（OFF/STBY/ON/ALT…） */
     CMD_XPNDR_IDENT,    /* 应答机 IDENT 脉冲 */
@@ -105,5 +112,10 @@ int  control_parse_squawk(const char* s);
  * MSFS 是 0=Off 1=Stby 2=Test 3=On 4=Alt 5=Ground，两者 2/3/4 位置不同，
  * 必须重映射（否则"设为 ON"会把应答机打到 Test，管制看不到你）。 */
 int  control_canonical_to_msfs_state(int st);
+
+/* 翻转 MSFS 内置"机模标签"（TOGGLE_AIRCRAFT_LABELS 事件，--labels 用）。
+ * 注意：事件是 toggle 语义且无状态可读 —— 若标签已开启会被关掉。
+ * 返回 1 = 已发送。 */
+int  control_toggle_aircraft_labels(void);
 
 #endif /* MCONNECT_CONTROL_H */

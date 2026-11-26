@@ -37,9 +37,12 @@ def _is_running(exe_name: str) -> bool:
 class BridgeLauncher:
     """管理 MConnect.exe 的生命周期（启动 / 可选停止）。"""
 
-    def __init__(self, app_dir: str, *, on_log: Optional[Callable[[str], None]] = None):
+    def __init__(self, app_dir: str, *,
+                 on_log: Optional[Callable[[str], None]] = None,
+                 toggle_labels: bool = False):
         self._app_dir = app_dir
         self._on_log = on_log
+        self._toggle_labels = bool(toggle_labels)
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._exe = os.path.join(app_dir, "MConnect", "build", "MConnect.exe")
@@ -67,8 +70,11 @@ class BridgeLauncher:
                 return False
             try:
                 flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                argv = [self._exe]
+                if self._toggle_labels:
+                    argv.append("--labels")
                 self._proc = subprocess.Popen(
-                    [self._exe],
+                    argv,
                     cwd=os.path.dirname(self._exe),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
