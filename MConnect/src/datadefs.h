@@ -21,6 +21,8 @@
 #define REQ_FLIGHT      1
 #define DEF_AI_POS      2    /* AI 飞机的写入用位置定义 */
 #define DEF_XPNDR_STATE 3    /* 应答机模式写入（TRANSPONDER STATE，可写 SimVar） */
+#define DEF_AI_PARTS    6    /* AI 飞机部件写入（起落架/襟翼/扰流板/油门）
+                              * 不能占用 4/5：那两个是 REQ_SYSSTATE/REQ_CPU_LOAD */
 #define REQ_SYSSTATE    4
 #define REQ_CPU_LOAD    5
 
@@ -42,6 +44,16 @@ typedef struct {
     double vel_body_y;
     double vel_body_z;
 } AiPoseRaw;
+
+/* AI 部件写入结构。字段顺序必须与 datadefs_register_ai_parts() 一致。
+ * 全部 FLOAT64；灯不走这里（SimVar 只读），走 TransmitClientEvent。 */
+typedef struct {
+    double gear_handle;       /* Bool 0/1 */
+    double flaps_left;        /* Percent Over 100, 0..1 */
+    double flaps_right;       /* Percent Over 100, 0..1 */
+    double spoilers;          /* Percent Over 100, 0..1 */
+    double throttle[4];       /* Percent Over 100, 0..1，按引擎掩码 */
+} AiPartsRaw;
 
 /* 本机数据快照（从 SIMOBJECT_DATA 解析出的原始值，未做协议换算） */
 typedef struct {
@@ -90,6 +102,14 @@ int  datadefs_register_ai(void);
 
 /* 注册应答机模式写入定义（反向控制用，可写 SimVar TRANSPONDER STATE）。 */
 int  datadefs_register_xpdr(void);
+
+/* 注册 AI 部件写入定义。失败时返回 -1，调用方应禁用部件渲染而不是崩溃。 */
+int  datadefs_register_ai_parts(void);
+
+/* 把 canonical 部件状态填成 AiPartsRaw。 */
+void datadefs_fill_ai_parts(AiPartsRaw* out, int gear_down,
+                            int flaps_pct, int spoilers_out,
+                            unsigned engines_mask, int engine_count);
 
 /* 处理 SIMCONNECT_RECV_SIMOBJECT_DATA（由派发回调转交）。 */
 void datadefs_on_simobject_data(const void* pkt, DWORD cbData);

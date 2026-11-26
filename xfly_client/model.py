@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 import time
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from . import aircraft_db
+from .aircraft_profile import AircraftParts, AircraftProfile, SOURCE_GUESS
 from .fsd import packet as pk
 from .fsd.parser import (
     AtcPositionData, PilotPositionData, ParsedPacket,
@@ -79,13 +81,30 @@ def _dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _merge_parts(dst: dict, src: dict) -> None:
-    """把增量 ACC 合并进已有部件表（嵌套字典逐层合并，其余覆盖）。"""
+    """把 ACC 合并进已有部件表。
+
+    swift 契约：is_full_data=true 整块替换（对端重新上线/请求全量后），
+    false/unset 才逐字段增量合并。旧实现无条件合并，对端重启后残留的
+    gear/lights 会一直盖住新值 —— 这正是"灯和起落架对不上"的一类根因。
+    """
+    if not src:
+        return
+    if src.get("is_full_data") is True:
+        dst.clear()
+        dst.update({k: v for k, v in src.items() if k != "is_full_data"})
+        return
     for k, v in src.items():
+        if k == "is_full_data":
+            continue
         if isinstance(v, dict) and isinstance(dst.get(k), dict):
             _merge_parts(dst[k], v)
         else:
             dst[k] = v
 
+
+# 第 ② 级诊断：下发插件的部件 JSON，按呼号 30s 节流。
+_PARTS_LOG_INTERVAL = 30.0
+_parts_log_at: dict[str, float] = {}
 
 _FACILITY_NAMES = {1: "FSS", 2: "DEL", 3: "GND", 4: "TWR", 5: "APP", 6: "CTR"}
 
@@ -557,9 +576,40 @@ class NetworkModel:
             for tr in pseen.values():
                 if tr.callsign.lower() in atc_callsigns:
                     continue  # 剔除与管制员同名的条目，防插件双重渲染
-                parts = tr.parts if isinstance(tr.parts, dict) else {}
+                # 统一中间层：机型档案决定引擎数/类型/起落架类别，
+                # canonical 部件负责三态解析与兜底；插件不再按单机写死。
+                raw_parts = tr.parts if isinstance(tr.parts, dict) else {}
+                measured = len(raw_parts.get("engines") or {})
+                profile = AircraftProfile.from_designator(
+                    tr.aircraft, measured_engines=measured)
+                if raw_parts:
+                    cp = AircraftParts.from_raw(
+                        raw_parts, source=raw_parts.get("parts_source") or SOURCE_GUESS)
+                    eff = cp.effective(profile)
+                    parts = dict(raw_parts)
+                    parts["engines"] = {
+                        str(i): {"on": bool(on)}
+                        for i, on in eff["engines"].items()
+                    }
+                    if eff["gear_down"] is not None:
+                        parts["gear_down"] = eff["gear_down"]
+                else:
+                    parts = {}
+                parts["engine_count"] = profile.engines or measured
+                parts["engine_type"] = profile.engine_type.value
+                parts["gear_type"] = profile.gear
+                parts["parts_source"] = (
+                    raw_parts.get("parts_source") or
+                    (SOURCE_GUESS if raw_parts else "not_set"))
+                if parts and (time.monotonic() -
+                              _parts_log_at.get(tr.callsign, 0.0)
+                              > _PARTS_LOG_INTERVAL):
+                    _parts_log_at[tr.callsign] = time.monotonic()
+                    self._log(
+                        f"[parts] roster {tr.callsign}: "
+                        f"{json.dumps(parts, separators=(',', ':'), ensure_ascii=False)}")
                 # ACC 的 on_ground 比 PBH 位更可信（部分客户端 PBH 地面位恒 0）
-                og = parts.get("on_ground", tr.on_ground)
+                og = raw_parts.get("on_ground", tr.on_ground)
                 player_list.append(PlayerEntry(
                     callsign=tr.callsign,
                     latitude=tr.lat,

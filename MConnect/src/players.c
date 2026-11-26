@@ -361,6 +361,118 @@ static int ai_write_pose(Player* p, double now) {
     return 1;
 }
 
+/* ---------------- AI 部件驱动 ---------------- */
+/*
+ * MSFS 的 AI 对象与 X-Plane 的 CSL 实例能力不同：
+ *   - 起落架/襟翼/扰流板/油门：SimVar 写入（DEF_AI_PARTS）
+ *   - 灯：LIGHT xxx SimVar 只读，只能按 ObjectID 发 SimConnect 事件
+ * 两者都做能力探测：第一次失败就全局禁用并打一条日志，避免每帧刷屏。
+ */
+#define CEV_AI_LIGHT_ON_BASE 220
+static int g_ai_parts_writable = 1;
+static int g_ai_parts_write_tried = 0;
+static int g_ai_parts_write_ok = 0;
+static int g_ai_light_events_ok = 0;
+static int g_ai_light_events_tried = 0;
+
+/* `--parts-probe` 用：把能力探测结果交给 main 打印结论。 */
+void players_parts_status(int* parts_writable, int* parts_tried,
+                          int* lights_ok, int* lights_tried) {
+    if (parts_writable) *parts_writable = g_ai_parts_writable;
+    if (parts_tried)    *parts_tried = g_ai_parts_write_tried;
+    if (lights_ok)      *lights_ok = g_ai_light_events_ok;
+    if (lights_tried)   *lights_tried = g_ai_light_events_tried;
+}
+
+static const DWORD kAiLightOn[6] = {
+    CEV_AI_LIGHT_ON_BASE,      /* beacon */
+    CEV_AI_LIGHT_ON_BASE + 2,  /* landing */
+    CEV_AI_LIGHT_ON_BASE + 4,  /* taxi */
+    CEV_AI_LIGHT_ON_BASE + 6,  /* nav */
+    CEV_AI_LIGHT_ON_BASE + 8,  /* strobe */
+    CEV_AI_LIGHT_ON_BASE + 10  /* logo */
+};
+static const char* kAiLightNames[6] = {
+    "BEACON_LIGHTS_ON", "LANDING_LIGHTS_ON", "TAXI_LIGHTS_ON",
+    "NAV_LIGHTS_ON", "STROBE_LIGHTS_ON", "LOGO_LIGHTS_ON"
+};
+
+static void ai_light_events_init(void) {
+    int i;
+    HRESULT hr = S_OK;
+    if (g_ai_light_events_tried) return;
+    g_ai_light_events_tried = 1;
+    if (!g_sc_handle || !g_sc.MapClientEventToSimEvent) return;
+    for (i = 0; i < 6; ++i) {
+        char off_name[64];
+        snprintf(off_name, sizeof(off_name), "%s", kAiLightNames[i]);
+        /* _ON → _OFF：事件名只在末尾替换，映射必须成对 */
+        {
+            char* p = strstr(off_name, "_ON");
+            if (p) memcpy(p, "_OFF", 4);
+        }
+        hr |= g_sc.MapClientEventToSimEvent(g_sc_handle, kAiLightOn[i],
+                                            kAiLightNames[i]);
+        hr |= g_sc.MapClientEventToSimEvent(g_sc_handle, kAiLightOn[i] + 1,
+                                            off_name);
+    }
+    if (FAILED(hr)) {
+        xc_logf("ai: light event map failed hr=0x%08lx (lights disabled)",
+                (unsigned long)hr);
+        return;
+    }
+    g_ai_light_events_ok = 1;
+}
+
+static void ai_write_lights(Player* p) {
+    int i;
+    if (!p->has_parts || !g_sc_handle || !g_sc.TransmitClientEvent) return;
+    ai_light_events_init();
+    if (!g_ai_light_events_ok || p->lights == p->lights_sent) return;
+    for (i = 0; i < 6; ++i) {
+        unsigned bit = 1u << i;
+        if ((p->lights & bit) == (p->lights_sent & bit)) continue;
+        HRESULT hr = g_sc.TransmitClientEvent(
+            g_sc_handle, p->object_id,
+            kAiLightOn[i] + ((p->lights & bit) ? 0u : 1u), 0,
+            SC_GROUP_PRIORITY_HIGHEST,
+            SC_EVENT_FLAG_GROUPID_IS_PRIORITY);
+        if (FAILED(hr)) {
+            g_ai_light_events_ok = 0;
+            xc_logf("ai: light event failed hr=0x%08lx on %s (lights disabled)",
+                    (unsigned long)hr, p->callsign);
+            return;
+        }
+    }
+    p->lights_sent = p->lights;
+}
+
+static void ai_write_parts(Player* p, const PositionFix* f) {
+    AiPartsRaw raw;
+    HRESULT hr;
+    int gear;
+
+    if (!p->has_parts || !g_ai_parts_writable ||
+        !g_sc_handle || !g_sc.SetDataOnSimObject || !p->object_id) return;
+
+    gear = p->has_gear ? p->gear_down : ((f && f->on_ground) ? 1 : 0);
+    if (!p->has_gear && p->gear_type[0] == 'f') gear = 1;
+    datadefs_fill_ai_parts(&raw, gear, p->flaps_pct, p->spoilers_out,
+                           p->engines_on, p->engine_count);
+
+    hr = g_sc.SetDataOnSimObject(g_sc_handle, SC_DATA_SET_FLAG_DEFAULT,
+                                 p->object_id, DEF_AI_PARTS, 1,
+                                 (DWORD)sizeof(AiPartsRaw), &raw);
+    g_ai_parts_write_tried = 1;
+    if (SUCCEEDED(hr)) g_ai_parts_write_ok = 1;
+    if (FAILED(hr)) {
+        g_ai_parts_writable = 0;
+        xc_logf("ai: parts SetDataOnSimObject failed hr=0x%08lx on %s "
+                "(parts disabled, struct=%d)",
+                (unsigned long)hr, p->callsign, (int)sizeof(AiPartsRaw));
+    }
+}
+
 /* ---------------- 主更新循环 ---------------- */
 
 void update_players(double now) {
@@ -416,6 +528,20 @@ void update_players(double now) {
         if (f && p->cur_alt < 0.0) p->cur_alt = 0.0;   /* 防御：负高度异常 */
 
         ai_write_pose(p, now);
+        ai_write_parts(p, f);
+        ai_write_lights(p);
+
+        /* 部件写入诊断（节流 30s，卡断层用：raw → JSON → 动画三层对照） */
+        if (p->has_parts && now - p->last_parts_log > 30.0) {
+            p->last_parts_log = now;
+            xc_logf("anim: %s src=%s gear=%d flaps=%d spoiler=%d "
+                    "eng=%d/%d(%s) lights=%u parts_writable=%d lights_ok=%d",
+                    p->callsign, p->parts_source[0] ? p->parts_source : "-",
+                    p->gear_down, p->flaps_pct, p->spoilers_out,
+                    (int)p->engines_on, p->engine_count,
+                    p->engine_type[0] ? p->engine_type : "?",
+                    p->lights, g_ai_parts_writable, g_ai_light_events_ok);
+        }
 
         /* 地面吸附诊断（节流 10s） */
         if (f && f->on_ground && f->agl > 0.0 && f->agl < 400.0 / 3.280839895 &&

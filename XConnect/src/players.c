@@ -332,9 +332,16 @@ void update_players(double now) {
             float spoiler;
             if (p->has_parts && p->has_gear) {
                 gear = p->gear_down ? 1.0f : 0.0f;
+            } else if (p->gear_type[0] == 'f') {
+                gear = 1.0f;              /* 固定起落架：任何阶段都视为放下 */
             } else {
-                gear = (f->on_ground || f->alt < 60.0 || f->gs < 40.0)
-                           ? 1.0f : 0.0f;
+                /* 旧代码用 MSL 高度 <60ft 判断在地面：高原机场（如 Denver
+                 * 5400ft）永远不成立，且巡航 140kt 也会被误判成放下。
+                 * 改用 AGL；无 AGL 时才退回低地速启发值。 */
+                int agl_known = (f->agl >= 0.0);
+                gear = (f->on_ground ||
+                        (agl_known && f->agl < 18.0) ||
+                        (!agl_known && f->gs < 40.0)) ? 1.0f : 0.0f;
             }
             anim[0] = gear;   /* gear_ratio      */
             anim[1] = gear;   /* gear_ratio[0]   */
@@ -358,6 +365,7 @@ void update_players(double now) {
                 anim[17] = ((p->lights & 16u) &&
                             fmod(sim_time, 1.0) < 0.08) ? 1.0f : 0.0f;
                 anim[18] = (p->lights & 8u) ? 1.0f : 0.0f;   /* nav     */
+                anim[35] = (p->lights & 32u) ? 1.0f : 0.0f;  /* logo    */
             } else {
                 /* 没有 ACC 的客户端：维持原启发值（全亮），至少夜里可见 */
                 anim[14] = 1.0f;
@@ -365,6 +373,7 @@ void update_players(double now) {
                 anim[16] = 1.0f;
                 anim[17] = 1.0f;
                 anim[18] = 1.0f;
+                anim[35] = 1.0f;
             }
 
             /* 轮胎转动/压缩/触地：由地速与 on_ground 驱动 */
@@ -381,29 +390,64 @@ void update_players(double now) {
              * 之前这些值恒为 0，所以即使对端双发已启动，扇叶也不转。
              * 转角用单调时间计算（与帧率无关），引擎在转时持续累加。 */
             {
-                int any_engine;
+                int i, n, any_engine;
+                double rpm;
                 if (p->has_parts)
                     any_engine = p->engines_on != 0;
                 else
                     /* 没有 ACC：起飞/滑行中的飞机默认引擎在转，停机不转 */
                     any_engine = (!f->on_ground || f->gs > 10.0);
-                if (any_engine) {
-                    const float fan_deg = (float)fmod(now * 1200.0, 360.0);
-                    anim[9] = 0.8f;              /* thrust_ratio：选中 0.5-1.0 高速扇叶层 */
-                    anim[21] = fan_deg;          /* prop_rotation_angle_deg */
-                    anim[22] = fan_deg;          /* engine_rotation_angle_deg */
-                    anim[23] = fan_deg;          /* ...[0] */
-                    anim[24] = 20.0f;            /* speed rad/s */
-                    anim[25] = 20.0f;            /* speed rad/s [0] */
-                    /* CSL OBJ 中不同部件分别使用 0.1s、0.9s、1s、5s 的
-                     * ANIM_rotate 周期。必须传累计运行时间，由 OBJ 动画段按各自
-                     * 周期处理；统一取模 0.1 会让 0.9/5s 的主风扇几乎不动。 */
-                    anim[34] = (float)sim_time; 
-                } else {
-                    anim[9] = 0.0f;
+
+                /* 引擎数来自机型档案（客户端查 ICAO 库），档案未知时按实测
+                 * 掩码最高位推断，最后才退回 1。绝不按"固定 2 发"写死。 */
+                n = p->engine_count;
+                if (n <= 0) {
+                    for (i = 8; i >= 1; --i)
+                        if (p->engines_on & (1u << (i - 1))) { n = i; break; }
+                }
+                if (n < 1) n = 1;
+                if (n > 8) n = 8;
+
+                /* 引擎类型决定动画语义：J=风扇、T/P=螺旋桨、R=旋翼。
+                 * 类型同样来自档案，不在渲染处按机型名特判。 */
+                switch (p->engine_type[0]) {
+                case 'T': rpm = 2400.0; break;
+                case 'P': rpm = 3000.0; break;
+                case 'R': rpm = 1200.0; break;
+                default:  rpm = 1200.0; break;
+                }
+
+                anim[9] = any_engine ? 0.8f : 0.0f;   /* 高速扇叶层 */
+                /* CSL OBJ 的 ANIM_rotate 周期有 0.1/0.9/1/5s 多种，
+                 * 必须传累计运行时间让 OBJ 自己取模。 */
+                anim[34] = any_engine ? (float)sim_time : 0.0f;
+
+                for (i = 0; i < n; ++i) {
+                    int on = p->has_parts
+                                 ? ((p->engines_on >> i) & 1)
+                                 : any_engine;
+                    float ang = on ? (float)fmod(now * rpm, 360.0) : 0.0f;
+                    float spd = on ? (float)(rpm / 60.0) : 0.0f;
+                    int ai, si, pi;
+                    if (i == 0) {
+                        ai = 23; si = 25; pi = 21;   /* [0] 与通用键 */
+                        anim[22] = ang;              /* engine_rotation_angle_deg */
+                        anim[24] = spd;
+                    } else {
+                        /* 三组各自连续排布，绝不能让 4 号引擎串到
+                         * prop_rotation_angle_deg[1] 上（旧映射的 bug）。 */
+                        ai = CSL_DREF_ENG_ANGLE_N1 + (i - 1);
+                        si = CSL_DREF_ENG_SPEED_N1 + (i - 1);
+                        pi = CSL_DREF_PROP_ANGLE_N1 + (i - 1);
+                    }
+                    anim[ai] = ang;
+                    anim[si] = spd;
+                    anim[pi] = ang;
+                }
+                /* 未启动的引擎清掉索引动画（>1 号的索引在上方循环已置 0） */
+                if (!any_engine && !p->has_parts) {
                     anim[21] = anim[22] = anim[23] = 0.0f;
                     anim[24] = anim[25] = 0.0f;
-                    anim[34] = 0.0f;
                 }
             }
         }
@@ -458,10 +502,14 @@ void update_players(double now) {
                 p->anim_log_flaps = p->flaps_pct;
                 p->anim_log_engines = p->engines_on;
                 p->anim_log_lights = p->lights;
-                xconnect_logf("anim: %s gear=%.0f flap=%.0f%% lights=%u "
-                              "eng=%d thrust=%.1f sim=%.3f",
+                xconnect_logf("anim: %s gear=%.0f flap=%.0f%% spoiler=%.0f "
+                              "lights=%u logo=%.0f eng=%d/%d(%s) "
+                              "fan0=%.0f fan1=%.0f thrust=%.1f sim=%.3f",
                               p->callsign, anim[0], anim[4] * 100.0f,
-                              p->lights, p->engines_on, anim[9], anim[34]);
+                              anim[5], p->lights, anim[35],
+                              p->engines_on, p->engine_count,
+                              p->engine_type[0] ? p->engine_type : "?",
+                              anim[23], anim[36], anim[9], anim[34]);
             }
             csl_set_position(&p->model, p->cur_lat, p->cur_lon, alt,
                              p->cur_heading, p->cur_pitch, p->cur_roll,

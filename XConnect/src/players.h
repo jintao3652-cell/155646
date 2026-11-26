@@ -68,8 +68,14 @@ typedef struct {
     int flaps_pct;       /* 0..100 */
     int gear_down;       /* 0/1 */
     int spoilers_out;    /* 0/1 */
-    unsigned lights;     /* bit0 beacon, bit1 landing, bit2 taxi, bit3 nav, bit4 strobe */
-    int engines_on;      /* bit0..bit3 = 1..4 号引擎在运转 */
+    unsigned lights;     /* bit0 beacon, bit1 landing, bit2 taxi, bit3 nav,
+	                      * bit4 strobe, bit5 logo */
+    int engines_on;      /* bit0..bit7 = 1..8 号引擎在运转（1-based） */
+    /* 机型档案（由客户端从 ICAO 库下发，不在这里硬编码机型） */
+    int engine_count;    /* 0 = 未知，按实测 mask 决定 */
+    char engine_type[4]; /* J/T/P/R/?，驱动螺旋桨 vs 风扇转速 */
+    char gear_type[12];  /* fixed | retractable | unknown */
+    char parts_source[16]; /* fsd_parts | guessed | not_set */
     int logged_parts;    /* 是否记录过 parts 状态 */
     int parts_log_gear;
     int parts_log_flaps;

@@ -138,8 +138,11 @@ static float g_parts_gear_ratio = 0.0f;
 /* 襟翼展开比例 0..1（由整数百分比换算回来，供 flight_data.flaps_ratio 用）*/
 static float g_parts_flaps_ratio = 0.0f;
 static int g_parts_spoilers = 0;
-static int g_parts_eng_on[4] = { 0, 0, 0, 0 };
-static float g_parts_eng_n1[4] = { 0, 0, 0, 0 };
+/* 引擎上限 8：X-Plane 的 ENGN_running / N1 数组本来就是 16 项，
+ * 旧代码截到 4 是为了"简化"，导致 5~8 发机型（An-124 等）状态丢失。 */
+#define MAX_ENGINES 8
+static int g_parts_eng_on[MAX_ENGINES] = { 0 };
+static float g_parts_eng_n1[MAX_ENGINES] = { 0 };
 static int g_num_engines = 0;          /* 本机真实发动机数量（0 = 未知） */
 
 /* ---------------- dataref 安全读取 ---------------- */
@@ -921,7 +924,7 @@ void build_flight_data(char* out, int size) {
 
     /* 机模部件（机模配置 ACC 上报，与 swift CAircraftParts JSON 键一致） */
     {
-        float n1[4] = { 0, 0, 0, 0 };
+        float n1[MAX_ENGINES] = { 0 };
         int i;
         /* 真实发动机数量（A333=2 / B744=4 / C172=1）。之前固定发 4 组，
          * 双发机多出两台永远关车的"幽灵引擎"，服务器/客户端据此判断机型
@@ -929,8 +932,8 @@ void build_flight_data(char* out, int size) {
         g_num_engines = g_drefs[DR_NUM_ENGINES]
                         ? dref_int(g_drefs[DR_NUM_ENGINES]) : 0;
         if (g_num_engines < 0) g_num_engines = 0;
-        if (g_num_engines > 4) g_num_engines = 4;   /* 本插件最多支持 4 发 */
-        if (g_drefs[DR_N1]) XPLMGetDatavf(g_drefs[DR_N1], n1, 0, 4);
+        if (g_num_engines > MAX_ENGINES) g_num_engines = MAX_ENGINES;
+        if (g_drefs[DR_N1]) XPLMGetDatavf(g_drefs[DR_N1], n1, 0, MAX_ENGINES);
         g_parts_nav = dref_int(g_drefs[DR_NAV_LT]) > 0;
         g_parts_strobe = dref_int(g_drefs[DR_STROBE_LT]) > 0;
         g_parts_landing = dref_int(g_drefs[DR_LANDING_LT]) > 0;
@@ -991,7 +994,7 @@ void build_flight_data(char* out, int size) {
         g_parts_spoilers = dref_float(g_drefs[DR_SPLR]) > 0.1;
         /* N1 可能为 NaN（引擎未启动等）：消毒为 0，否则 JSON 输出 "NaN" 非法，
          * 服务器解析失败导致后续配置更新全部被丢弃 */
-        for (i = 0; i < 4; i++) {
+        for (i = 0; i < MAX_ENGINES; i++) {
             float v = n1[i];
             if (!(v > 0.0f && v < 100.0f)) v = 0.0f;   /* NaN / 负数 / 越界 → 0 */
             g_parts_eng_n1[i] = v;
@@ -1009,27 +1012,61 @@ void build_flight_data(char* out, int size) {
             int run[16];
             memset(run, 0, sizeof(run));
             XPLMGetDatavi(g_drefs[DR_ENG_RUNNING], run, 0, 16);
-            for (i = 0; i < 4; i++) g_parts_eng_on[i] = run[i] ? 1 : 0;
+            for (i = 0; i < MAX_ENGINES; i++)
+                g_parts_eng_on[i] = run[i] ? 1 : 0;
         } else {
-            for (i = 0; i < 4; i++)
+            for (i = 0; i < MAX_ENGINES; i++)
                 g_parts_eng_on[i] = g_parts_eng_n1[i] > 5.0f;
         }
         /* 引擎状态变化时记一行（不是每帧）。用于核对
          * "编号 ↔ N1 数组下标" 的映射，以及 on 判定阈值是否合适。
          * N1_percent 是 float[16]，下标 0 = 1 号引擎。 */
         {
-            static int last_on[4] = { -1, -1, -1, -1 };
+            static int last_on[MAX_ENGINES] = { -1, -1, -1, -1, -1, -1, -1, -1 };
             int changed = 0;
-            for (i = 0; i < 4; i++)
+            for (i = 0; i < MAX_ENGINES; i++)
                 if (last_on[i] != g_parts_eng_on[i]) changed = 1;
             if (changed) {
-                for (i = 0; i < 4; i++) last_on[i] = g_parts_eng_on[i];
-                xconnect_logf("engines: count=%d  N1=[%.1f/%.1f/%.1f/%.1f]  "
-                              "on=[%d/%d/%d/%d]  src=%s",
-                              g_num_engines, n1[0], n1[1], n1[2], n1[3],
+                for (i = 0; i < MAX_ENGINES; i++) last_on[i] = g_parts_eng_on[i];
+                xconnect_logf("engines: count=%d N1=[%.0f/%.0f/%.0f/%.0f/%.0f/%.0f/%.0f/%.0f] "
+                              "on=[%d/%d/%d/%d/%d/%d/%d/%d] src=%s",
+                              g_num_engines,
+                              n1[0], n1[1], n1[2], n1[3],
+                              n1[4], n1[5], n1[6], n1[7],
                               g_parts_eng_on[0], g_parts_eng_on[1],
                               g_parts_eng_on[2], g_parts_eng_on[3],
+                              g_parts_eng_on[4], g_parts_eng_on[5],
+                              g_parts_eng_on[6], g_parts_eng_on[7],
                               g_drefs[DR_ENG_RUNNING] ? "ENGN_running" : "N1>5%");
+            }
+        }
+        /* 第 ① 级诊断：模拟器原始读数。与客户端 JSON、插件动画日志
+         * 三级对照即可定位断层在哪一层。只在值变化时打一行。 */
+        {
+            static int last_lt[5] = { -1, -1, -1, -1, -1 };
+            static float last_gear = -1.0f;
+            static int last_flaps = -1, last_spoiler = -1, last_og = -1;
+            int lt[5];
+            int changed = 0, k;
+            lt[0] = g_parts_nav;    lt[1] = g_parts_strobe;
+            lt[2] = g_parts_landing; lt[3] = g_parts_taxi;
+            lt[4] = g_parts_beacon;
+            for (k = 0; k < 5; k++) if (last_lt[k] != lt[k]) changed = 1;
+            if (last_gear != g_parts_gear_ratio ||
+                last_flaps != g_parts_flaps ||
+                last_spoiler != g_parts_spoilers ||
+                last_og != g_parts_onground) changed = 1;
+            if (changed) {
+                for (k = 0; k < 5; k++) last_lt[k] = lt[k];
+                last_gear = g_parts_gear_ratio;
+                last_flaps = g_parts_flaps;
+                last_spoiler = g_parts_spoilers;
+                last_og = g_parts_onground;
+                xconnect_logf("raw: nav=%d strobe=%d landing=%d taxi=%d beacon=%d "
+                              "gear=%.2f flaps=%d spoiler=%d onGround=%d engN=%d",
+                              lt[0], lt[1], lt[2], lt[3], lt[4],
+                              g_parts_gear_ratio, g_parts_flaps,
+                              g_parts_spoilers, g_parts_onground, g_num_engines);
             }
         }
     }
@@ -1057,7 +1094,15 @@ void build_flight_data(char* out, int size) {
         char eng[512];
         int ei;
         int el = 0;
-        int en = g_num_engines > 0 ? g_num_engines : 2;
+        int en = g_num_engines;
+        if (en <= 0) {
+            /* 机模没提供 ENG_N 时的兜底：按实测 on 掩码最高位推断，
+             * 再不行就报 1 台。旧代码固定按 2 发上报，双发以下的机模会
+             * 凭空多出一台"幽灵引擎"。 */
+            for (en = MAX_ENGINES; en >= 1; --en)
+                if (g_parts_eng_on[en - 1]) break;
+            if (en < 1) en = 1;
+        }
         /* **JSON 对象**，不是数组！键是发动机编号（1 基），值是该台状态。
          *
          * swift 的 CAircraftEngineList::toJson() 实现：
@@ -1076,7 +1121,7 @@ void build_flight_data(char* out, int size) {
          * XSTR_APPEND 自动算剩余空间并把位置夹回 [0, sizeof-1]。
          * （4 台引擎约 100 字节、缓冲 512，正常不触发，但必须堵死。） */
         XSTR_APPEND(eng, el, "\"engines\":{");
-        for (ei = 0; ei < en && ei < 4; ei++) {
+        for (ei = 0; ei < en && ei < MAX_ENGINES; ei++) {
             /* **只发 on，不发 rpm_pct**。
              *
              * swift 源码里 CAircraftEngine 的 rpmPct 没有 DisabledForJson，

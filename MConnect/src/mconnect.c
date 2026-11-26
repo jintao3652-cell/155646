@@ -30,6 +30,7 @@
 #include "json.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -133,6 +134,70 @@ static void jstr(const Json* obj, const char* key, char* dst, int cap) {
         snprintf(dst, (size_t)cap, "%s", t->sval);
 }
 
+/* 解析客户端下发的 canonical parts（与 XConnect 完全同一 schema）。
+ * 只在网络线程调用，持 g_players_lock；不碰 SimConnect。 */
+static void parse_player_parts(const Json* el, Player* p) {
+    const Json* parts = json_get(el, "parts");
+    const Json* lights;
+    const Json* engines;
+    const Json* e;
+    double v;
+    unsigned mask = 0;
+    unsigned emask = 0;
+
+    if (!parts || parts->type != JSON_OBJ) return;
+    p->has_parts = 1;
+
+    lights = json_get(parts, "lights");
+    if (lights && lights->type == JSON_OBJ) {
+        if (jnum(lights, "beacon_on", &v) && v != 0.0) mask |= 1u;
+        if (jnum(lights, "landing_on", &v) && v != 0.0) mask |= 2u;
+        if (jnum(lights, "taxi_on", &v) && v != 0.0) mask |= 4u;
+        if (jnum(lights, "nav_on", &v) && v != 0.0) mask |= 8u;
+        if (jnum(lights, "strobe_on", &v) && v != 0.0) mask |= 16u;
+        if (jnum(lights, "logo_on", &v) && v != 0.0) mask |= 32u;
+        p->lights = mask;
+    }
+    if (jnum(parts, "gear_down", &v)) {
+        p->gear_down = v != 0.0;
+        p->has_gear = 1;
+    }
+    if (jnum(parts, "flaps_pct", &v)) {
+        int fp = (int)(v + 0.5);
+        if (fp < 0) fp = 0;
+        if (fp > 100) fp = 100;
+        p->flaps_pct = fp;
+    }
+    if (jnum(parts, "spoilers_out", &v)) p->spoilers_out = v != 0.0;
+
+    engines = json_get(parts, "engines");
+    if (engines && engines->type == JSON_OBJ) {
+        for (e = engines->child; e; e = e->next) {
+            int idx;
+            if (!e->key || e->type != JSON_OBJ) continue;
+            idx = atoi(e->key);
+            if (idx >= 1 && idx <= 8 &&
+                jnum(e, "on", &v) && v != 0.0)
+                emask |= 1u << (idx - 1);
+        }
+        p->engines_on = emask;
+    }
+    if (jnum(parts, "engine_count", &v)) {
+        int n = (int)(v + 0.5);
+        p->engine_count = (n >= 0 && n <= 8) ? n : 0;
+    }
+    jstr(parts, "engine_type", p->engine_type, sizeof(p->engine_type));
+    jstr(parts, "gear_type", p->gear_type, sizeof(p->gear_type));
+    jstr(parts, "parts_source", p->parts_source, sizeof(p->parts_source));
+
+    if (g_verbose_flag)
+        xc_logf("parts: %s src=%s gear=%d(has=%d) flaps=%d eng=%d/%d(%s) lights=%u",
+                p->callsign, p->parts_source[0] ? p->parts_source : "-",
+                p->gear_down, p->has_gear, p->flaps_pct,
+                (int)p->engines_on, p->engine_count,
+                p->engine_type[0] ? p->engine_type : "?", p->lights);
+}
+
 static void handle_player_list(const Json* root) {
     const Json* data = json_get(root, "data");
     int i, n, updated = 0;
@@ -196,6 +261,7 @@ static void handle_player_list(const Json* root) {
         jnum(el, "ground_speed", &gs);
         if (jnum(el, "altitude_agl", &v) && v >= 0.0) agl_ft = v;
         if (jnum(el, "on_ground", &v)) on_ground = v != 0.0;
+        parse_player_parts(el, p);
 
         /* 机型串清洗：他机可能发 "B738/W"、"b738 " 这类脏值 */
         if (p->icao[0]) {
@@ -607,6 +673,7 @@ int main(int argc, char** argv) {
     int dump_input = 0;
     int dump_wasm = 0;
     int dump_profiles = 0;
+    int parts_probe = 0;
 
     SetConsoleOutputCP(CP_UTF8);
     init_paths();
@@ -637,6 +704,10 @@ int main(int argc, char** argv) {
             /* 打印机型档案表（不连模拟器）。用于确认某机型被哪个档案命中、
              * 该档案支持哪些操作，以及各机模的已知限制。 */
             dump_profiles = 1;
+        } else if (_stricmp(arg, "--parts-probe") == 0) {
+            /* 真机能力探针：注入一架带完整 canonical parts 的临时 AI 飞机，
+             * 观察 SimVar 写入与灯光事件在当前 MSFS 版本是否被接受，打印结论后退出。 */
+            parts_probe = 1;
         } else if (_stricmp(arg, "--help") == 0 || _stricmp(arg, "-h") == 0) {
             printf("MConnect %s — XFlySim MSFS 数据桥接 + AI 交通渲染\n\n"
                    "  MConnect.exe [选项]\n\n"
@@ -646,6 +717,7 @@ int main(int argc, char** argv) {
                    "  --dump-input       把当前机模的 Input Events 表写入日志（调试深度机模用）\n"
                    "  --dump-wasm        检查 WASM 桥（MobiFlight 模块）是否可用\n"
                    "  --dump-profiles    打印机型档案表（各机模的实测写法与限制）\n"
+                   "  --parts-probe      真机探针：注入临时 AI 飞机，检测部件 SimVar/灯光事件是否可写\n"
                    "  --simconnect <p>   指定 SimConnect.dll 路径（或所在目录）\n"
                    "  --verbose, -v      详细日志（打印每批玩家/枚举分页）\n"
                    "  --help, -h         显示本帮助\n",
@@ -749,12 +821,71 @@ int main(int argc, char** argv) {
     if (datadefs_register_xpdr() != 0) {
         xc_infof("[!] 应答机模式写入不可用（频率/码仍可设置）");
     }
+    if (datadefs_register_ai_parts() != 0) {
+        xc_infof("[!] AI 部件写入不可用（位置/其余功能正常）");
+    }
 
     /* 4b. 反向控制事件映射（应答机/频率设置） */
     if (control_init() != 0) {
         xc_infof("[!] 反向控制事件注册不完整，部分写入可能无效（详见日志）");
     } else {
         xc_infof("  反向控制: 应答机 / COM1-3 频率 可写");
+    }
+
+    /* 4c. 真机能力探针：用一架临时 AI 飞机把 canonical parts 完整走一遍。
+     * CI 无法验证"SimVar 对 AI 对象是否真的可写"，只能在真机跑这个开关。
+     * 不启动网络线程，12 秒后打印结论并退出。 */
+    if (parts_probe) {
+        char probe_json[1200];
+        Json* probe_root;
+        int waited = 0;
+        int active = 0, pending = 0, loaded_n = 0;
+        char loaded[8][8] = { { 0 } };
+        int pw = 0, pt = 0, lo = 0, lt = 0;
+        double lat = g_flight.valid ? g_flight.lat_deg : 0.0;
+        double lon = g_flight.valid ? g_flight.lon_deg : 0.0;
+        double alt = g_flight.valid ? g_flight.alt_msl_ft : 0.0;
+
+        xc_infof("  parts 探针：注入临时 AI 飞机 XPROBE1，约 12 秒后输出结论");
+        /* 探针提前返回，不会走到下面正常的后台扫描；这里先启动以便匹配 C172 容器标题 */
+        catalog_start_scan(scan_dir[0] ? scan_dir : NULL);
+        snprintf(probe_json, sizeof(probe_json),
+                 "{\"data\":[{\"callsign\":\"XPROBE1\",\"aircraft\":\"C172\","
+                 "\"latitude\":%.7f,\"longitude\":%.7f,\"altitude\":%.1f,"
+                 "\"heading\":0,\"ground_speed\":0,\"on_ground\":1,"
+                 "\"parts\":{\"gear_down\":1,\"flaps_pct\":0,\"spoilers_out\":0,"
+                 "\"on_ground\":1,\"engine_count\":1,\"engine_type\":\"P\","
+                 "\"gear_type\":\"fixed\",\"parts_source\":\"fsd_parts\","
+                 "\"engines\":{\"1\":{\"on\":0}},"
+                 "\"lights\":{\"beacon_on\":1,\"landing_on\":1,\"taxi_on\":1,"
+                 "\"nav_on\":1,\"strobe_on\":1,\"logo_on\":1}}}]}",
+                 lat, lon, alt);
+        probe_root = json_parse(probe_json);
+        if (probe_root) {
+            handle_player_list(probe_root);
+            json_free(probe_root);
+        } else {
+            xc_infof("[x] 探针 JSON 构造失败");
+        }
+        while (waited < 12000) {
+            g_sc.CallDispatch(g_sc_handle, dispatch_proc, NULL);
+            update_players(xc_now_sec());
+            Sleep(100);
+            waited += 100;
+        }
+        players_stats(&active, &pending, &loaded_n, loaded, 8);
+        players_parts_status(&pw, &pt, &lo, &lt);
+        xc_infof("parts probe: ai_objects=%d pending=%d "
+                 "parts_setdata=%s light_events=%s",
+                 active, pending,
+                 pt ? (pw ? "OK" : "FAILED") : "NOT_TRIED",
+                 lt ? (lo ? "OK" : "FAILED") : "NOT_TRIED");
+        if (active == 0)
+            xc_infof("[!] 未创建出 AI 对象：确认已进入飞行（不是主菜单），并检查机型目录");
+        players_remove_all();
+        catalog_stop(500);
+        sc_close();
+        return 0;
     }
 
     /* 5. 机型目录（后台扫描，不阻塞） */

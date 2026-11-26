@@ -106,6 +106,7 @@ MConnect.exe [选项]
   --dump-input       把当前机模的 Input Events 表写入日志（调试深度机模）
   --dump-wasm        检查 WASM 桥（MobiFlight 模块）是否可用
   --dump-profiles    打印机型档案表（各机模实测写法与已知限制）
+  --parts-probe      真机探针：注入临时 AI 飞机，检测部件 SimVar/灯光事件是否可写
   --simconnect <p>   指定 SimConnect.dll 路径或所在目录
   --verbose, -v      详细日志
 ```
@@ -489,7 +490,12 @@ MobiFlight，因为协议简单、且用户装机率更高（MobiFlight Connecto
 ```bash
 MConnect.exe --dump-input    # 列出当前机模全部 InputEvent（查按钮名）
 MConnect.exe --dump-wasm      # 检查 WASM 桥是否可用 + 模块版本
+MConnect.exe --parts-probe    # 真机验证他机起落架/襟翼/油门/灯光能否被驱动
 ```
+
+`--parts-probe` 需先进入飞行，约 12 秒后打印 `parts probe: ai_objects=1
+parts_setdata=OK light_events=OK`。任一项 `FAILED` 表示该写入通道在当前
+MSFS 版本不可用，插件会自动禁用它，位置渲染与其他功能不受影响。
 
 ## 渲染与平滑
 
@@ -526,8 +532,11 @@ SimConnect 客户端**不是线程安全的**（官方文档明确说明），�
 - **管制目标不渲染**：`Send:ATC` 里的塔台/管制没有可注入的对应模型，仅记录数量
 - **AI 飞机可能被模拟器回收**：撞地、超距、AI 交通密度设置过低时模拟器会
   自己删除对象；`SetDataOnSimObject` 失败会自动重建
-- **他机动画不完整**：AI 飞机的襟翼/起落架/灯光由模拟器 AI 决定，无法
-  按对端遥测逐项驱动（与 XConnect 的 CSL dataref 动画是能力差异，不是 bug）
+- **他机动画受模拟器能力限制**：MConnect 已消费对端 `parts`（灯/起落架/襟翼/
+  扰流板/引擎），起落架、襟翼、扰流板、油门通过 `DEF_AI_PARTS` 写入，
+  灯光按 ObjectID 发 SimConnect 事件。两类写入都会探测能力：若当前 MSFS
+  版本/机型不接受，会打一条日志并全局禁用该通道，位置渲染不受影响。
+  因此"灯/动画不跟随"时先看日志里 `parts_writable` / `lights_ok`。
 - **反向控制受机模实现限制**：少数第三方机模不响应标准 COM/XPNDR 事件
   （需要走 LVAR/自定义事件）。MConnect 会退到 Input Events 通道，但**设置
   具体频率值**没有对应 InputEvent（面板按钮只能"转一档"），只有主备互换

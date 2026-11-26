@@ -42,6 +42,9 @@ import zlib
 from typing import Optional
 
 _DB_FILE = "aircraft_db.b64"
+# designator → 引擎类型字母（J/T/P/R）。从 swift aircrafticao.json 的
+# `engine` 字段导出，独立成小文件以免改 6 元组主库格式。
+_ENGINE_TYPES_FILE = "aircraft_engine_types.b64"
 # designator → swift 数据库里的记录 id（用于拼 LIVERY=SWIFT_L..A<id>M..）
 _ID_FILE = "_aircraft_ids.b64"
 _db_lock = threading.Lock()
@@ -50,6 +53,14 @@ _db: Optional[list[tuple]] = None
 # 避免每次都对 1 万条做全表子串扫描。
 _by_token: Optional[dict[str, list[int]]] = None
 _ids: Optional[dict[str, int]] = None
+_engine_types: Optional[dict[str, str]] = None
+
+# 本地补充表里的机型不在 swift DB 中，单独标注引擎类型。
+_LOCAL_ENGINE_TYPES: dict[str, str] = {
+    "C919": "J", "AJ27": "T", "Y20": "T", "YY20": "T", "J20": "J",
+    "AG60": "T", "MA60": "T", "Z20": "R", "C929": "J",
+    "B779": "J", "B778": "J",
+}
 
 # ---- 本地补充表（不在 swift 源里的机型）----
 #
@@ -342,16 +353,42 @@ def _load() -> list[tuple]:
         return _db
 
 
-def _combined_type(engines: int, wtc: str) -> str:
-    """粗略的 combinedType（wtc 首字符 + 引擎数 + 引擎类型）。
+def _load_engine_types() -> dict[str, str]:
+    """惰性加载 designator → 引擎类型（J/T/P/R）表。"""
+    global _engine_types
+    if _engine_types is not None:
+        return _engine_types
+    import os
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     _ENGINE_TYPES_FILE)
+    with open(p, "rb") as f:
+        blob = b"".join(
+            ln for ln in f.read().splitlines() if not ln.startswith(b"#")
+        )
+    data: dict[str, str] = json.loads(zlib.decompress(base64.b64decode(blob)))
+    data.update({k.upper(): v for k, v in _LOCAL_ENGINE_TYPES.items()})
+    _engine_types = data
+    return data
 
-    swift 的 combinedType 形如 `L2J`（轻/双发/喷气）。我们只有 wtc 和
-    引擎数，引擎类型按民用喷气占多数猜 J —— 这个函数只用于打分兜底，
-    精确度要求不高。
+
+def engine_type_of(designator: str) -> str:
+    """查机型引擎类型字母；未知返回空串（调用方再走启发式）。"""
+    des = (designator or "").strip().upper()
+    if not des:
+        return ""
+    return _load_engine_types().get(des, "")
+
+
+def _combined_type(engines: int, wtc: str, designator: str = "") -> str:
+    """combinedType（wtc 首字符 + 引擎数 + 引擎类型），如 `L2J`。
+
+    引擎类型优先取 swift 官方 DB 的 `engine` 字段；缺记录时才按
+    "运输类多为喷气"兜底（原先恒为 J，把 C172/AT72 全判成喷气）。
     """
     at = (wtc or "L")[:1].upper() or "L"
     n = max(0, min(9, int(engines or 0)))
-    return f"{at}{n}J"
+    et = engine_type_of(designator) or "J"
+    return f"{at}{n}{et}"
 
 
 def _strip_tail_alpha(t: str) -> str:
@@ -790,6 +827,8 @@ def lookup(designator: str) -> Optional[dict]:
             return {
                 "designator": r[0], "model": r[1], "manufacturer": r[2],
                 "engines": r[3], "wtc": r[4], "rank": r[5],
+                "engine_type": engine_type_of(r[0]),
+                "combined_type": _combined_type(r[3], r[4], r[0]),
             }
     return None
 

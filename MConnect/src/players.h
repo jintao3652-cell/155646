@@ -84,6 +84,7 @@ typedef struct {
     double last_seen;
     double last_write;
     double last_snap_log;
+    double last_parts_log;
 
     /* AI 对象 */
     AiState state;
@@ -92,6 +93,21 @@ typedef struct {
     int     create_attempts;
     double  retry_at;            /* 下次允许重试的时间 */
     int     write_fail_logged;
+
+    /* 远端 canonical 部件（随 roster 下发，与 XConnect 同 schema） */
+    int     has_parts;
+    int     has_gear;
+    int     gear_down;
+    int     flaps_pct;
+    int     spoilers_out;
+    unsigned lights;          /* bit0 beacon ... bit5 logo */
+    unsigned engines_on;      /* bit0..bit7 = 1..8 号发 */
+    int     engine_count;
+    char    engine_type[4];
+    char    gear_type[12];
+    char    parts_source[16];
+    unsigned lights_sent;     /* 已发过的灯状态，只在变化时触发事件 */
+    int     parts_write_failed; /* 该 SimVar 对此 AI 不可写 → 全局禁用 */
 
     int active;
 } Player;
@@ -125,5 +141,9 @@ void players_stats(int* active, int* pending, int* loaded_icao_n,
 
 /* 分配一个新的创建 RequestID（全局单调，避免与回包错配）。 */
 DWORD players_next_request_id(void);
+
+/* AI 部件/灯光写入能力探测结果（--parts-probe 用）。 */
+void players_parts_status(int* parts_writable, int* parts_tried,
+                          int* lights_ok, int* lights_tried);
 
 #endif /* MCONNECT_PLAYERS_H */

@@ -34,6 +34,12 @@ static const DWORD SC_UNUSED = 0xFFFFFFFF;
 static const DWORD SC_OBJECT_ID_USER = 0;
 static const DWORD SC_OBJECT_ID_AI = 1;   /* 占位：AI 对象用实际 ID */
 
+/* TransmitClientEvent 的 group priority / flags。
+ * sc.h 不复刻官方 SimConnect.h，所以这里按官方 ABI 常量值自行定义；
+ * 灯事件按 AI ObjectID 发送时必须带 GROUPID_IS_PRIORITY，否则会落到用户机。 */
+static const DWORD SC_GROUP_PRIORITY_HIGHEST = 0x3FFFFFF8;
+static const DWORD SC_EVENT_FLAG_GROUPID_IS_PRIORITY = 0x00000010;
+
 /* ---------------- 接收消息 ID ---------------- */
 /* 2020 与 2024 前缀部分完全一致；2024 在其后追加（见 kRecvIdEnumerateLivery）。
  * 未知 ID 一律忽略，保证新版模拟器多出来的消息不会打断解析。 */

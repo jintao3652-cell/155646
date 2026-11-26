@@ -233,7 +233,36 @@ static void handle_client_line(const char* line) {
                                             mask |= 8u;
                                         if (jnum_field(lights, "strobe_on", &pv) && pv != 0.0)
                                             mask |= 16u;
+                                        if (jnum_field(lights, "logo_on", &pv) && pv != 0.0)
+                                            mask |= 32u;
                                         p->lights = mask;
+                                    }
+                                    /* 机型档案：引擎数/类型/起落架类别由客户端查表下发，
+                                     * 插件侧不做 if (icao == ...) 硬编码。 */
+                                    if (jnum_field(parts, "engine_count", &pv)) {
+                                        int n = (int)(pv + 0.5);
+                                        p->engine_count = (n >= 0 && n <= 8) ? n : 0;
+                                    }
+                                    {
+                                        const Json* sv;
+                                        sv = json_get(parts, "engine_type");
+                                        if (sv && sv->type == JSON_STR) {
+                                            strncpy(p->engine_type, sv->sval,
+                                                    sizeof(p->engine_type) - 1);
+                                            p->engine_type[sizeof(p->engine_type) - 1] = '\0';
+                                        }
+                                        sv = json_get(parts, "gear_type");
+                                        if (sv && sv->type == JSON_STR) {
+                                            strncpy(p->gear_type, sv->sval,
+                                                    sizeof(p->gear_type) - 1);
+                                            p->gear_type[sizeof(p->gear_type) - 1] = '\0';
+                                        }
+                                        sv = json_get(parts, "parts_source");
+                                        if (sv && sv->type == JSON_STR) {
+                                            strncpy(p->parts_source, sv->sval,
+                                                    sizeof(p->parts_source) - 1);
+                                            p->parts_source[sizeof(p->parts_source) - 1] = '\0';
+                                        }
                                     }
                                     if (jnum_field(parts, "flaps_pct", &pv)) {
                                         int fp = (int)(pv + 0.5);
@@ -259,7 +288,7 @@ static void handle_client_line(const char* line) {
                                                 if (!e->key || e->type != JSON_OBJ)
                                                     continue;
                                                 idx = atoi(e->key);
-                                                if (idx >= 1 && idx <= 4 &&
+                                                if (idx >= 1 && idx <= 8 &&
                                                     jnum_field(e, "on", &onv) &&
                                                     onv != 0.0)
                                                     emask |= 1u << (idx - 1);
@@ -277,11 +306,14 @@ static void handle_client_line(const char* line) {
                                         p->parts_log_flaps = p->flaps_pct;
                                         p->parts_log_engines = p->engines_on;
                                         p->parts_log_lights = p->lights;
-                                        xconnect_logf("parts: %s gear=%d(has=%d) "
-                                                      "flaps=%d eng=%d lights=%u",
-                                                      p->callsign, p->gear_down,
-                                                      p->has_gear, p->flaps_pct,
-                                                      p->engines_on, p->lights);
+                                        xconnect_logf("parts: %s src=%s gear=%d(has=%d) "
+                                                      "flaps=%d eng=%d/%d(%s) lights=%u",
+                                                      p->callsign,
+                                                      p->parts_source[0] ? p->parts_source : "-",
+                                                      p->gear_down, p->has_gear, p->flaps_pct,
+                                                      p->engines_on, p->engine_count,
+                                                      p->engine_type[0] ? p->engine_type : "?",
+                                                      p->lights);
                                     }
                                 }
                             }

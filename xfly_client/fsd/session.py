@@ -11,6 +11,7 @@ import time
 from typing import Callable, Optional
 
 from . import packet as pk
+from ..aircraft_profile import AircraftParts, SERVER_LIGHT_KEYS, SOURCE_FSD
 from ..logutil import redact
 from .auth import FsdAuthState
 from .link import FsdLink, SERVER_CALLSIGN
@@ -342,52 +343,21 @@ class FsdSession:
         self._acfg_tokens -= 1
         return True
 
-    # XFlySim 服务器的 ACC schema 只认这 6 个灯光键；多发
-    # recognition_on/cabin_on/wing_on 会让整块 aircraft 配置解析失败。
-    _SERVER_LIGHT_KEYS = frozenset({
-        "strobe_on", "landing_on", "taxi_on",
-        "beacon_on", "nav_on", "logo_on",
-    })
+    # 兼容旧调用点；唯一真源在 aircraft_profile。
+    _SERVER_LIGHT_KEYS = frozenset(SERVER_LIGHT_KEYS)
     _BOOL_KEYS = frozenset({
         "gear_down", "spoilers_out", "on_ground", "is_full_data",
     })
 
     @staticmethod
     def _norm_parts(parts) -> dict:
-        """规范化机模部件：浮点四舍五入、丢弃 NaN/Inf、布尔化、过滤未知灯光。
+        """模拟器原始部件 → FSD ACC 增量 schema。
 
-        服务器对 ACC 的解析很严格（多一个未知键就可能整块丢弃），所以这里
-        只保留它认识的灯光键，并把 1/0 转成 true/false。
+        归一化在 aircraft_profile.AircraftParts 完成：三态布尔、9 灯别名、
+        1..n 发、flaps 0..100、NaN/Inf 丢弃；这里只做服务器 6 灯裁剪。
+        显式带 is_full_data=False，与 swift toIncrementalJson() 契约一致。
         """
-        out: dict = {}
-        for k, v in parts.items():
-            if isinstance(v, dict):
-                if k == "lights":
-                    out[k] = {
-                        lk: bool(lv)
-                        for lk, lv in v.items()
-                        if lk in FsdSession._SERVER_LIGHT_KEYS
-                    }
-                else:
-                    out[k] = FsdSession._norm_parts(v)
-            elif isinstance(v, bool):
-                out[k] = v
-            elif isinstance(v, int):
-                if k in FsdSession._BOOL_KEYS or k == "on" or k.endswith("_on"):
-                    out[k] = bool(v)
-                else:
-                    out[k] = v
-            elif isinstance(v, float):
-                if not math.isfinite(v):
-                    continue          # NaN/Inf 丢弃，不进入 diff
-                if (k in FsdSession._BOOL_KEYS or k == "on"
-                        or k.endswith("_on")):
-                    out[k] = bool(v)
-                else:
-                    out[k] = round(v, 1)
-            else:
-                out[k] = v
-        return out
+        return AircraftParts.from_raw(parts, source=SOURCE_FSD).to_incremental_json()
 
     @staticmethod
     def _acfg_dump(payload: dict) -> Optional[str]:
@@ -415,6 +385,8 @@ class FsdSession:
         payload = self._acfg_dump({"config": diff})
         if payload is None:
             return
+        # 第 ② 级诊断：组装后的 ACC JSON（与插件 raw/anim 日志对照）
+        self._log(f"[parts] acc json: {payload} is_full_data=false")
         self._acfg_last_sent = norm
         self._acfg_full = norm
         self._send(pk.aircraft_config(self.callsign, ACFG_BROADCAST_TO, payload))
@@ -617,7 +589,9 @@ class FsdSession:
             return
         if not self._acfg_take_token():
             return
-        payload = self._acfg_dump({"config": self._acfg_full})
+        full = dict(self._acfg_full)
+        full["is_full_data"] = True       # 重播必须整块覆盖，不能当增量
+        payload = self._acfg_dump({"config": full})
         if payload is None:
             return
         self._send(pk.aircraft_config(self.callsign, ACFG_BROADCAST_TO, payload))

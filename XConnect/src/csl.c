@@ -70,6 +70,32 @@ static const char* kCslDataRefs[CSL_MAX_DATAREFS] = {
     /* 很多 X-CSL（如 A321）的风扇/螺旋桨用全局运行时间驱动旋转，
      * thrust_ratio 只负责切换静态/高速扇叶层。不提供这个值 → 扇叶恒 0 不转。 */
     "sim/time/total_running_time_sec",              /* 34 */
+    "libxplanemp/controls/logo_lites_on",           /* 35 */
+    /* 36..42：engine_rotation_angle_deg[1..7]
+     * 43..49：engine_rotation_speed_rad_sec[1..7]
+     * 50..56：prop_rotation_angle_deg[1..7]
+     * 三组必须各自连续，且顺序与 csl.h 的 *_N1 基址一致。 */
+    "libxplanemp/engines/engine_rotation_angle_deg[1]", /* 36 */
+    "libxplanemp/engines/engine_rotation_angle_deg[2]", /* 37 */
+    "libxplanemp/engines/engine_rotation_angle_deg[3]", /* 38 */
+    "libxplanemp/engines/engine_rotation_angle_deg[4]", /* 39 */
+    "libxplanemp/engines/engine_rotation_angle_deg[5]", /* 40 */
+    "libxplanemp/engines/engine_rotation_angle_deg[6]", /* 41 */
+    "libxplanemp/engines/engine_rotation_angle_deg[7]", /* 42 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[1]", /* 43 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[2]", /* 44 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[3]", /* 45 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[4]", /* 46 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[5]", /* 47 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[6]", /* 48 */
+    "libxplanemp/engines/engine_rotation_speed_rad_sec[7]", /* 49 */
+    "libxplanemp/engines/prop_rotation_angle_deg[1]", /* 50 */
+    "libxplanemp/engines/prop_rotation_angle_deg[2]", /* 51 */
+    "libxplanemp/engines/prop_rotation_angle_deg[3]", /* 52 */
+    "libxplanemp/engines/prop_rotation_angle_deg[4]", /* 53 */
+    "libxplanemp/engines/prop_rotation_angle_deg[5]", /* 54 */
+    "libxplanemp/engines/prop_rotation_angle_deg[6]", /* 55 */
+    "libxplanemp/engines/prop_rotation_angle_deg[7]", /* 56 */
 };
 #define CSL_DATAREF_COUNT ((int)(sizeof(kCslDataRefs) / sizeof(kCslDataRefs[0])))
 

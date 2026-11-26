@@ -21,8 +21,15 @@
 
 #include "XPLMInstance.h"
 
-#define CSL_MAX_DATAREFS 48  /* XPMP2 标准动画 dataref 全集（libxplanemp/...）*/
+#define CSL_MAX_DATAREFS 64  /* XPMP2 标准动画 dataref 全集（libxplanemp/...）*/
 #define CSL_MAX_OBJS 4       /* 单个 CSL 变体最多包含的 OBJ 数（风扇+涂装…） */
+
+/* 逐台引擎动画 dataref 的起始索引（对应 kCslDataRefs 里的 [1]..[7]）。
+ * 同一组必须连续排布，否则 4 号引擎会串到螺旋桨/转速通道。
+ * [0] 用通用键（索引 21/22/23/24/25），下标从 1 开始填这些组。 */
+#define CSL_DREF_ENG_ANGLE_N1  36
+#define CSL_DREF_ENG_SPEED_N1  43
+#define CSL_DREF_PROP_ANGLE_N1 50
 
 /* 玩家渲染实例（由主程序持有）。一个 CSL 变体可能含多个 OBJ，逐个实例化。 */
 typedef struct {

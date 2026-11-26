@@ -290,6 +290,67 @@ int datadefs_register_xpdr(void) {
     return 0;
 }
 
+/* ---------------- AI 部件写入定义 ---------------- */
+
+/* 与 XConnect 的 CSL 动画不同，MSFS 的 AI 对象只能通过 SetDataOnSimObject
+ * 写少数几个 SimVar。这里选的都是 SimConnect 明确可写的手柄/输入量：
+ *   GEAR HANDLE POSITION / TRAILING EDGE FLAPS .. PERCENT /
+ *   SPOILERS HANDLE POSITION / GENERAL ENG THROTTLE LEVER POSITION:n
+ * 注册成功不等于对某个 AI 对象可写；真正写在 players.c 里检查 HRESULT，
+ * 失败一次即全局禁用部件写入并打日志（避免每帧刷屏）。 */
+int datadefs_register_ai_parts(void) {
+    HRESULT hr = S_OK;
+
+    if (!g_sc_handle) return -1;
+
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "GEAR HANDLE POSITION",
+              "Bool", SC_DATATYPE_FLOAT64);
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "TRAILING EDGE FLAPS LEFT PERCENT",
+              "Percent Over 100", SC_DATATYPE_FLOAT64);
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "TRAILING EDGE FLAPS RIGHT PERCENT",
+              "Percent Over 100", SC_DATATYPE_FLOAT64);
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "SPOILERS HANDLE POSITION",
+              "Percent Over 100", SC_DATATYPE_FLOAT64);
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "GENERAL ENG THROTTLE LEVER POSITION:1",
+              "Percent Over 100", SC_DATATYPE_FLOAT64);
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "GENERAL ENG THROTTLE LEVER POSITION:2",
+              "Percent Over 100", SC_DATATYPE_FLOAT64);
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "GENERAL ENG THROTTLE LEVER POSITION:3",
+              "Percent Over 100", SC_DATATYPE_FLOAT64);
+    hr |= add(g_sc_handle, DEF_AI_PARTS, "GENERAL ENG THROTTLE LEVER POSITION:4",
+              "Percent Over 100", SC_DATATYPE_FLOAT64);
+
+    if (FAILED(hr)) {
+        xc_logf("datadefs: AI parts definition failed hr=0x%08lx",
+                (unsigned long)hr);
+        return -1;
+    }
+    xc_logf("datadefs: AI parts definition ready (%d bytes)",
+            (int)sizeof(AiPartsRaw));
+    return 0;
+}
+
+void datadefs_fill_ai_parts(AiPartsRaw* out, int gear_down,
+                            int flaps_pct, int spoilers_out,
+                            unsigned engines_mask, int engine_count) {
+    int i;
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->gear_handle = gear_down ? 1.0 : 0.0;
+    if (flaps_pct < 0) flaps_pct = 0;
+    if (flaps_pct > 100) flaps_pct = 100;
+    out->flaps_left = out->flaps_right = (double)flaps_pct / 100.0;
+    out->spoilers = spoilers_out ? 1.0 : 0.0;
+    if (engine_count < 1) {
+        /* 档案未知时按实测掩码最高位推断，不再默认 2 发 */
+        for (i = 4; i >= 1; --i)
+            if (engines_mask & (1u << (i - 1))) { engine_count = i; break; }
+    }
+    if (engine_count > 4) engine_count = 4;
+    for (i = 0; i < engine_count; ++i)
+        out->throttle[i] = (engines_mask & (1u << i)) ? 0.8 : 0.0;
+}
+
 /* ---------------- 接收解析 ---------------- */
 
 /* 字符串字段可能不带结尾 0（SimConnect 只保证定长缓冲），统一收尾。 */
@@ -579,7 +640,13 @@ static double n1_sane(double v) {
 }
 
 void datadefs_build_flight_json(char* out, int size) {
-    int en = g_flight.num_engines > 0 ? g_flight.num_engines : 2;
+    int en = g_flight.num_engines;
+    if (en <= 0) {
+        /* 未知时按 N1 推断，不再默认 2 发（单发机不会有幽灵引擎） */
+        for (en = 4; en >= 1; --en)
+            if (g_flight.n1_pct[en - 1] > 5.0) break;
+        if (en < 1) en = 1;
+    }
     char eng[512];
     int el = 0;
     int ei;
@@ -613,6 +680,28 @@ void datadefs_build_flight_json(char* out, int size) {
     if (flaps_pct < 0) flaps_pct = 0;
     if (flaps_pct > 100) flaps_pct = 100;
     spoilers_out = g_flight.spoilers_ratio > 0.1 ? 1 : 0;
+
+    /* 第 ① 级诊断：SimConnect 原始读数，值变化时打一行。
+     * 与客户端 [parts] acc json / AI anim 日志三级对照。 */
+    {
+        static char last_key[192] = "";
+        char key[192];
+        snprintf(key, sizeof(key), "%d/%d/%d/%d/%d/%d/%.2f/%.2f/%d",
+                 g_flight.light_nav, g_flight.light_strobe,
+                 g_flight.light_landing, g_flight.light_taxi,
+                 g_flight.light_beacon, flaps_pct,
+                 g_flight.gear_ratio, g_flight.spoilers_ratio,
+                 (int)eng);
+        if (strcmp(key, last_key) != 0) {
+            snprintf(last_key, sizeof(last_key), "%s", key);
+            xc_logf("raw: nav=%d strobe=%d landing=%d taxi=%d beacon=%d "
+                    "gear=%.2f flaps=%d spoiler=%d onGround=%d engN=%d",
+                    g_flight.light_nav, g_flight.light_strobe,
+                    g_flight.light_landing, g_flight.light_taxi,
+                    g_flight.light_beacon, g_flight.gear_ratio,
+                    flaps_pct, spoilers_out, g_flight.on_ground, en);
+        }
+    }
 
     /* squark：FSD `@` 报文的模式字母，**只认三个值**：
      *   S = Standby（待机，不发射）
