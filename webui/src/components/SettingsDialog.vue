@@ -1,6 +1,6 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { store, saveSettings } from '../store.js'
+import { store, saveSettings, exportDiagnostics } from '../store.js'
 const { t } = useI18n()
 
 const LANGS = [
@@ -48,6 +48,10 @@ const LANGS = [
       </fieldset>
     </div>
     <template #footer>
+      <el-button @click="exportDiagnostics">
+        <i class="fa-solid fa-file-arrow-down"></i>
+        {{ t('settings.exportDiagnostics') }}
+      </el-button>
       <el-button @click="store.overlays.set = false">{{ t('settings.cancel') }}</el-button>
       <el-button type="primary" @click="saveSettings">
         <i class="fa-solid fa-check"></i> {{ t('settings.save') }}

@@ -1,14 +1,41 @@
 <script setup>
+import { ref, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { store, submitFlightPlan } from '../store.js'
+import { store, submitFlightPlan, importSimbrief } from '../store.js'
 const { t } = useI18n()
+
+const scrollRef = ref(null)
+
+/* 打开时把表单滚回顶部：抽屉内容比窗口高，聚焦/焦点陷阱可能留下上次的滚动位置，
+ * 表现为"一打开就在表单中段"。 */
+async function onOpen() {
+  await nextTick()
+  scrollRef.value?.setScrollTop?.(0)
+  setTimeout(() => scrollRef.value?.setScrollTop?.(0), 120)   // 首开时子节点延后挂载
+}
 </script>
 
 <template>
   <el-drawer v-model="store.overlays.fp" :title="t('flightPlan.title')" class="fp-drawer"
+             modal-class="fp-overlay" :lock-scroll="false" @open="onOpen"
              direction="btt" size="100%" :append-to-body="true">
-    <el-scrollbar class="fp-scroll">
+    <el-scrollbar ref="scrollRef" class="fp-scroll">
       <div class="fp-content">
+        <div class="fp-sb">
+          <span class="fp-sb-title">
+            <i class="fa-solid fa-cloud-arrow-down"></i> {{ t('flightPlan.sbLabel') }}
+          </span>
+          <el-input v-model="store.sbUser" size="small" clearable
+                    :placeholder="t('flightPlan.sbPlaceholder')"
+                    @input="store.sbError = ''"
+                    @keyup.enter="importSimbrief" />
+          <el-button size="small" type="primary" plain :loading="store.sbBusy"
+                     @click="importSimbrief">{{ t('flightPlan.sbImport') }}</el-button>
+        </div>
+        <div class="fp-sb-tip" :class="{ 'is-err': store.sbError, 'is-busy': store.sbBusy }">
+          {{ store.sbBusy ? t('flightPlan.sbImporting')
+                          : (store.sbError || store.sbInfo || t('flightPlan.sbHint')) }}
+        </div>
         <div class="fp-grid">
           <fieldset>
             <legend>{{ t('flightPlan.basic') }}</legend>
@@ -19,6 +46,12 @@ const { t } = useI18n()
             <el-option :label="t('flightPlan.rules.S')" value="S" />
             <el-option :label="t('flightPlan.rules.D')" value="D" />
               </el-select>
+            </label>
+            <label>{{ t('flightPlan.aircraft') }} <el-input v-model="store.fp.aircraft" size="small" /></label>
+            <label :title="t('flightPlan.regHint')">{{ t('flightPlan.registration') }}
+              <el-input v-model="store.fp.registration" size="small"
+                        :placeholder="store.reg ? t('flightPlan.regAuto', { reg: store.reg })
+                                                : t('flightPlan.regPlaceholder')" />
             </label>
             <label>{{ t('flightPlan.cruiseSpeed') }} <el-input v-model="store.fp.speed" placeholder="450" size="small" /></label>
             <label>{{ t('flightPlan.cruiseAlt') }} <el-input v-model="store.fp.alt" placeholder="FL350" size="small" /></label>

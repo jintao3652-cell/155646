@@ -13,7 +13,7 @@ onMounted(start)
 </script>
 
 <template>
-  <div id="app" class="frameless-shell">
+  <div class="frameless-shell">
     <!-- <TitleBar />
     <Toolbar /> -->
 

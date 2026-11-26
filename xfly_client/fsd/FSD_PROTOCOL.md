@@ -157,8 +157,36 @@ constexpr int PROTOCOL_REVISION_VATSIM_VELOCITY = 101; // VATSIM 视觉位置
 | 8 | pbh | 32 位 PBH 位域（见 5.3） |
 | 9 | 修正 | **气压高 − 真高**（可为负），解析端：`pressureAlt = trueAlt + token[9]` |
 
+> ⚠️ **字段 0 的 S/N 极容易写反，方向必须记牢**：`S` = **待机不发射**，
+> `N` = **正常发射**（"N" 是 normal，不是 "no"）。swift 由两段代码决定：
+>
+> ① `simulatorxplane.cpp::xpdrMode(xpMode, ident)` 把 X-Plane 枚举折算：
+> ```cpp
+> if (ident) return StateIdent;                          // → Y
+> if (xpMode == 0 || xpMode == 1) return StateStandby;   // → S
+> return ModeC;                                          // → N（2..7 全部）
+> ```
+> ② `fsd/serializer.cpp::toQString(TransponderMode)` 再出字母：
+> ```cpp
+> case StateStandby:       return "S";
+> case ModeA/C/S、Mil1..5:  return "N";
+> case StateIdent:         return "Y";
+> ```
+>
+> 所以 X-Plane 侧正确写法是 **`mode <= 1 ? "S" : "N"`**。
+> XFlySim-Client 曾写成 `mode >= 2 ? "S" : "N"` —— **方向完全反了**，
+> 8 个 XP 模式全部报错（待机被报成在发射、正常发射被报成待机），
+> 对端与管制员看到的应答机状态永远是反的。已在 XConnect v24 修正，
+> `selftest.py` 加断言锁住方向。
+>
+> 另注意别拿错函数：`CTransponder::modeAsShortString()` 返回 `S`/`C`/`I`，
+> 那是 **GUI 显示**用的，**不是 FSD 报文**。
+
 > XFlySim-Client 本地报文与之一致：
 > `@模式:呼号:squawk:rating:lat:lon:alt:gs:pbh:corr`（`packet.py::pilot_position`）。
+> 其中 `corr` 现按协议语义填 **气压高 − 真高**（取座舱高度表
+> `altitude_indicated` 与 `altitude_msl` 之差）；此前误填"场压高"，对端据此
+> 推算气压高度会得到荒谬值。
 
 ### 5.2 ATC 位置 `%` AtcDataUpdate
 
@@ -189,10 +217,28 @@ bank  = qFloor(bank  * -512.0/180.0);
 hdg   = heading * 1024.0/360.0;   // 取整
 ```
 
-> 注意与 XFlySim-Client `packet.py::encode_pbh` 的差异：
-> 本地按 0..1023 均匀量化（×1023/360）且未做符号反转；swift 按 1024 量化并反转
-> pitch/bank 符号。对普通小角度姿态二者数值接近，但精细对接 swift 服务器时建议
-> 以本文档公式为准。
+> **XFlySim-Client 已完全对齐上述公式**（`packet.py::encode_pbh`），曾有过的
+> 三处偏差都已修正，记录在此避免回退：
+>
+> | 项 | 曾经的错误实现 | 正确做法（= swift） | 影响 |
+> |---|---|---|---|
+> | 航向量化 | `×1023/360` | **`×1024/360`** | 每个航向系统性少 1 个码位（45°/90°/180°/270° 各差 1）|
+> | pitch/bank 符号 | 未反转（直接 `pitch×256/90`）| **`× -1` 反转** | 姿态垂直镜像 |
+> | 取整方式 | `int()` 截断（朝 0）| **`floor()`**（qFloor）| **正俯仰/正坡度恒偏 1 个码位**（pitch 1° → -3 而非 -2，约 0.35° 误差）|
+>
+> 第三项最容易漏：`int(-28.444) = -28` 而 `floor(-28.444) = -29`。因为
+> pitch/bank 乘了 -1，**所有正姿态的中间值都是负数**，用截断就必然偏 1。
+> `selftest.py` 里已加三条断言锁住这些行为（`qFloor not truncation`）。
+>
+> 另外 swift 注释明确写了用 `*-1` 而不是按位取反 `~`：
+> 「with `~` 0 -> -1 (that is why we saw many -1 PB values on ground)」。
+> vPilot 同样用 `*-1`。我们用 0° 编码后验证过 pitch/bank 域都是 0，正确。
+>
+> 解码（`decode_pbh`）**刻意不照抄 swift 的 `unpackPBH`**：swift 那边
+> `qFloor(raw / -mult)` 会把 pitch/bank 还原成**整度**（真实报文 pbh=-8389616
+> 解出 1.0°，而真实姿态是 1.05°）。我们用它填远端玩家的 `tr.pitch/bank`
+> 参与插值显示，需要连续精度，故乘回系数不取整。编码是发上线的字节必须
+> 逐位一致，解码只是本地显示，精度优先。
 
 ### 5.4 中间位置 / 快速位置
 
@@ -203,6 +249,10 @@ hdg   = heading * 1024.0/360.0;   // 取整
 | `^` VisualPilotDataUpdate | 见下 | 200ms |
 | `#SL` VisualPilotDataPeriodic | 同 `^` 13 字段 | 每 25 个 `^` 发 1 次 |
 | `#ST` VisualPilotDataStopped | `#ST<呼号>:<lat>:<lon>:<altTrue>:<altAgl>:<pbh>:<noseGear>` | 速度归零时 |
+
+> XFlySim-Client 四种都解析为位置源（`parser.try_get_pilot_position`），用于
+> 比 5s 的 `@` 更平滑的 CSL 插值；`pbh` bit1（onGround）与 `^` 的 `altAgl`
+> 一并传给插件做落地吸附。
 
 `^` 完整字段（`visualpilotdataupdate.cpp`）：
 
@@ -283,9 +333,39 @@ $CR<发送方>:<接收方>:<查询类型>[:应答数据...]
 | 子类型 | 报文 | 说明 |
 |---|---|---|
 | `PIR` | `#SB<呼号>:<目标>:PIR` | 请求机型信息 |
-| `PI` | `#SB<呼号>:<目标>:PI:GEN:EQUIPMENT=<机型>[:AIRLINE=<航司>][:LIVERY=<涂装>]` | 应答（`GEN` 现代格式） |
+| `PI` | `#SB<呼号>:<目标>:PI:GEN:EQUIPMENT=<机型>[:AIRLINE=<航司>][:LIVERY=<尾号或涂装>][:REG=<尾号>][:ENGINES=<数量>]` | 应答（`GEN` 现代格式） |
 | `FSIPIR` | `#SB<呼号>:<目标>:FSIPIR:0:<航司>:<机型>::::::<组合类型>:<model>` | FSInn 请求（12 字段） |
 | `FSIPI` | `#SB<呼号>:<目标>:FSIPI:0:<航司>:<机型>::::::<组合类型>:<model>` | FSInn 应答 |
+
+> **`PI:` 后面那个字段是"类型串"，只有 `GEN` 有效**。swift 源码
+> `CFSDClient::handleCustomPilotPacket()` 的分支是：
+> ```cpp
+> else if (subType == "PI") {
+>     if (tokens.size() > 6 && tokens.at(3) == "X") {
+>         // This is the old version of a plane info request and no active
+>         // client should ever send it.
+>     }
+>     else if (tokens.size() > 4 && tokens.at(3) == "GEN") {
+>         ... PlaneInformation::fromTokens(tokens); emit planeInformationReceived(...);
+>     }
+> }
+> ```
+>
+> | 类型串 | 含义 | swift 处理 |
+> |---|---|---|
+> | `GEN` | **当前唯一合法格式**（general） | 解析 EQUIPMENT/AIRLINE/LIVERY，正常处理 |
+> | `X` | **旧版 PI 格式**（历史遗留，已废弃） | **静默丢弃**（空分支，只留注释）|
+> | `H` | Swift 里**不存在**这个分支 | **静默丢弃**（`PI` 分支无 else 兜底）|
+>
+> ⚠️ 容易混淆的两点：
+> 1. `H` 常被误认为 "HEAVY"（重型机标识）。**尾流类别不在这里表达** ——
+>    swift 的 `CAircraftIcaoCode` 用独立的 wake turbulence 字段（如 `L2J`/`H`）
+>    从机型数据库查得，PI 报文里只有 `EQUIPMENT=<ICAO机型码>`。
+> 2. `A359` 是 **`EQUIPMENT` 的值**（A350-900 的 ICAO 机型码），不是类型串，
+>    位置在 `PI:GEN:` 之后。同理 `B738`/`A333`。
+>
+> 所以正确写法只有：`#SB<呼号>:<目标>:PI:GEN:EQUIPMENT=<机型码>...`
+> 发 `PI:H:...` 或 `PI:X:...` 对端会直接忽略，收不到任何机型信息。
 
 FSInn 格式字段序号（swift 解析只取 4、5、10、11）：
 
@@ -296,6 +376,47 @@ FSInn 格式字段序号（swift 解析只取 4、5、10、11）：
 
 > XFlySim-Client 的 `session.py` 用 `#SB...:PI:GEN`（`send_plane_info`）与
 > `#SB...:FSIPI:0:...`（`send_plane_info_fsi`）两种应答，与 swift 完全一致。
+>
+> 接收侧（`model.py::_on_plane_info_received`）优先级：
+> **PI:GEN 的 `EQUIPMENT`/`AIRLINE`/`LIVERY` → FSIPI 的机型/航司/描述串尾号 →
+> `$FP` 计划机型 → 呼号前三位当涂装码**。请求侧同时发 `PIR`（swift/xPilot）与
+> `FSIPIR`（FSInn），每个目标 30s 节流；收到应答后不再重复请求。`EQUIPMENT`
+> 会去掉 `/W` 之类尾流后缀再做 CSL 匹配。
+>
+> **`LIVERY` 放注册号（尾号），不放涂装码。** 原因：swift 收到 PI 后只保存
+> `EQUIPMENT/AIRLINE/LIVERY` 三个已知键，`REG=` 这类未知键会被丢弃，再转发给
+> 下一个请求者时尾号就丢了；把尾号塞进 `LIVERY` 才能穿透 swift 中继（
+> `ours → swift → 第三方`）。没有尾号时退回原涂装码，报文与旧版一致。
+>
+> 接收侧判定规则（`_looks_like_registration`，与插件 `tail_like` 同规则）：
+> `REG=` 存在则直接采信；否则 `LIVERY` 归一化后按形态判定——
+> **含数字的**（`B-1234` / `N829PL` / `VH-OEI`）要求 ≥5 位且含字母或 `-`；
+> **纯字母的**要求带 `-` 且字母 ≥4 个（欧陆格式 `D-AIKN` / `G-EUUU` / `F-WWBB`，
+> 注册号里常常一个数字都没有——X-Plane 自带 A330 的尾号就是 `D-AIKN`）。
+> 纯字母短码（`DLH`/`CCA`/`SJX`）、4 位机型码（`A320`/`B738`）、含 `_` 的 swift
+> 内部映射 ID（`swift_a9742`）都当涂装码/直接丢弃。FSIPI 的末位描述串
+> （`DLH A359 B-1234`）也会扫一遍尾号。
+>
+> ⚠️ 历史坑：早期规则写死"必须含数字"，导致 `D-AIKN` 这类欧陆尾号被整类丢弃，
+> `LIVERY` 永不发出、服务器侧只能得到 `"livery": null`。XConnect v14 已修正。
+>
+> **`REG=<尾号>` 仍附带一份**（本客户端扩展键，swift 解析时忽略未知键，无害）：
+> 让对端不必猜 `LIVERY` 的语义，也兼容只看 `REG=` 的旧版客户端。插件据此按
+> "同一架飞机"选 CSL 涂装：注册号 → 同航司同机型 → 同机型 → 兜底（见
+> `XConnect/PROTOCOL.md`）。swift / FSInn 原生不发尾号，对端为它们时自动从
+> 第 2 级开始匹配。
+>
+> **`ENGINES=<数量>` 是 XFlySim 服务器识别的扩展键**（官方文档只列了
+> `EQUIPMENT`/`AIRLINE`/`LIVERY` 三个，但站点 `/pilots` JSON 的
+> `aircraft.engines` 字段对应它）。取值来自 X-Plane
+> `sim/aircraft/engine/acf_num_engines`（A333=2、B744=4、C172=1）；
+> 数量为 0/未知时整键省略——此时站点 JSON 表现为 `"engines": null`，
+> 与旧版行为一致。swift 解析时忽略该键，无害。
+>
+> ⚠️ 历史坑：插件曾把尾号 dataref 写成 `acf_tailnumber`，而 X-Plane 实际叫
+> **`acf_tailnum`**。写错名字时 `XPLMFindDataRef` 返回 NULL，尾号永远读到空串，
+> 于是 `LIVERY` 从未随 PI 发出，服务器侧只能得到 `"livery": null`。已在
+> XConnect v13 修正。
 
 ## 9. 飞行计划 `$FP`（17 字段）
 
@@ -411,8 +532,20 @@ RatingTooLow、InvalidClient、AuthTimeout。
 | 10 | MSFS 2020 | | |
 | 11 | MSFS 2024 | | |
 
-> XFlySim-Client 使用 15=XP11、16=XP12（xPilot C# 习惯），与 swift 的 16=XP11 不同，
-> 对接私有服务器时以服务器约定为准。
+> XFlySim-Client 使用 **15=XP11、16=XP12**（xPilot C# 习惯）。
+>
+> ⚠️ **同一个编号在 swift 里含义不同**（`fsd/serializer.cpp::toQString(SimType)`）：
+>
+> | 编号 | swift | XFlySim-Client |
+> |---|---|---|
+> | 14 | XP10 | — |
+> | 15 | — | **XP11** |
+> | 16 | **XP11** | **XP12** |
+> | `"0"` | XP12 / P3Dv5（swift 未分配编号）| — |
+>
+> 即 swift 至今没给 XP12 单独编号（与 P3Dv5 一起返回 `"0"`）。
+> 接第三方服务器前必须先确认该服务器采用哪套约定 —— 用错会让服务器
+> 按错误的模拟器类型处理你的连接。
 
 ### 14.2 评级 / 设施 / 应答机 / 飞行规则
 

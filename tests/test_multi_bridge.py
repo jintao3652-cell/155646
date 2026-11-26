@@ -1,0 +1,115 @@
+"""验证桥接客户端的多端点自动探测：XP / MSFS 任一在线即可连上。
+
+这是"三个模拟器任一在线即可连线 FSD"的核心保证：客户端不能只盯 51001，
+必须同时探测 XConnect 与 MConnect（含退避端口），任一在线即 connected=True。
+"""
+import socket
+import threading
+import unittest
+
+from xfly_client.xconnect.client import (
+    MCONNECT_FALLBACK_PORTS,
+    XConnectClient,
+    build_bridge_ports,
+)
+
+
+def _start_fake_bridge(port_holder, sim, plugin):
+    """在临时端口起一个假桥：accept 后发 connected 握手，然后保持连接。"""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port_holder["port"] = srv.getsockname()[1]
+
+    def serve():
+        try:
+            conn, _ = srv.accept()
+            with conn:
+                conn.sendall(
+                    ('{"type":"connected","protocol":1,"plugin":"%s",'
+                     '"version":"test","sim":"%s",'
+                     '"capabilities":["csl","parts"]}\n' % (plugin, sim))
+                    .encode("utf-8"))
+                conn.settimeout(0.2)
+                while True:
+                    try:
+                        if not conn.recv(4096):
+                            break
+                    except OSError:
+                        break
+        except OSError:
+            pass
+        finally:
+            srv.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return port_holder["port"]
+
+
+class TestBuildBridgePorts(unittest.TestCase):
+    def test_covers_xp_and_msfs_without_duplicates(self):
+        ports = build_bridge_ports(51001, 51002)
+        self.assertEqual(ports[0], 51001, "XConnect 应为首选端口")
+        self.assertIn(51002, ports)
+        for p in MCONNECT_FALLBACK_PORTS:
+            self.assertIn(p, ports)
+        self.assertEqual(len(ports), len(set(ports)), "候选端口不应重复")
+
+    def test_custom_mconnect_port_kept(self):
+        ports = build_bridge_ports(51001, 51009)
+        self.assertIn(51009, ports)
+        self.assertEqual(ports[0], 51001)
+
+    def test_port_setter_rebuilds_candidates(self):
+        c = XConnectClient("127.0.0.1", 51001, mconnect_port=51007)
+        self.assertIn(51007, c.ports)
+        c.port = 51001
+        self.assertIn(51007, c.ports, "设置 port 后应保留 MConnect 候选端口")
+
+
+class TestMultiEndpointConnect(unittest.TestCase):
+    def _connect_to(self, sim, plugin):
+        holder = {}
+        port = _start_fake_bridge(holder, sim, plugin)
+        ready = threading.Event()
+        # 首选端口 51001 故意指向一个无人监听的端口，强制客户端回退探测
+        c = XConnectClient("127.0.0.1", port, ports=[59999, port])
+        c.on_handshake = lambda doc: ready.set()
+        c.start()
+        try:
+            self.assertTrue(ready.wait(3.0), "未在回退端口上完成握手")
+            self.assertTrue(c.connected)
+            self.assertEqual(c.active_port, port)
+            self.assertEqual(c.plugin, plugin)
+            self.assertEqual(c.sim, sim)
+        finally:
+            c.stop()
+        return c
+
+    def test_msfs_bridge_online(self):
+        self._connect_to("msfs", "MConnect")
+
+    def test_xplane_bridge_online(self):
+        self._connect_to("xplane", "XConnect")
+
+    def test_falls_back_when_primary_bridge_offline(self):
+        """首选端口无服务时，应回退连到另一个在线端点（如 XP 关、MSFS 开）。"""
+        holder2 = {}
+        p2 = _start_fake_bridge(holder2, "msfs", "MConnect")
+        ready = threading.Event()
+        # 首选端口 59998 无人监听，唯一在线的是 p2（模拟 MSFS 单独在线）
+        c = XConnectClient("127.0.0.1", 59998, ports=[59998, p2])
+        c.on_handshake = lambda doc: ready.set()
+        c.start()
+        try:
+            self.assertTrue(ready.wait(3.0), "未回退到备用端点")
+            self.assertTrue(c.connected)
+            self.assertEqual(c.active_port, p2)
+            self.assertEqual(c.plugin, "MConnect")
+        finally:
+            c.stop()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -67,7 +67,8 @@ class FsdLink:
 
     def _receive_loop(self) -> None:
         sock = self._sock
-        decoder = codecs.getincrementaldecoder("gb18030")()
+        # errors="replace"：服务器偶发非法字节不应导致整条连接被断开
+        decoder = codecs.getincrementaldecoder("gb18030")(errors="replace")
         try:
             while not self._stop.is_set() and sock is not None:
                 try:

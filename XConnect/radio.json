@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "机型适配表：为使用私有 dataref 的机模覆盖通用 X-Plane dataref。",
+    "",
+    "匹配优先级（高 → 低）：icao+ui+reg > icao+ui > icao+reg > 仅 icao",
+    "  icao  必填，对应 sim/aircraft/view/acf_ICAO（大小写不敏感）",
+    "  ui    可选，acf_ui_name 的子串匹配（大小写不敏感）——",
+    "        同一 ICAO 下可能有三份不同机模（Laminar / ToLiss / Fenix），",
+    "        它们的无线电 dataref 完全不同，只有 ui 能区分",
+    "  reg   可选，尾号精确匹配（大小写不敏感）",
+    "",
+    "aircraft 数组为空 → 全部走通用 dataref，行为与不带本文件时完全一致。",
+    "字段全部可选；留空、或写了但 dataref 不存在，都会自动退回通用值。",
+    "改完需重启 X-Plane（或重载插件）生效；日志会打印 radio.json: matched / no match。",
+    "",
+    "通用 dataref（Laminar 全系机模够用，无需在此登记）：",
+    "  电源      sim/cockpit/electrical/avionics_on",
+    "  COM 频率  sim/cockpit2/radios/actuators/com{1,2,3}_frequency_hz_833",
+    "  备用频率  sim/cockpit2/radios/actuators/com{1,2,3}_standby_frequency_hz_833",
+    "  收听选择  sim/cockpit2/radios/actuators/audio_selection_com{1,2,3}",
+    "  音量      sim/cockpit2/radios/actuators/audio_volume_com{1,2}",
+    "  发言选择  sim/cockpit2/radios/actuators/audio_com_selection",
+    "",
+    "如何找机模真实的 dataref 名（重要）：",
+    "  ✗ 不要用 Resources/plugins/DataRefs.txt —— 那只是 Laminar 原生 dataref 的",
+    "    静态快照，实测不含第三方机模私有 dataref（AirbusFBW / laminar/B738 均 0 条）。",
+    "  ✓ 正确做法：进游戏、加载目标机模，然后跑",
+    "        python tools/dref_find.py",
+    "    它会发 Send:SCAN 让插件实时枚举，并把结果按关键字过滤打印出来。",
+    "    加关键字更准，例如：",
+    "        python tools/dref_find.py AirbusFBW",
+    "        python tools/dref_find.py com VHF audio",
+    "    原始结果在 Resources/plugins/XConnect/xconnect.log 的 dref: 行里。",
+    "",
+    "  ★ 关键技巧：扫描会连**当前值**一起打印（[W] 表示可写）。",
+    "    同型机常常同时存在通用和私有两套 dataref，只有值和你座舱显示一致的那个",
+    "    才是机模真正在用的 —— 别只看名字像就填。"
+  ],
+  "_example": {
+    "icao": "A321",
+    "ui": "ToLiss",
+    "reg": "",
+    "name": "ToLiss A321 —— dataref 名仅为格式示例，务必换成实测确认的值",
+    "power": "",
+    "com": [
+      { "active": "<COM1 主频 dataref>", "standby": "<COM1 备频 dataref>" },
+      { "active": "<COM2 主频 dataref>", "standby": "<COM2 备频 dataref>" },
+      { "active": "", "standby": "" }
+    ],
+    "audio": [
+      { "select": "<COM1 收听 dataref>", "volume": "<COM1 音量 dataref>" },
+      { "select": "<COM2 收听 dataref>", "volume": "<COM2 音量 dataref>" }
+    ],
+    "audio_com_sel": "<发言选择 dataref>"
+  },
+  "aircraft": []
+}

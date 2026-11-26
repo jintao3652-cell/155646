@@ -111,6 +111,10 @@
     color: var(--bad);
   }
 
+  .log-line.warn {
+    color: var(--led-amber);
+  }
+
   .log-line.txt {
     color: #6fd38a;
   }

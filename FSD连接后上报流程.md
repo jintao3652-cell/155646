@@ -14,8 +14,8 @@
 | 1 | 飞行员登录 | `#AP` | TCP 连上立即 | 一次 | ✅ |
 | 2 | 客户端标识 | `$ID` | VATSIM 专用 | 一次 | ○（私有网不用） |
 | 3 | 位置更新 | `@`（PilotDataUpdate） | 定时器 | **每 5s**，需已有飞行数据 | ✅ |
-| 4 | 中间位置 | `#SB VI` | 定时器 | 每 1s（需 INTERIMPOS 能力） | ○（只读不报） |
-| 5 | 视觉位置 | `^` / `#SL` / `#ST` | 定时器 | 200ms（需 VISUPDATE+Velocity） | ○（不发送） |
+| 4 | 中间位置 | `#SB VI` | 定时器 | 每 1s（需 INTERIMPOS 能力） | ✅（发送 + 解析） |
+| 5 | 视觉位置 | `^` / `#SL` / `#ST` | 定时器 | 200ms（需 VISUPDATE+Velocity） | ✅（`^` 200ms 已发；`#SL/#ST` 未发） |
 | 6 | 机模配置 | `$CQ...:ACC` | 机模部件变化 | 100ms 检测（插件 5Hz 数据），5s 令牌桶，发 `@94836` | ✅ |
 | 7 | 飞行计划 | `$FP` | 登录后/计划载入时（应用层） | 一次/次 | ✅（webapp 自动补交） |
 | 8 | 机型信息应答 | `#SB PI/FSIPI` | 收到 `#SB PIR/FSIPIR` 请求 | 事件 | ✅ |
@@ -148,9 +148,9 @@ webapp connect worker：登录后 sleep(1s) → 若有已保存飞行计划 → 
 |---|---|---|
 | `lights` | object | `strobe_on` / `landing_on` / `taxi_on` / `beacon_on` / `nav_on` / `logo_on` / `recognition_on` / `cabin_on` / `wing_on` |
 | `gear_down` | bool | 起落架放下 |
-| `flaps_pct` | int | 襟翼百分比 |
+| `flaps_pct` | int | 襟翼百分比 **0..100 整数**（`round(ratio*100)`，不是 0..1 比例）|
 | `spoilers_out` | bool | 扰流板 |
-| `engines` | list | 每台 `{"on": bool, "rpm_pct": double}`（发动机编号不随 JSON 传输） |
+| `engines` | **object** | 键=发动机编号（1 基字符串），值**只含** `{"on": bool}`。如 `{"1":{"on":false},"2":{"on":false}}` |
 | `on_ground` | bool | 地面标志 |
 | `is_full_data` | bool | `true`=全量 / `false`=增量 |
 
@@ -200,7 +200,7 @@ webapp connect worker：登录后 sleep(1s) → 若有已保存飞行计划 → 
 | `c_processingIntervalMsec` | 100 | 机模配置变化检查 |
 | `PendingConnectionTimeoutMs` | 7500 | 登录挂起超时 |
 
-本地常量：`POSITION_INTERVAL=5.0`、`KEEPALIVE_INTERVAL=60.0`（`session.py`）。
+本地常量：`POSITION_INTERVAL=5.0`、`INTERIM_POSITION_INTERVAL=1.0`、`VISUAL_POSITION_INTERVAL=0.2`、`KEEPALIVE_INTERVAL=60.0`（`session.py`）。
 
 ## 6. 完整报文示例
 
@@ -277,8 +277,7 @@ $ZRCCA1501:SERVER:eaf9c2f5b1c1f7d8c7b1e2a3f4d5b6c7  ← MD5 challenge/response
 全量应答:  $CQCCA1501:CSN3456:ACC:{"config":{"lights":{"strobe_on":true,"landing_on":false,
            "taxi_on":false,"beacon_on":true,"nav_on":true,"logo_on":false,
            "recognition_on":false,"cabin_on":false,"wing_on":false},"gear_down":true,
-           "flaps_pct":0,"spoilers_out":false,"engines":[{"on":true,"rpm_pct":0.5},
-           {"on":true,"rpm_pct":0.5}],"on_ground":true,"is_full_data":true}}
+           "flaps_pct":0,"spoilers_out":false,"engines":{"1":{"on":true},"2":{"on":true}},"on_ground":true,"is_full_data":true}}
 
 增量广播:  $CQCCA1501:@94836:ACC:{"config":{"flaps_pct":35,"lights":{"landing_on":true},
            "is_full_data":false}}

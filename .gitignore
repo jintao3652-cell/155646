@@ -221,3 +221,12 @@ __marimo__/
 
 .kilo/
 config.json
+
+# Local build / debug / agent artifacts
+build-vs2026/
+*.obj
+/_t.c
+/_t.exe
+.commandcode/
+.workbuddy/
+assets/.workbuddy/

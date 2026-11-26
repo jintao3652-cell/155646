@@ -14,6 +14,7 @@ X-Plane 设置：设置 → 数据输出 → 开启 UDP 协议（X-Plane 默认�
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 
@@ -21,6 +22,7 @@ from xfly_client.config import AppConfig, load_config, save_config
 from xfly_client.fsd import packet as pk
 from xfly_client.fsd.session import STATE_ONLINE
 from xfly_client.model import NetworkModel
+from xfly_client.registration import norm_registration
 from xfly_client.xconnect.client import FlightData
 
 SIM_TYPES = {"xp11": pk.SIM_TYPE_XP11, "xp12": pk.SIM_TYPE_XP12}
@@ -57,6 +59,10 @@ class CliApp:
         self.model = NetworkModel()
         self.model.aircraft_icao = cfg.aircraft_icao.strip().upper()
         self.model.airline_icao = cfg.airline_icao.strip().upper()
+        # 尾号：--registration 优先，否则自动（模拟器 → 同机型上次值 → 空）
+        self.model.registration_manual = norm_registration(cfg.registration)
+        self.model.registration_cache = dict(cfg.registration_cache or {})
+        self.model._apply_registration("", "", self.model.aircraft_icao)
         self.model.on_log = lambda m: print(f"{m}")
         self.model.on_text_received = lambda f, m: print(f"\n[消息] {f}: {m}")
         self.model.on_fsd_unexpected_disconnect = \
@@ -73,24 +79,26 @@ class CliApp:
             return
 
         print("== XFlySim-Client ==")
-        print(f"  XConnect 插件:  {self.cfg.xconnect_host}:{self.cfg.xconnect_port}"
-              f"（监听插件上线）")
+        print(f"  桥接插件:       XConnect {self.cfg.xconnect_port} / "
+              f"MConnect {self.cfg.mconnect_port}（其一在线即可）")
         print(f"  FSD 服务器:     {self.cfg.server_host}:{self.cfg.server_port}")
         save_config(self.cfg)
 
-        # 监听 XConnect 插件上线（X-Plane 内，TCP 51001）
-        self.model.start_xconnect(self.cfg.xconnect_host, self.cfg.xconnect_port)
-        print(f"[i] 等待 XConnect 插件上线"
-              f"（{self.cfg.xconnect_host}:{self.cfg.xconnect_port}）…")
+        # 监听桥接插件上线：XConnect(51001) / MConnect(51002/51003/51004)
+        self.model.start_xconnect(self.cfg.xconnect_host, self.cfg.xconnect_port,
+                                  self.cfg.mconnect_port)
+        print(f"[i] 等待模拟机上线（XConnect {self.cfg.xconnect_port} / "
+              f"MConnect {self.cfg.mconnect_port} 其一即可）…")
         waited = 0.0
         while not self.model.xconnect.connected and waited < 10.0:
             time.sleep(0.5)
             waited += 0.5
         if not self.model.xconnect.connected:
-            print("[!] XConnect 插件未上线，禁止连线 FSD。"
-                  "请确认 X-Plane 已运行且 XConnect 插件已安装。")
+            print("[!] 未发现任何在线模拟机，禁止连线 FSD。"
+                  "请确认 X-Plane(XConnect) 或 MSFS(MConnect) 已运行、插件已加载。")
             return
-        print("[i] 插件已上线，数据通道就绪")
+        print(f"[i] 模拟机已上线（端口 {self.model.xconnect.active_port}），"
+              "数据通道就绪")
         self.model.on_local_flight_data = self._on_flight_data
 
         # 连接 FSD
@@ -172,8 +180,10 @@ class CliApp:
     def _status(self) -> None:
         fsd = self.model.fsd
         state = fsd.state if fsd else "无会话"
-        print(f"FSD 状态: {state}  XConnect 插件: "
-              f"{'在线' if self.model.xconnect.connected else '离线'}")
+        xc = self.model.xconnect
+        bridge = (f"在线[{xc.plugin or '?'}:{xc.active_port}]" if xc.connected
+                  else "离线")
+        print(f"FSD 状态: {state}  模拟机桥接: {bridge}")
         if state == STATE_ONLINE:
             fd = self._last_fd
             if fd is not None:
@@ -211,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--realname", help="真实姓名")
     parser.add_argument("--aircraft", help="机型 ICAO，4 位 (A320/B738/C172)")
     parser.add_argument("--airline", help="航司 ICAO（涂装），如 CCA/CES")
+    parser.add_argument("--registration",
+                        help="注册号（尾号），如 B-1234；留空自动识别")
     parser.add_argument("--sim", choices=["xp11", "xp12"], default="xp12",
                         help="X-Plane 版本（默认 xp12）")
     args = parser.parse_args(argv)
@@ -235,12 +247,25 @@ def main(argv: list[str] | None = None) -> int:
     for attr, arg in (("callsign", args.callsign), ("cid", args.cid),
                       ("password", args.password), ("real_name", args.realname),
                       ("aircraft_icao", args.aircraft),
-                      ("airline_icao", args.airline)):
+                      ("airline_icao", args.airline),
+                      ("registration", args.registration)):
         if arg:
             setattr(cfg, attr, arg)
 
-    app = CliApp(cfg, SIM_TYPES[args.sim])
-    app.run()
+    bridge = None
+    if cfg.auto_start_mconnect:
+        from xfly_client.bridge_launcher import BridgeLauncher
+        bridge = BridgeLauncher(
+            os.path.dirname(os.path.abspath(__file__)),
+            on_log=lambda m: print(f"[bridge] {m}"),
+            toggle_labels=getattr(cfg, "msfs_toggle_labels", False))
+        bridge.start()
+    try:
+        app = CliApp(cfg, SIM_TYPES[args.sim])
+        app.run()
+    finally:
+        if bridge is not None and cfg.mconnect_stop_on_exit:
+            bridge.stop()
     return 0
 
 

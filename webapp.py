@@ -19,11 +19,19 @@ from typing import Optional
 
 import webview
 
+from xfly_client import aircraft_db
+from xfly_client.bridge_launcher import BridgeLauncher
 from xfly_client.config import AppConfig, load_config, save_config
+from xfly_client.diagnostics import collect as collect_diagnostics
+from xfly_client.diagnostics import export as export_diagnostics_file
 from xfly_client.fsd import packet as pk
 from xfly_client.fsd.session import STATE_ONLINE
 from xfly_client.i18n import translate
+from xfly_client.logutil import RotatingFileWriter, redact
 from xfly_client.model import NetworkModel
+from xfly_client.registration import norm_registration
+from xfly_client.simbrief import SimbriefError
+from xfly_client.simbrief import import_plan as simbrief_import_plan
 from xfly_client.xconnect.client import XConnectClient
 
 # 资源根：PyInstaller 打包后在 sys._MEIPASS 临时解包目录（webui/dist 经
@@ -32,6 +40,9 @@ BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 WEBUI_DIST = os.path.join(BASE_DIR, "webui", "dist", "index.html")
 WEBUI_URL = "file:///" + WEBUI_DIST.replace("\\", "/")
 ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.ico")
+# FSD 收发报文落盘（只记 > 开头的发送行与 [fsd] 状态行），排查协议问题用
+FSD_LOG_PATH = os.path.join(BASE_DIR, "fsd.log")
+_FSD_LOG = RotatingFileWriter(FSD_LOG_PATH, max_bytes=10 * 1024 * 1024, backups=3)
 
 
 def _validate(cfg: AppConfig) -> list[str]:
@@ -44,7 +55,16 @@ def _validate(cfg: AppConfig) -> list[str]:
         missing.append("password")
     if not cfg.real_name.strip():
         missing.append("realname")
-    if len(cfg.aircraft_icao.strip()) != 4:
+    # 机型 ICAO 是 **2~4 位** 字母数字，不是固定 4 位。
+    #
+    # ICAO Doc 8643 原文："代码由最多四个字符组成"，即 2/3/4 位都合法。
+    # 之前写死 `!= 4`，会把库里 **2126 条**合法代码全部拒绝：
+    #     2 位 433 条（A9 Quail / B2 / C5 …）
+    #     3 位 1693 条（WSP Wasp / RF9 / LCA Tejas / A20N? 不，A20N 是 4 位）
+    # 用户开着这类机型时表现为"机型 ICAO（4位）缺失或无效"，
+    # 但界面上明明已经识别出了机型 —— 这是个容易让人误解的假报错。
+    icao = cfg.aircraft_icao.strip()
+    if not (2 <= len(icao) <= 4 and icao.isalnum()):
         missing.append("aircraft")
     if len(cfg.airline_icao.strip()) != 3:
         missing.append("airline")
@@ -61,22 +81,107 @@ class Api:
         self._events: deque[tuple[str, object]] = deque()
         self._sim_type = pk.SIM_TYPE_XP12
         self._debug: bool = self._cfg.debug_mode
+        # 最近一次插件上报的机型名 / 引擎数（connect() 兜底推断用）
+        self._last_ac_name: str = ""
+        self._last_eng: int = 0
 
-        # XConnect 插件客户端：应用级生命周期，启动即持续监听插件上线
+        # MConnect 自动启动（无窗口；仅当 exe 存在且未运行时拉起）
+        self._bridge = BridgeLauncher(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            on_log=lambda m: self._push("log", self._tr(m)),
+            toggle_labels=getattr(self._cfg, "msfs_toggle_labels", False))
+        if self._cfg.auto_start_mconnect:
+            self._bridge.start()
+
+        # 桥接客户端：应用级生命周期，同时探测 XConnect(51001) 与
+        # MConnect(51002/51003/51004)，XP11/XP12/MSFS20/24 任一在线即可连线
         self._xconnect = XConnectClient(
-            self._cfg.xconnect_host, self._cfg.xconnect_port)
+            self._cfg.xconnect_host, self._cfg.xconnect_port,
+            mconnect_port=self._cfg.mconnect_port)
         self._xconnect.on_log = lambda m: self._push("log", self._tr(m))
         self._xconnect.on_connected = lambda: self._push("xconnect", "connected")
         self._xconnect.on_disconnected = \
             lambda: self._push("xconnect", "disconnected")
         # 未连线 FSD 也接收并显示飞行数据（连线后由 NetworkModel 接管上报）
-        self._xconnect.on_flight_data = lambda fd: self._push("flight", asdict(fd))
+        #
+        # ⚠️ **这里必须自己做机型推断**，不能把插件原值直接推给前端。
+        #
+        # 曾经踩过的死锁：
+        #   ① 有些机模（F-14 等）`acf_ICAO` 是空串，插件按设计不猜，原样上报 "";
+        #   ② 这一行把 "" 直推前端 → `store.aircraft` 被写成 "" （store.js 里
+        #      "空值也是合法状态" 那条注释）；
+        #   ③ 用户点连接 → 后端 `_validate` 发现 aircraft 为空 → 拒绝；
+        #   ④ 连不上 FSD → `NetworkModel` 永远不会创建 → 而机型推断恰好只写在
+        #      `NetworkModel._on_xconnect_flight_data` 里 → **推断永远不执行**。
+        # 于是界面报「机型 ICAO 缺失」，但用户明明已经开着 F-14 了。
+        #
+        # 修法：在推送前补一次推断，与 NetworkModel 里的逻辑保持一致。
+        # （两处都做是有意为之：这条路径是"未连线预览"，那条是"连线后上报"，
+        #  谁都无法保证对方一定先跑过。）
+        self._xconnect.on_flight_data = self._push_flight
         self._xconnect.on_csl_status = lambda d: self._push("csl", d)
         self._start_xconnect()
+
+    def _push_flight(self, fd) -> None:
+        """推送飞行数据到前端；机型缺失时先按机型名推断补上。"""
+        # 记下原始机型名与引擎数，供 connect() 在必要时兜底重推
+        self._last_ac_name = getattr(fd, "aircraft_name", "") or ""
+        self._last_eng = int(getattr(fd, "engine_count", 0) or 0)
+        raw = (getattr(fd, "aircraft_icao", "") or "").strip()
+        if not raw:
+            guessed = aircraft_db.guess_designator(
+                self._last_ac_name, self._last_eng)
+            if guessed:
+                fd.aircraft_icao = guessed
+                # 同时回写配置，否则下次 _validate 仍拿旧值
+                if self._cfg.aircraft_icao != guessed:
+                    self._cfg.aircraft_icao = guessed
+        self._push("flight", asdict(fd))
 
     def _start_xconnect(self) -> None:
         self._push("xconnect", "waiting")
         self._xconnect.start()  # 持续重连，直到插件上线
+
+    # ---------- 诊断 ----------
+
+    def _diagnostics_extra(self) -> dict:
+        xc = self._xconnect
+        extra = {
+            "xconnect": {
+                "connected": bool(xc and xc.connected),
+                "plugin": getattr(xc, "plugin", ""),
+                "plugin_version": getattr(xc, "plugin_version", ""),
+                "sim": getattr(xc, "sim", ""),
+                "active_port": getattr(xc, "active_port", 0),
+                "candidate_ports": list(getattr(xc, "ports", [])),
+                "protocol": getattr(xc, "protocol_version", 0),
+                "capabilities": sorted(getattr(xc, "capabilities", set()) or []),
+            }
+        }
+        m = self._model
+        if m is not None:
+            extra["model"] = {
+                "players": len(m._players),
+                "atc": len(m._atc),
+                "fsd_state": m.fsd.state if m.fsd else None,
+            }
+        return extra
+
+    def diagnostics(self) -> dict:
+        """返回可展示/复制的诊断 JSON（日志尾部已脱敏）。"""
+        return collect_diagnostics(log_path=FSD_LOG_PATH,
+                                   extra=self._diagnostics_extra())
+
+    def export_diagnostics(self) -> dict:
+        """导出诊断 JSON 到程序目录，返回路径。"""
+        name = f"xflysim-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        path = os.path.join(BASE_DIR, name)
+        try:
+            p = export_diagnostics_file(path=path, log_path=FSD_LOG_PATH,
+                                        extra=self._diagnostics_extra())
+            return {"ok": True, "path": p}
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
 
     # ---------- 事件推送（前端回调） ----------
 
@@ -85,7 +190,25 @@ class Api:
         return translate(self._cfg.language, msg)
 
     def _push(self, event: str, payload) -> None:
+        # 日志/UI 回显前先脱敏（#AP 密码等），落盘同样使用脱敏后的内容
+        if event == "log" and isinstance(payload, str):
+            payload = redact(payload)
         self._events.append((event, payload))
+        # 关键报文落盘，方便事后排查（UI 日志关掉就丢了）。
+        # 记：> 发送行、< 接收行、[fsd] 状态/错误行；不记 flight（5Hz 刷爆）。
+        if event in ("log", "fsdstate") or event == "xconnect":
+            try:
+                if event == "log" and isinstance(payload, str):
+                    s = payload.strip()
+                    if not (s.startswith(">") or s.startswith("<")
+                            or s.startswith("[fsd]")):
+                        s = ""
+                else:
+                    s = f"<{event}> {payload}"
+                if s:
+                    _FSD_LOG.write(f"{time.strftime('%H:%M:%S')} {redact(s)}\n")
+            except OSError:
+                pass
         if len(webview.windows):
             webview.windows[0].evaluate_js("pollEvent()")
 
@@ -139,6 +262,18 @@ class Api:
         callsign = callsign.strip().upper()
         aircraft = aircraft.strip().upper()
         airline = callsign[:3] or airline.strip().upper()
+        # 机型兜底：前端传来的值不可用时，用**最后一次插件原始数据**重新推断。
+        #
+        # 为什么需要这层：前端 `store.aircraft` 可能因为某些时序问题仍是空值
+        # （比如刚切机模、推送还没到达，或者前端被清空后没来得及刷新）。
+        # 只依赖前端传值会让"明明识别得出来"的机型卡在校验上。
+        # 这里拿 `self._last_fd_*` 兜底，保证只要插件读到过机型名就能连。
+        if not (2 <= len(aircraft) <= 4 and aircraft.isalnum()):
+            fb = aircraft_db.guess_designator(
+                getattr(self, "_last_ac_name", "") or "",
+                int(getattr(self, "_last_eng", 0) or 0))
+            if fb:
+                aircraft = fb
         self._cfg.callsign = callsign
         self._cfg.aircraft_icao = aircraft
         self._cfg.airline_icao = airline
@@ -152,6 +287,11 @@ class Api:
         model = NetworkModel(xconnect=self._xconnect)
         model.aircraft_icao = self._cfg.aircraft_icao
         model.airline_icao = self._cfg.airline_icao
+        # 尾号：先按「手动填写 > 同机型上次记录」定值，首包 PI 即可带上；
+        # 连线后插件每帧上报 acf_tailnum / 涂装目录，自动覆盖为模拟器值
+        model.registration_manual = norm_registration(self._cfg.registration)
+        model.registration_cache = dict(self._cfg.registration_cache or {})
+        model.on_registration_resolved = self._on_registration_resolved
         model.on_log = lambda m: self._push("log", self._tr(m))
         model.on_text_received = lambda f, m: self._push("text", [f, m])
         model.on_local_flight_data = lambda fd: self._push("flight", asdict(fd))
@@ -161,6 +301,7 @@ class Api:
         model.on_plugin_message = self._on_plugin_message
         model.on_csl_status = lambda d: self._push("csl", d)
         model.on_fsd_state_changed = lambda _: self._push("fsdstate", self.status())
+        model._apply_registration("", "", model.aircraft_icao)
 
         sim_type = self._sim_type
         cfg = self._cfg
@@ -216,6 +357,20 @@ class Api:
         if self._debug:
             self._push("xplog", doc)
 
+    def _on_registration_resolved(self, reg: str, src: str, icao: str) -> None:
+        """尾号解析结果回调：缓存同机型的自动值 + 通知前端刷新显示。
+
+        只缓存模拟器读到的值（src=tailnum/livery）——手动值不缓存，否则用户清空
+        输入后会被旧值回填，"手动 → 自动" 的降级就失效了。
+        """
+        if reg and src in ("tailnum", "livery") and icao:
+            cache = dict(self._cfg.registration_cache or {})
+            if cache.get(icao) != reg:
+                cache[icao] = reg
+                self._cfg.registration_cache = cache
+                save_config(self._cfg)
+        self._push("registration", {"reg": reg, "src": src})
+
     # ---------- 消息 / METAR / 机型 ----------
 
     def send_text(self, to: str, msg: str) -> dict:
@@ -231,6 +386,74 @@ class Api:
             model.fsd.send_frequency_text(float(mhz), msg)
             return {"ok": True}
         return {"ok": False, "code": "not_connected_or_msg_empty"}
+
+    # ---------- 模拟器反写（RMP 面板按键 → X-Plane） ----------
+    #
+    # 与 send_freq 的区别：send_freq 发的是 **FSD 文本**（`#TM` 频率消息），
+    # 这里是把动作**写进模拟器**（XConnect 插件的 Send:RADIO / Send:XPDR）。
+    # 两者互不替代：前者告诉服务器"我在守这个频率"，后者真正改座舱里的无线电。
+
+    def xp_set_xpdr_code(self, code: str) -> dict:
+        """设置应答机 4 位码（每位 0-7）。"""
+        xc = self._xconnect
+        if xc is None:
+            return {"ok": False, "code": "xconnect_unavailable"}
+        s = str(code).strip()
+        if len(s) != 4 or any(c not in "01234567" for c in s):
+            return {"ok": False, "code": "bad_squawk"}
+        xc.send_transponder_code(s)
+        return {"ok": True}
+
+    def xp_set_xpdr_mode(self, mode: int) -> dict:
+        """设置应答机模式：0=Off 1=Stby 2=On(A) 3=Alt(C) 4=Test 5=GND
+        6=TA only 7=TA/RA。
+
+        这与 X-Plane `transponder_mode` 枚举一致（共 8 个值）。
+        插件优先发 sim/transponder/transponder_* 命令，机模面板会跟着动。
+        """
+        xc = self._xconnect
+        if xc is None:
+            return {"ok": False, "code": "xconnect_unavailable"}
+        m = int(mode)
+        if m < 0 or m > 7:
+            return {"ok": False, "code": "bad_mode"}
+        xc.send_transponder_state(m)
+        return {"ok": True}
+
+    def xp_xpdr_ident(self) -> dict:
+        """触发应答机 IDENT（瞬时脉冲，无法"取消"）。"""
+        xc = self._xconnect
+        if xc is None:
+            return {"ok": False, "code": "xconnect_unavailable"}
+        xc.send_transponder_ident(True)
+        return {"ok": True}
+
+    def xp_set_com(self, com: int, mhz: float, active: bool = True) -> dict:
+        """设置 COM 频率。com=1..3，mhz 单位 MHz（121.8），active 区分主/备频。"""
+        xc = self._xconnect
+        if xc is None:
+            return {"ok": False, "code": "xconnect_unavailable"}
+        c = int(com)
+        if c < 1 or c > 3:
+            return {"ok": False, "code": "bad_com"}
+        mhz1000 = int(round(float(mhz) * 1000))
+        # COM 波段 118.000~136.975 MHz。上界是 136975 不是 137000 ——
+        # 137.000 是波段预留边界，8.33kHz 间隔下最高合法值就是 136.975。
+        if mhz1000 < 118000 or mhz1000 > 136975:
+            return {"ok": False, "code": "freq_out_of_band"}
+        xc.send_radio_frequency(c, mhz1000, bool(active))
+        return {"ok": True}
+
+    def xp_swap_com(self, com: int) -> dict:
+        """主备频率互换（走 X-Plane 命令，机模面板会同步）。"""
+        xc = self._xconnect
+        if xc is None:
+            return {"ok": False, "code": "xconnect_unavailable"}
+        c = int(com)
+        if c < 1 or c > 3:
+            return {"ok": False, "code": "bad_com"}
+        xc.send_radio_swap(c)
+        return {"ok": True}
 
     def request_metar(self, icao: str) -> dict:
         model = self._model
@@ -271,7 +494,11 @@ class Api:
         )
 
     def submit_flight_plan(self, d: dict) -> dict:
-        """提交飞行计划（$FP），并保存到本地配置供下次连线自动提交。"""
+        """提交飞行计划（$FP），并保存到本地配置供下次连线自动提交。
+
+        表单里的「注册号」不进入 $FP 报文（FSD 计划无此字段），而是作为本机尾号的
+        手动值：非空 → 覆盖自动识别结果并立即重发 `#SB PI`；清空 → 回到自动识别。
+        """
         model = self._model
         if not (model and model.fsd):
             return {"ok": False, "code": "not_online"}
@@ -281,17 +508,57 @@ class Api:
             return {"ok": False, "code": "plan_field_error"}
         # 提交成功后保存本地
         self._cfg.flight_plan = {k: d[k] for k in self._FP_KEYS if k in d}
+        reg = norm_registration(str(d.get("registration", "")))
+        self._cfg.registration = reg
         save_config(self._cfg)
-        return {"ok": True, "saved": True}
+        try:
+            model.set_registration_manual(reg)
+        except Exception as exc:      # 尾号失败不影响计划提交
+            self._push("sys", self._tr(f"设置注册号失败: {exc}"))
+        return {"ok": True, "saved": True, "registration": model.registration}
+
+    # ---------- SimBrief 导入 ----------
+
+    def _remember_simbrief_user(self, user: str) -> None:
+        """记住 SimBrief 用户名/ID。
+
+        关键：**失败也要记**。之前只在成功时保存，导致网络不通 / 用户名打错时
+        输入框下次打开就是空的，看起来像"根本没缓存"。
+        """
+        user = (user or "").strip()
+        if not user or user == self._cfg.simbrief_user:
+            return
+        self._cfg.simbrief_user = user
+        try:
+            save_config(self._cfg)
+        except OSError as exc:
+            self._push("sys", self._tr(f"保存 SimBrief 用户名失败: {exc}"))
+
+    def simbrief_import(self, username: str) -> dict:
+        """按 SimBrief 用户名/用户 ID 取最新 OFP，返回表单字段（不自动提交）。
+
+        只做「填表」：用户核对/修改后自己点提交，避免拿到一份旧计划就误发 $FP。
+        未连线也可用（离线准备计划是常规流程）。
+        """
+        user = (username or "").strip()
+        self._remember_simbrief_user(user)      # 先记输入，失败也不丢
+        try:
+            plan = simbrief_import_plan(user, timeout=10.0)
+        except SimbriefError as exc:
+            return {"ok": False, "code": exc.code, "error": exc.detail,
+                    "username": user}
+        return {"ok": True, "username": user, "plan": plan}
 
     # ---------- 状态 ----------
 
     def status(self) -> dict:
         model = self._model
         if model is None:
+            reg = norm_registration(self._cfg.registration)
             return {"fsd": "Disconnected",
                     "xconnect": self._xconnect.connected,
-                    "atc": 0, "players": 0}
+                    "atc": 0, "players": 0,
+                    "reg": reg, "reg_src": "manual" if reg else ""}
         fsd = model.fsd
         with model._gate:
             atc = len(model._atc)
@@ -302,6 +569,8 @@ class Api:
             "xconnect": self._xconnect.connected,
             "atc": atc,
             "players": players,
+            "reg": model.registration,
+            "reg_src": model.registration_source,
         }
 
     # ---------- 在线列表（ATC / 飞行员） ----------
@@ -343,6 +612,8 @@ class Api:
         if model is not None:
             model.shutdown()
         self._xconnect.stop()
+        if self._cfg.mconnect_stop_on_exit:
+            self._bridge.stop()
 
 
 def _find_windows_by_pid(pid: int) -> list:
@@ -416,8 +687,6 @@ def _apply_window_icon_async(ico: str) -> None:
 
     threading.Thread(target=worker, daemon=True).start()
 
-    threading.Thread(target=worker, daemon=True).start()
-
 
 def run_web(debug: bool = False) -> None:
     from _noise import suppress_noise
@@ -437,7 +706,7 @@ def run_web(debug: bool = False) -> None:
             width=420, height=577.5, resizable=False,
             js_api=api, background_color="#16181c",
             frameless=True, easy_drag=False,
-            confirm_close=True)
+            confirm_close=False)   # 退出确认由前端 ElMessageBox 完成（原生框会裁字）
         if os.path.exists(ICON_PATH):
             _apply_window_icon_async(ICON_PATH)
         webview.start(debug=debug,

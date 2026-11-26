@@ -53,9 +53,10 @@ class XflyGui:
         self._build_status()
         root.after(100, self._pump)
 
-        # XConnect 插件客户端：应用级生命周期，启动即持续监听插件上线
+        # 桥接客户端：同时探测 XConnect(51001) 与 MConnect(51002/51003/51004)
         self._xconnect = XConnectClient(
-            self.cfg.xconnect_host, self.cfg.xconnect_port)
+            self.cfg.xconnect_host, self.cfg.xconnect_port,
+            mconnect_port=self.cfg.mconnect_port)
         self._xconnect.on_log = lambda m: self._post("log", m)
         # 未连线也显示飞行数据（连线后由 NetworkModel 接管）
         self._xconnect.on_flight_data = lambda fd: self._post("flight", fd)
@@ -162,8 +163,12 @@ class XflyGui:
         missing = []
         if not callsign:
             missing.append("呼号")
-        if len(aircraft) != 4 or not aircraft.isalnum():
-            missing.append("机型 ICAO（等待模拟器识别）")
+        # 机型 ICAO 是 **2~4 位**，不是固定 4 位（ICAO Doc 8643：
+        # "代码由最多四个字符组成"）。写死 4 位会拒掉库里 2126 条
+        # 合法代码（2 位 433 条、3 位 1693 条），表现为"机型 ICAO
+        # （等待模拟器识别）"—— 但模拟器其实已经识别出来了。
+        if not (2 <= len(aircraft) <= 4 and aircraft.isalnum()):
+            missing.append("机型 ICAO（2~4 位，等待模拟器识别）")
         if len(airline) != 3 or not airline.isalnum():
             missing.append("航司 ICAO（3 位）")
         if not self.cfg.real_name.strip():
@@ -184,14 +189,19 @@ class XflyGui:
 
         if not self._xconnect.connected:
             messagebox.showerror(
-                "拒绝连线", "XConnect 插件未上线（未连接 51001），禁止连线 FSD。\n"
-                           "请确认 X-Plane 已运行且 XConnect 插件已安装。")
+                "拒绝连线", "未发现任何在线模拟机，禁止连线 FSD。\n"
+                           "请确认 X-Plane(XConnect) 或 MSFS(MConnect) 已运行且插件已加载。")
             return
 
         from xfly_client.model import NetworkModel
+        from xfly_client.registration import norm_registration
         self.model = NetworkModel(xconnect=self._xconnect)
         self.model.aircraft_icao = aircraft
         self.model.airline_icao = airline
+        # 尾号：手动填写 > 模拟器（插件上报）> 同机型上次记录 > 空
+        self.model.registration_manual = norm_registration(self.cfg.registration)
+        self.model.registration_cache = dict(self.cfg.registration_cache or {})
+        self.model._apply_registration("", "", aircraft)
         self.model.on_log = lambda m: self._post("log", m)
         self.model.on_text_received = lambda f, m: self._post("text", f, m)
         self.model.on_local_flight_data = lambda fd: self._post("flight", fd)
@@ -279,6 +289,7 @@ class XflyGui:
             ("呼号", "callsign"),
             ("机型 ICAO", "aircraft_icao"),
             ("航司 ICAO", "airline_icao"),
+            ("注册号(空=自动)", "registration"),
         ])
         add_group("服务器", [
             ("FSD 服务器", "server_host"),
@@ -293,8 +304,8 @@ class XflyGui:
                        selectcolor=BG2, font=("Segoe UI", 9)
                        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=12)
 
-        tip = tk.Label(win, text="提示: 客户端连接 X-Plane 内的 XConnect 插件\n"
-                                 "（默认 127.0.0.1:51001），插件离线时禁止连线",
+        tip = tk.Label(win, text="提示: 客户端自动探测 XConnect(51001) 与\n"
+                                 "MConnect(51002/51003/51004)，任一在线即可连线",
                        bg=BG, fg="#c9a227", font=("Segoe UI", 8),
                        justify=tk.LEFT)
         tip.grid(row=4, column=0, columnspan=2, sticky="w", padx=12)
@@ -311,6 +322,7 @@ class XflyGui:
             cfg.callsign = vars_["callsign"].get().strip().upper()
             cfg.aircraft_icao = vars_["aircraft_icao"].get().strip().upper()
             cfg.airline_icao = vars_["airline_icao"].get().strip().upper()
+            cfg.registration = vars_["registration"].get().strip().upper()
 
             cfg.server_host = vars_["server_host"].get().strip() or "ol.xflysim.com"
             cfg.xconnect_host = vars_["xconnect_host"].get().strip() or "127.0.0.1"
@@ -327,7 +339,8 @@ class XflyGui:
 
             self.cfg = load_config()
             for attr in ("callsign", "real_name", "cid", "password",
-                         "aircraft_icao", "airline_icao", "remember_password",
+                         "aircraft_icao", "airline_icao", "registration",
+                         "remember_password",
                          "server_host", "server_port",
                          "xconnect_host", "xconnect_port"):
                 if hasattr(cfg, attr):

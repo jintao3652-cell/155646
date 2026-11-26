@@ -70,7 +70,12 @@ int net_read_line(net_sock_t sock, char* buf, int size) {
         if (n == 0) {
             return pos > 0 ? pos : 0; /* 关闭 */
         }
-        if (n < 0) return -1;
+        if (n < 0) {
+#ifndef _WIN32
+            if (errno == EINTR) continue;   /* 信号中断：重试 */
+#endif
+            return -1;
+        }
         if (c == '\n') {
             /* 去掉尾部 \r */
             if (pos > 0 && buf[pos - 1] == '\r') pos--;
@@ -83,7 +88,12 @@ int net_read_line(net_sock_t sock, char* buf, int size) {
      * 返回 -2 表示"超长行被丢弃"，调用方应继续读取下一条。 */
     while (1) {
         int n = recv(sock, &c, 1, 0);
-        if (n <= 0) return -2;
+        if (n <= 0) {
+#ifndef _WIN32
+            if (n < 0 && errno == EINTR) continue;
+#endif
+            return -2;
+        }
         if (c == '\n') return -2;
     }
 }
@@ -92,7 +102,12 @@ int net_write_all(net_sock_t sock, const char* buf, int len) {
     int off = 0;
     while (off < len) {
         int n = send(sock, buf + off, len - off, 0);
-        if (n <= 0) return -1;
+        if (n <= 0) {
+#ifndef _WIN32
+            if (n < 0 && errno == EINTR) continue;
+#endif
+            return -1;
+        }
         off += n;
     }
     return 0;
@@ -116,6 +131,15 @@ void net_close(net_sock_t sock) {
 #else
     shutdown(sock, SHUT_RDWR);
     close(sock);
+#endif
+}
+
+void net_shutdown(net_sock_t sock) {
+    if (sock == NET_INVALID) return;
+#ifdef _WIN32
+    shutdown(sock, SD_BOTH);
+#else
+    shutdown(sock, SHUT_RDWR);
 #endif
 }
 

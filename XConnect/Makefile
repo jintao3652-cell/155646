@@ -8,7 +8,8 @@ CFLAGS  += -DXPLM200 -DXPLM210 -DXPLM300 -DXPLM400 -DXPLM410 -DXPLM420 -DXPLM430
 CFLAGS  += -I$(SDK)/XPLM -Isrc
 LDLIBS  += -lpthread
 
-SRCS = src/xconnect.c src/json.c src/net.c src/csl.c
+SRCS = src/xconnect.c src/datarefs.c src/players.c src/labels.c \
+       src/json.c src/net.c src/csl.c
 OUT  = XConnect.xpl
 
 $(OUT): $(SRCS)

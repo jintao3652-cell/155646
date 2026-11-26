@@ -29,6 +29,11 @@ $pyArgs = @(
     $mode, "--noconfirm", "--clean",
     "--add-data", "$root\webui\dist;webui\dist",
     "--add-data", "$root\assets;assets",
+    # Model/livery DB used to build PI LIVERY; must be bundled or livery is empty.
+    "--add-data", "$root\xfly_client\aircraft_db.b64;xfly_client",
+    "--add-data", "$root\xfly_client\_aircraft_ids.b64;xfly_client",
+    # swift 官方 engine 类型表（J/T/P/R），供 AircraftProfile 判定动画语义
+    "--add-data", "$root\xfly_client\aircraft_engine_types.b64;xfly_client",
     "--icon", "$root\assets\icon.ico",
     "--hidden-import", "webview.platforms.edgechromium",
     "--collect-all", "webview",

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import pickle
@@ -19,7 +20,9 @@ import sys
 import uuid
 from dataclasses import asdict, dataclass, fields
 
-_MAGIC = b"XFC1"   # 文件头，识别合法二进制配置
+# 文件头：XFC2 = JSON 载荷；XFC1 = 旧版 pickle 载荷（仅用于一次性安全迁移）
+_MAGIC = b"XFC2"
+_LEGACY_MAGIC = b"XFC1"
 
 
 @dataclass
@@ -30,14 +33,34 @@ class AppConfig:
     real_name: str = ""
     aircraft_icao: str = "A320"
     airline_icao: str = ""
+    # 注册号（尾号）：用户手填值，最高优先；空串 = 自动识别（模拟器 → 上次记录）
+    registration: str = ""
+    # 自动识别结果缓存：机型 ICAO → 尾号（仅同机型复用，见 registration.py）
+    registration_cache: dict | None = None
     remember_password: bool = True
     debug_mode: bool = False
     language: str = "en"
     flight_plan: dict | None = None
+    # SimBrief 用户名/用户 ID：飞行计划页「SimBrief 导入」的上次输入值
+    simbrief_user: str = ""
     server_host: str = "ol.xflysim.com"
     server_port: int = 6809
     xconnect_host: str = "127.0.0.1"
+    # X-Plane 的 XConnect 插件端口
     xconnect_port: int = 51001
+    # MSFS 的 MConnect 端口。必须与 X-Plane 错开：两者同时开时 51001 会被
+    # X-Plane 占住（实测 X-Plane 12 独占），MConnect 用 51002。
+    # 客户端同时探测 xconnect_port 与本端口（含退避 51003/51004），
+    # XP11/XP12/MSFS2020/2024 任一在线即可连线 FSD。
+    mconnect_port: int = 51002
+    # 客户端启动时自动拉起 MConnect.exe（无窗口模式）。X-Plane 用户可关掉。
+    auto_start_mconnect: bool = True
+    # 客户端退出时是否一并终止 MConnect（默认否：保留 SimConnect 会话便于重连）
+    mconnect_stop_on_exit: bool = False
+    # MConnect 启动时带 --labels：翻转一次 MSFS 内置"机模标签"。
+    # 标签显示的是 AI 的 ATC ID（MConnect 已写成远端呼号），开启后能看到
+    # 他机呼号。注意 toggle 语义：标签原本已开启时会被关闭。
+    msfs_toggle_labels: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "AppConfig":
@@ -85,14 +108,43 @@ def _xor(data: bytes, key: bytes) -> bytes:
 
 
 def _dump(payload: dict) -> bytes:
-    blob = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+    # 用 JSON 而不是 pickle：配置是纯数据，JSON 不存在反序列化执行代码的风险。
+    blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
     return _MAGIC + _xor(blob, _machine_key())
 
 
+class _SafeUnpickler(pickle.Unpickler):
+    """仅允许基础容器/标量的 unpickler，用于迁移旧版配置。
+
+    正常 pickle 数据不会调用 find_class；任何试图引用其它类（REDUCE/GLOBAL）
+    的恶意载荷都会被拒绝，从而避免 pickle 反序列化任意代码执行。
+    """
+
+    _ALLOWED = {
+        ("builtins", n) for n in (
+            "dict", "list", "tuple", "set", "frozenset", "str", "bytes",
+            "bytearray", "int", "float", "bool", "complex", "NoneType",
+        )
+    }
+
+    def find_class(self, module, name):  # type: ignore[override]
+        if (module, name) in self._ALLOWED:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"unsafe class {module}.{name}")
+
+
 def _load_blob(data: bytes) -> dict:
-    if not data or not data.startswith(_MAGIC):
+    if not data:
+        raise ValueError("empty config file")
+    if data.startswith(_MAGIC):
+        raw = _xor(data[len(_MAGIC):], _machine_key())
+        obj = json.loads(raw.decode("utf-8"))
+    elif data.startswith(_LEGACY_MAGIC):
+        raw = _xor(data[len(_LEGACY_MAGIC):], _machine_key())
+        obj = _SafeUnpickler(io.BytesIO(raw)).load()
+    else:
         raise ValueError("not a config file")
-    obj = pickle.loads(_xor(data[len(_MAGIC):], _machine_key()))
     if not isinstance(obj, dict):
         raise ValueError("bad payload")
     return obj
@@ -122,7 +174,15 @@ def load_config(path: str | None = None) -> AppConfig:
     path = path or config_path()
     try:
         with open(path, "rb") as f:
-            return AppConfig.from_dict(_load_blob(f.read()))
+            data = f.read()
+        cfg = AppConfig.from_dict(_load_blob(data))
+        if not data.startswith(_MAGIC):
+            # 旧版 pickle 配置：加载成功后立即以新格式重写
+            try:
+                _write(path, cfg)
+            except OSError:
+                pass
+        return cfg
     except Exception:
         pass
     legacy = _legacy_json_path()
