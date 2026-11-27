@@ -55,6 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="只输出 JSON 报告")
     p.add_argument("--sample-manifest", action="store_true",
                    help="打印清单模板后退出（供服务端/打包脚本参考）")
+    # 客户端在线更新：客户端下载校验后写一个作业文件，拉起本 exe 在
+    # 客户端退出后完成替换并重启（见 xfly_client/update_apply.py）。
+    p.add_argument("--apply-package", metavar="JOB.json",
+                   help="按作业文件执行 exe 替换（由客户端拉起，勿手改）")
+    p.add_argument("--wait-timeout", type=float, default=60.0,
+                   help="等待客户端退出的秒数（默认 60）")
+    p.add_argument("--quiet", action="store_true", help="不输出到标准输出")
     p.add_argument("--version", action="version",
                    version=f"XUpdate {UPDATER_VERSION}")
     return p
@@ -70,6 +77,16 @@ def _plan_report(plans: list[UpdatePlan]) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.apply_package:
+        # 客户端自更新：等待主进程退出 → 备份/原子替换 → 写版本 → 重启。
+        # 只有这一步会改磁盘，且由客户端在退出前拉起。
+        from xfly_client.update_apply import run_job_file
+        from xfly_client.updater import UpdaterLog
+        log = UpdaterLog(app_base_dir(), quiet=args.quiet)
+        return run_job_file(args.apply_package, log=log,
+                            wait_timeout=args.wait_timeout)
+
     if args.sample_manifest:
         print(json.dumps(sample_manifest(), ensure_ascii=False, indent=2))
         return 0

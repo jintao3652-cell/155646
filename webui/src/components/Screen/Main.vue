@@ -1,7 +1,7 @@
 <script setup>
     import { useI18n } from 'vue-i18n'
     import { computed, ref } from 'vue'
-    import { store } from "../../store.js";
+    import { store, updateAvailable, updatePercent } from "../../store.js";
     import router from '@/router'
     import ScreenButton from '@/components/RMP/ScreenButton.vue'
     import XpdrPanel from './XpdrPanel.vue'
@@ -139,7 +139,15 @@
                             </el-col>
                             <el-col :span="4" style="border-right: 1px solid #fff"></el-col>
                             <el-col :span="8" class="msg">
-                                <span v-if="store.newMsg" class="new-msg">{{ t('lcd.lblNewMsg') }}</span>
+                                <!-- 启动检查到新版本：与"新消息"共用同一格（先到先显示），
+                                     点击进更新小屏；下载中直接显示百分比 -->
+                                <span v-if="updateAvailable" class="new-msg upd"
+                                      :title="t('update.available')"
+                                      @click="router.push('/update')">
+                                    {{ t('lcd.lblUpdate') }} {{ store.update.latest }}<template
+                                        v-if="store.update.state === 'downloading'"> {{ updatePercent }}%</template>
+                                </span>
+                                <span v-else-if="store.newMsg" class="new-msg">{{ t('lcd.lblNewMsg') }}</span>
                             </el-col>
                         </el-row>
                     </el-col>
@@ -224,6 +232,14 @@
         font-weight: bold;
         letter-spacing: 1px;
         animation: msg-blink 1s linear infinite;
+    }
+
+    /* 有更新：同款闪烁但可点（进更新小屏），字号小一点避免挤爆 8 列格 */
+    .new-msg.upd {
+        font-size: 11.5px;
+        letter-spacing: 0;
+        white-space: nowrap;
+        cursor: pointer;
     }
 
     @keyframes msg-blink {

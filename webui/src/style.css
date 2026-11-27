@@ -196,6 +196,10 @@ body,
   color: var(--led-amber);
   letter-spacing: 1px;
   padding-top: 4px;
+  cursor: pointer;
+}
+.cns-brand .ver:hover {
+  color: #fff;
 }
 
 /* --- LCD + 环形导航键 --- */

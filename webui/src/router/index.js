@@ -66,6 +66,14 @@ const router = createRouter({
       },
     },
     {
+      // 客户端整包在线更新（检查/下载/校验/拉起助手重启）
+      path: "/update",
+      name: "update",
+      components: {
+        screen: () => import("../components/Screen/Update.vue"),
+      },
+    },
+    {
       path: "/atc",
       name: "atc",
       components: {

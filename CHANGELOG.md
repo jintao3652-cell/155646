@@ -38,6 +38,14 @@
   回滚，检测 exe/xpl 被客户端或模拟器占用（退出码 3）。日志独立写入
   `logs/xupdate-YYYY-MM-DD.log`；`build_exe.ps1` 同步产出 XUpdate.exe。
   CSL / FSLTL / AIG 仍走独立资源层，不在此更新器内。
+- **客户端在线更新（整包自更新）**：启动自动检查更新接口（只比版本号），
+  有新版本时在 LCD 主屏右侧提示，点进更新小屏。流程按"不会自覆盖"设计：
+  下载到 `%TEMP%\XFlySimUpdate\<version>\*.part`（HTTP Range 断点续传、边下边算
+  MD5）→ 校验 → **先拉起独立助手 XUpdate.exe 再退出主程序** → 助手等进程退出
+  后备份 `.bak`、同卷原子替换、失败回滚、写回版本号并重启。接口字段
+  `softwareName/version/logs/link/md5/createdTime`，地址在
+  `xfly_client/update_service.py::UPDATE_API_URL`（留空即关闭）。插件仍走清单
+  通道；详见 `docs/客户端在线更新.md`。
 
 ### Security
 

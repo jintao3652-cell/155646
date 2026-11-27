@@ -71,18 +71,24 @@ python -m PyInstaller --onefile --noconfirm --clean --windowed `
 - **XUpdate.exe**：`build_exe.ps1` 还会产出 `dist\XUpdate.exe`（独立更新器，
   无 WebView2 依赖），负责客户端与 MC/XC 插件的版本检查/下载/替换；
   用法与清单格式见 `XUpdate更新器.md`。CSL/FSLTL/AIG 不走这个通道。
+  **必须与 `XFlySimClient.exe` 放在同一目录**：客户端在线更新（整包自更新）
+  靠它完成"退出后替换 + 重启"，详见 `客户端在线更新.md`。
 
 ## 5. 独立更新器 XUpdate.exe
 
 ```powershell
 XUpdate.exe --check          # 只检查，不写磁盘
 XUpdate.exe --apply          # 下载 + 校验 + 备份 + 原子替换（失败回滚）
+XUpdate.exe --apply-package JOB.json   # 客户端自更新用：等客户端退出后替换 exe
 XUpdate.exe --sample-manifest
 ```
 
 默认清单是 exe 同目录 `update/manifest.json`，可用 `--manifest` 指定本地路径
 或 URL。更新 X-Plane 插件时用 `--xplane-dir`（或环境变量 `XPLANE_ROOT`）。
 完整说明见 `XUpdate更新器.md`。
+
+客户端自身的整包更新走另一条更短的通道（服务端一个 JSON 接口 + 一个 exe 直链），
+由客户端写作业文件后拉起 `XUpdate.exe --apply-package`，见 `客户端在线更新.md`。
 
 ## 6. 其他入口
 
