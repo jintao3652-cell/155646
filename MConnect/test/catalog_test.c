@@ -281,6 +281,13 @@ int main(void) {
     check(m.level == 4, "级别 = FALLBACK(4)", NULL);
     check_str(m.title, "PMDG 737-800 CCA", "别名落到 B738 且保留同航司");
 
+    /* --- 4b2. E19L（E190LR 写法）走别名回退到 E195 同族 --- */
+    printf("\n[4b2] E19L 别名回退\n");
+    catalog_match("E19L", "", "", &m);
+    check(m.found == 1, "命中", NULL);
+    check(m.level == 4, "级别 = FALLBACK(4)", NULL);
+    check_str(m.title, "Embraer E195 Asobo", "E19L -> E195 同族");
+
     /* --- 4c. 内置表有精确机型时优于别名（B38M 是 737 MAX 8） --- */
     printf("\n[4c] 精确机型优先于别名（B38M）\n");
     catalog_match("B38M", "CCA", "", &m);

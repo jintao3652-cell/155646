@@ -180,6 +180,16 @@ static void make_tree(const char* root) {
         "AIRLINE F900 ZZZ\n");
     snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/F900/F900W_ZZZ.obj", root); touch(p);
 
+    /* E190：E19L（E190LR）的别名目标，同样只放 ZZZ 白机 */
+    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/E190", root); make_dir(p);
+    snprintf(p, sizeof(p), "%s/xsb_aircraft.txt", p);
+    write_text(p,
+        "OBJ8_AIRCRAFT E190_ZZZ\n"
+        "OBJ8 SOLID YES E190\\E190_ZZZ.obj\n"
+        "VERT_OFFSET 0.0\n"
+        "AIRLINE E190 ZZZ\n");
+    snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/E190/E190_ZZZ.obj", root); touch(p);
+
     /* ZZZZ：兜底通用白机 */
     snprintf(p, sizeof(p), "%s/Resources/plugins/XConnect/CSL/ZZZZ", root); make_dir(p);
     snprintf(p, sizeof(p), "%s/xsb_aircraft.txt", p);
@@ -230,6 +240,8 @@ int main(int argc, char** argv) {
     expect("4 alias FA8X -> F900", "FA8X", "DLH", "", "F900_ZZZ");
     /* 4b) 别名 + 尾号也不命中 → 仍是 F900 */
     expect("4b alias + stray reg", "FA8X", "DLH", "N829PL", "F900_ZZZ");
+    /* 4c) E19L（E190LR 写法）→ E190 包 */
+    expect("4c alias E19L -> E190", "E19L", "DLH", "", "E190_ZZZ");
     /* 5) 完全未知机型 → ZZZZ */
     expect("5 unknown -> ZZZZ", "XXXX", "", "", "ZZZZ_ZZZZ");
     /* 5b) 空机型 → ZZZZ */

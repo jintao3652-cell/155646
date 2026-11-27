@@ -650,7 +650,7 @@ export async function saveSettings() {
         const lr = await store.api.toggle_msfs_labels()
         if (lr && lr.ok) {
           store.msfsLabelsPrev = labelsNow
-          message(t('log.msfsLabelsToggled'))
+          // 成功日志由后端统一推送并落盘，前端不再重复打印
         } else if (lr && lr.code === 'not_connected') {
           message(t('log.msfsLabelsNotConnected'), true)
         } else {
@@ -667,7 +667,7 @@ export async function saveSettings() {
         const rr = await store.api.set_msfs_traffic_lib(libNow)
         if (rr && rr.ok) {
           store.trafficLibPrev = libNow
-          message(t('log.msfsTrafficLibChanged', { lib: libNow }))
+          // 成功日志由后端统一推送并落盘，前端不再重复打印
         } else if (rr && (rr.code === 'not_connected' || rr.code === 'not_mconnect')) {
           message(t('log.msfsTrafficLibNotConnected'), true)
         } else {
