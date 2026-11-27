@@ -81,6 +81,36 @@ int net_write_all(net_sock_t sock, const char* buf, int len) {
     return 0;
 }
 
+/* 首包嗅探：判断连接是否 HTTP 请求（同端口同时服务桥接协议与 HTTP 快照）。
+ * MSG_PEEK 不消费数据，桥接路径完全不受影响。 */
+int net_peek_is_http(net_sock_t sock) {
+    static const char* kMethods[] = { "GET ", "HEAD", "POST", "PUT ", "OPTI", "DELE" };
+    char buf[8];
+    int i;
+    int got = recv(sock, buf, sizeof(buf), MSG_PEEK);
+    if (got < 4) return 0;
+    for (i = 0; i < (int)(sizeof(kMethods) / sizeof(kMethods[0])); i++)
+        if (memcmp(buf, kMethods[i], 4) == 0) return 1;
+    return 0;
+}
+
+/* 消费掉 HTTP 请求头（读到 \r\n\r\n 为止）。GET/OPTIONS 无请求体。
+ * 返回 0 成功；<0 = 对端关闭或头部长度异常。 */
+int net_skip_http_head(net_sock_t sock) {
+    char tail[4] = { 0, 0, 0, 0 };
+    int i = 0;
+    char c;
+    while (i < 16 * 1024) {
+        int n = recv(sock, &c, 1, 0);
+        if (n <= 0) return -1;
+        tail[i & 3] = c;
+        i++;
+        if (tail[0] == '\r' && tail[1] == '\n' &&
+            tail[2] == '\r' && tail[3] == '\n') return 0;
+    }
+    return -1;
+}
+
 int net_send_line(net_sock_t sock, const char* line) {
     int len = (int)strlen(line);
     static const char nl = '\n';

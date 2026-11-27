@@ -89,7 +89,8 @@ class Api:
         self._bridge = BridgeLauncher(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             on_log=lambda m: self._push("log", self._tr(m)),
-            toggle_labels=getattr(self._cfg, "msfs_toggle_labels", False))
+            toggle_labels=getattr(self._cfg, "msfs_toggle_labels", False),
+            traffic_lib=getattr(self._cfg, "msfs_traffic_lib", "auto"))
         if self._cfg.auto_start_mconnect:
             self._bridge.start()
 
@@ -99,9 +100,11 @@ class Api:
             self._cfg.xconnect_host, self._cfg.xconnect_port,
             mconnect_port=self._cfg.mconnect_port)
         self._xconnect.on_log = lambda m: self._push("log", self._tr(m))
-        self._xconnect.on_connected = lambda: self._push("xconnect", "connected")
+        # XC 与 MC 是两个同级独立分类：按当前连的桥分别推 "xconnect" /
+        # "mconnect" 事件，前端据此分栏展示，MC 不再挂在 XC 名下
+        self._xconnect.on_connected = lambda: self._push_bridge_state("connected")
         self._xconnect.on_disconnected = \
-            lambda: self._push("xconnect", "disconnected")
+            lambda: self._push_bridge_state("disconnected")
         # 未连线 FSD 也接收并显示飞行数据（连线后由 NetworkModel 接管上报）
         #
         # ⚠️ **这里必须自己做机型推断**，不能把插件原值直接推给前端。
@@ -123,24 +126,34 @@ class Api:
         self._start_xconnect()
 
     def _push_flight(self, fd) -> None:
-        """推送飞行数据到前端；机型缺失时先按机型名推断补上。"""
+        """推送飞行数据到前端；机型缺失或非标准时先规范化补上。"""
         # 记下原始机型名与引擎数，供 connect() 在必要时兜底重推
         self._last_ac_name = getattr(fd, "aircraft_name", "") or ""
         self._last_eng = int(getattr(fd, "engine_count", 0) or 0)
-        raw = (getattr(fd, "aircraft_icao", "") or "").strip()
-        if not raw:
-            guessed = aircraft_db.guess_designator(
-                self._last_ac_name, self._last_eng)
-            if guessed:
-                fd.aircraft_icao = guessed
-                # 同时回写配置，否则下次 _validate 仍拿旧值
-                if self._cfg.aircraft_icao != guessed:
-                    self._cfg.aircraft_icao = guessed
+        # ATC* 是 MSFS 通用占位符（ATCCOM 等）；`A350-900` 这类非标准 ICAO
+        # 会让 swift_livery 查不到 id → PI 缺 LIVERY 键 → 站点 livery=null。
+        # normalize_icao 统一护栏：占位符当未知、库外码按名称重推
+        # （与 NetworkModel._on_xconnect_flight_data 同款逻辑）。
+        norm = aircraft_db.normalize_icao(
+            getattr(fd, "aircraft_icao", "") or "",
+            self._last_ac_name, self._last_eng)
+        fd.aircraft_icao = norm
+        if norm:
+            # 同时回写配置，否则下次 _validate 仍拿旧值
+            if self._cfg.aircraft_icao != norm:
+                self._cfg.aircraft_icao = norm
         self._push("flight", asdict(fd))
 
     def _start_xconnect(self) -> None:
+        # 两座桥的初始状态各自独立推送（同层级，互不包含）
         self._push("xconnect", "waiting")
-        self._xconnect.start()  # 持续重连，直到插件上线
+        self._push("mconnect", "waiting")
+        self._xconnect.start()  # 持续重连，直到任一桥上线
+
+    def _push_bridge_state(self, state: str) -> None:
+        """按当前桥的分类推送状态事件：XConnect→"xconnect"、MConnect→"mconnect"。"""
+        kind = getattr(self._xconnect, "bridge_kind", "")
+        self._push("mconnect" if kind == "mconnect" else "xconnect", state)
 
     # ---------- 诊断 ----------
 
@@ -149,6 +162,7 @@ class Api:
         extra = {
             "xconnect": {
                 "connected": bool(xc and xc.connected),
+                "bridge_kind": getattr(xc, "bridge_kind", ""),
                 "plugin": getattr(xc, "plugin", ""),
                 "plugin_version": getattr(xc, "plugin_version", ""),
                 "sim": getattr(xc, "sim", ""),
@@ -233,6 +247,9 @@ class Api:
                 if k in ("server_port", "xconnect_port"):
                     v = int(v)      # 前端键盘输入可能为字符串
                 setattr(cfg, k, v)
+            if getattr(cfg, "msfs_traffic_lib", "auto") not in (
+                    "auto", "fsltl", "aig"):
+                cfg.msfs_traffic_lib = "auto"
             cfg.server_host = cfg.server_host.strip() or "ol.xflysim.com"
             cfg.xconnect_host = cfg.xconnect_host.strip() or "127.0.0.1"
             if not (1 <= cfg.server_port <= 65535) or \
@@ -250,6 +267,47 @@ class Api:
     def set_debug(self, enabled: bool) -> None:
         """调试模式：开启后前端可查看插件原始报文。"""
         self._debug = bool(enabled)
+
+    def toggle_msfs_labels(self) -> dict:
+        """运行时翻转 MSFS 内置机模标签（设置开关保存时立即下发）。
+
+        仅 MConnect（MSFS）支持：X-Plane 标签由 XConnect 自绘，无此概念。
+        底层 toggle 语义，发一次切换一次；未连线时返回 not_connected，
+        由前端决定如何提示。
+        """
+        if not self._xconnect.connected:
+            return {"ok": False, "code": "not_connected"}
+        try:
+            self._xconnect.send_toggle_labels()
+        except Exception as exc:
+            self._push("log", f"[mconnect] 标签开关下发失败: {exc}")
+            return {"ok": False, "code": "send_failed"}
+        self._push("log", self._tr(
+            "[mconnect] 呼号标签 overlay 显隐已切换，立即生效"))
+        return {"ok": True}
+
+    def set_msfs_traffic_lib(self, lib: str) -> dict:
+        """运行时切换 MSFS 他机 AI 模型库（FSLTL / AIG / auto）。
+
+        只对 MConnect 有意义：X-Plane 固定用 X-CSL。配置本身由
+        save_settings 持久化；这里只负责让已运行的 MConnect 立即生效。
+        """
+        lib = str(lib or "auto").strip().lower()
+        if lib not in ("auto", "fsltl", "aig"):
+            return {"ok": False, "code": "bad_value"}
+        if not self._xconnect.connected:
+            return {"ok": False, "code": "not_connected"}
+        kind = getattr(self._xconnect, "bridge_kind", "")
+        if kind != getattr(pk, "KIND_MCONNECT", "mconnect"):
+            return {"ok": False, "code": "not_mconnect"}
+        try:
+            self._xconnect.send_traffic_lib(lib)
+        except Exception as exc:
+            self._push("log", f"[mconnect] AI 模型库切换失败: {exc}")
+            return {"ok": False, "code": "send_failed"}
+        self._push("log", self._tr(
+            f"[mconnect] AI 模型库偏好已切换为 {lib}，下一帧重建他机模型"))
+        return {"ok": True}
 
     # ---------- 连线 / 断开 ----------
 
@@ -296,8 +354,9 @@ class Api:
         model.on_text_received = lambda f, m: self._push("text", [f, m])
         model.on_local_flight_data = lambda fd: self._push("flight", asdict(fd))
         model.on_fsd_unexpected_disconnect = lambda: self._on_fsd_dropped(model)
-        model.on_xconnect_connected = lambda: self._push("xconnect", "connected")
-        model.on_xconnect_disconnected = lambda: self._push("xconnect", "disconnected")
+        model.on_xconnect_connected = lambda: self._push_bridge_state("connected")
+        model.on_xconnect_disconnected = \
+            lambda: self._push_bridge_state("disconnected")
         model.on_plugin_message = self._on_plugin_message
         model.on_csl_status = lambda d: self._push("csl", d)
         model.on_fsd_state_changed = lambda _: self._push("fsdstate", self.status())
@@ -551,12 +610,24 @@ class Api:
 
     # ---------- 状态 ----------
 
+    def _bridge_flags(self) -> tuple[bool, bool]:
+        """返回 (xconnect_online, mconnect_online)。
+
+        XC 与 MC 是两个同级独立分类：按当前桥分类分别给出布尔值，
+        前端据此分栏显示，而不是把 MC 塞进 XC 的状态里。
+        """
+        xc = self._xconnect
+        conn = bool(xc and xc.connected)
+        kind = getattr(xc, "bridge_kind", "")
+        return (conn and kind != "mconnect", conn and kind == "mconnect")
+
     def status(self) -> dict:
         model = self._model
+        xc_on, mc_on = self._bridge_flags()
         if model is None:
             reg = norm_registration(self._cfg.registration)
             return {"fsd": "Disconnected",
-                    "xconnect": self._xconnect.connected,
+                    "xconnect": xc_on, "mconnect": mc_on,
                     "atc": 0, "players": 0,
                     "reg": reg, "reg_src": "manual" if reg else ""}
         fsd = model.fsd
@@ -566,7 +637,8 @@ class Api:
         return {
             "fsd": fsd.state if fsd else "Disconnected",
             "online": fsd is not None and fsd.state == STATE_ONLINE,
-            "xconnect": self._xconnect.connected,
+            "xconnect": xc_on,
+            "mconnect": mc_on,
             "atc": atc,
             "players": players,
             "reg": model.registration,

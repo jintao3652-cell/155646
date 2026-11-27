@@ -258,7 +258,8 @@ def main(argv: list[str] | None = None) -> int:
         bridge = BridgeLauncher(
             os.path.dirname(os.path.abspath(__file__)),
             on_log=lambda m: print(f"[bridge] {m}"),
-            toggle_labels=getattr(cfg, "msfs_toggle_labels", False))
+            toggle_labels=getattr(cfg, "msfs_toggle_labels", False),
+            traffic_lib=getattr(cfg, "msfs_traffic_lib", "auto"))
         bridge.start()
     try:
         app = CliApp(cfg, SIM_TYPES[args.sim])

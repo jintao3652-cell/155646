@@ -48,6 +48,13 @@ def build_bridge_ports(xconnect_port: int = DEFAULT_PORT,
     return ports
 
 
+# 桥分类：XConnect（X-Plane）与 MConnect（MSFS）是**两个相互独立、同级**的
+# 桥接组件，不是包含关系。客户端一次只连其中一个，bridge_kind 标明当前
+# 连的是哪座桥，前端据此把 XC / MC 作为两个并列分类分别展示。
+KIND_XCONNECT = "xconnect"
+KIND_MCONNECT = "mconnect"
+
+
 @dataclass
 class FlightData:
     aircraft_icao: str = ""        # 模拟器当前机型 ICAO（插件自动识别）
@@ -179,6 +186,9 @@ class XConnectClient:
             list(dict.fromkeys(int(p) for p in ports)) if ports is not None
             else build_bridge_ports(int(port), self._mconnect_port))
         self.active_port = 0          # 当前实际连上的端口（0=未连接）
+        self.bridge_kind = ""         # 当前桥分类：xconnect / mconnect / ""
+        # MConnect 分类端口集合（含退避端口），用于连上后判定桥类型
+        self._mconnect_ports = {int(self._mconnect_port), *MCONNECT_FALLBACK_PORTS}
         self._sock: Optional[socket.socket] = None
         self._stop = threading.Event()
         self._tx_lock = threading.Lock()
@@ -288,6 +298,14 @@ class XConnectClient:
         """任一桥接（XConnect/MConnect）在线（TCP 连接已建立）。"""
         return self._sock is not None
 
+    def _classify_port(self, port: int) -> str:
+        """按端口判定桥分类（握手前 provisional；握手后按插件名修正）。"""
+        return KIND_MCONNECT if port in self._mconnect_ports else KIND_XCONNECT
+
+    def _tag(self) -> str:
+        """当前桥对应的日志标签：MC 与 XC 各用各的，互不混用。"""
+        return "[mconnect]" if self.bridge_kind == KIND_MCONNECT else "[xconnect]"
+
     # ---------- 生命周期 ----------
 
     def start(self) -> None:
@@ -324,7 +342,8 @@ class XConnectClient:
             sock, port = self._connect_any()
             if sock is None:
                 if not self._ever_connected:
-                    self._log("[xconnect] 未发现模拟机"
+                    # 探测阶段两座桥都在扫，还没有归属，用中性的 [bridge] 标签
+                    self._log("[bridge] 未发现模拟机"
                               f"（已探测端口 {', '.join(map(str, self.ports))}）")
                 self._stop.wait(RECONNECT_INTERVAL)
                 continue
@@ -332,13 +351,14 @@ class XConnectClient:
             sock.settimeout(1.0)
             self._sock = sock
             self.active_port = port
+            self.bridge_kind = self._classify_port(port)
             self.handshake_ok = False
             self.plugin = ""
             self.plugin_version = ""
             self.sim = ""
             self.protocol_version = 0
             self.capabilities = set()
-            self._log(f"[xconnect] 已发现模拟机（端口 {port}）")
+            self._log(f"{self._tag()} 已发现模拟机（端口 {port}）")
             # Bridge Protocol v1：插件也会主动推 connected，这里再发 hello
             self._send(json.dumps({
                 "type": "hello", "protocol": BRIDGE_PROTOCOL,
@@ -387,6 +407,13 @@ class XConnectClient:
             self.plugin_version = str(doc.get("version") or "")
             self.sim = str(doc.get("sim") or "")
             self.capabilities = set(doc.get("capabilities") or [])
+            # 握手报文带插件名时按插件名修正分类（比端口推断更权威）：
+            # MConnect 与 XConnect 是同级独立组件，绝不能混用标签
+            pname = self.plugin.lower()
+            if "mconnect" in pname:
+                self.bridge_kind = KIND_MCONNECT
+            elif "xconnect" in pname:
+                self.bridge_kind = KIND_XCONNECT
             raw_ver = doc.get("version")
             if self.plugin:
                 try:
@@ -394,7 +421,7 @@ class XConnectClient:
                 except (TypeError, ValueError):
                     self.protocol_version = 1
                 if first:
-                    self._log(f"[xconnect] {self.plugin} "
+                    self._log(f"{self._tag()} {self.plugin} "
                               f"v{self.plugin_version or '?'} "
                               f"协议 v{self.protocol_version}")
             else:
@@ -404,9 +431,9 @@ class XConnectClient:
                 except (TypeError, ValueError):
                     self.protocol_version = 1
                 if first:
-                    self._log("[xconnect] 旧版插件（无握手信息）")
+                    self._log(f"{self._tag()} 旧版插件（无握手信息）")
             if first and self.protocol_version != BRIDGE_PROTOCOL:
-                self._log(f"[xconnect] 协议版本不一致：插件 v{self.protocol_version}，"
+                self._log(f"{self._tag()} 协议版本不一致：插件 v{self.protocol_version}，"
                           f"客户端 v{BRIDGE_PROTOCOL}")
             if first and self.on_handshake:
                 self.on_handshake(doc)
@@ -527,6 +554,23 @@ class XConnectClient:
         ``self.control_backend() == "wasm"`` 时可用。
         """
         self._send(json.dumps({"type": "Send:RPN", "rpn": rpn}))
+
+    def send_toggle_labels(self) -> None:
+        """翻转 MSFS 内置机模标签（Traffic Nameplates）。
+
+        仅 MConnect 支持（X-Plane 侧标签由 XConnect 自绘，无此概念）。
+        底层是 toggle 语义：发一次切换一次状态。
+        """
+        self._send(json.dumps({"type": "Send:LABELS"}))
+
+    def send_traffic_lib(self, lib: str) -> None:
+        """运行时切换 MConnect 的 AI 模型库偏好（auto / fsltl / aig）。
+
+        仅 MConnect 支持；X-Plane 侧固定使用 X-CSL 模型库，无此命令。
+        """
+        if lib not in ("auto", "fsltl", "aig"):
+            lib = "auto"
+        self._send(json.dumps({"type": "Send:TRAFFICLIB", "lib": lib}))
 
     # ---------- 内部 ----------
 

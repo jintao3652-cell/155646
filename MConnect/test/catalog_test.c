@@ -182,6 +182,14 @@ int main(void) {
         make_package(root, "FSLTL_A20N", "A20N", all, "");
     }
 
+    /* 包 2b：AIG 同名机型（A20N 的 CCA 涂装），用于验证库偏好 */
+    {
+        char all[2048] = "";
+        strncat(all, fltsim("AIG A320 CCA", "CCA", "CCA", ""),
+                sizeof(all) - strlen(all) - 1);
+        make_package(root, "AIG_A20N", "A20N", all, "");
+    }
+
     /* 包 3：白机机型（只用于别名回退的落点） */
     {
         char all[1024] = "";
@@ -202,6 +210,18 @@ int main(void) {
                    "[GENERAL]\r\n"
                    "icao_type_designator = \"A359\"\r\n"
                    "title = \"Modular A350 Test\"\r\n");
+    }
+
+    /* 包 5：占位符 ICAO 包 —— 机模作者没写 icao_type_designator 时 MSFS
+     * 给的默认值就是 ATCCOM（实测 Fenix A320）。目录条目会原样存下
+     * "ATCCOM"，反查时**不能**把它当识别结果返回。 */
+    {
+        char all[2048] = "";
+        strncat(all, fltsim("FenixA320 Placeholder Livery", "PH1", "", ""),
+                sizeof(all) - strlen(all) - 1);
+        strncat(all, fltsim("No Keyword Placeholder", "PH2", "", ""),
+                sizeof(all) - strlen(all) - 1);
+        make_package(root, "PLACEHOLDER_TEST", "ATCCOM", all, "");
     }
 
     /* 扫描 */
@@ -309,6 +329,26 @@ int main(void) {
               "目录条目反查");
     check_str(catalog_icao_for_title("Cessna Skyhawk G1000 Asobo"), "C172",
               "内置表反查");
+
+    /* --- 10. AI 模型库偏好 --- */
+    printf("\n[10] AI 模型库偏好（FSLTL / AIG / 回退）\n");
+    catalog_set_lib(CAT_LIB_FSLTL);
+    catalog_match("A20N", "CCA", "", &m);
+    check(m.found == 1, "偏好 FSLTL 时命中", NULL);
+    check_str(m.title, "FSLTL A320 ZZZZ", "偏好库优先于 AIG 的航司涂装");
+    check(m.source == CAT_SRC_FSLTL, "来源标记为 FSLTL", NULL);
+
+    catalog_set_lib(CAT_LIB_AIG);
+    catalog_match("A20N", "CCA", "", &m);
+    check(m.found == 1, "偏好 AIG 时命中", NULL);
+    check_str(m.title, "AIG A320 CCA", "偏好 AIG 时选中 AIG 涂装");
+    check(m.source == CAT_SRC_AIG, "来源标记为 AIG", NULL);
+
+    /* 偏好库没有该机型 → 回退另一套库，不能退化成白机 */
+    catalog_match("E175", "", "", &m);
+    check(m.found == 1, "偏好库缺失时回退命中", NULL);
+    check_str(m.title, "FSLTL E175 ZZZZ", "回退到 FSLTL 机型");
+    catalog_set_lib(CAT_LIB_AUTO);
 
     /* 汇总 */
     printf("\n== 结果: %d 通过, %d 失败 ==\n", g_pass, g_fail);

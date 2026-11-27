@@ -46,6 +46,7 @@ v1 在原有报文上增加**握手与能力声明**，旧客户端/旧插件仍
 | `Send:ATC` | 管制列表（MConnect 只记录数量） |
 | `Send:RADIO` | COM 频率/主备/发话/全收 |
 | `Send:XPDR` | 应答机码/模式/IDENT |
+| `Send:TRAFFICLIB` | MSFS AI 模型库偏好 `auto`/`fsltl`/`aig`（仅 MConnect） |
 | `Send:INPUTEV` | 按名字触发机型 InputEvent |
 | `Send:RPN` | 执行 RPN（MConnect + MobiFlight WASM） |
 | `Send:SCAN` | 重新扫描 dataref（XConnect 诊断） |

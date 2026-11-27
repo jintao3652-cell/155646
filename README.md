@@ -229,7 +229,7 @@ C 侧：XConnect `csl_match_test`（9 用例，四级匹配）；MConnect 8 套 
 | `xconnect_port` / `mconnect_port` | 51001 / 51002 | 两个桥的端口；客户端同时探测 51001-51004，占用自动退避 |
 | `auto_start_mconnect` | `true` | 启动时自动拉起无窗口 `MConnect.exe`（已运行则复用）；XP 用户可关 |
 | `mconnect_stop_on_exit` | `false` | 退出客户端是否关闭 MConnect（默认保留便于重连） |
-| `msfs_toggle_labels` | `false` | MConnect 启动时发一次 `TOGGLE_AIRCRAFT_LABELS`（toggle 语义）。仅 MSFS 2024 有效；2020 需在模拟器设置手动开关铭牌。改后需重启 MConnect |
+| `msfs_toggle_labels` | `false` | MSFS 自绘呼号标签 overlay 的默认显隐（保存设置时立即下发，无需重启）。需在 MSFS Community 安装 `xflysim-labels` 包（随发布包附带）。原因：MSFS 对注入 AI 永不渲染原生铭牌（硬限制） |
 | `simbrief_user` | 空 | SimBrief 用户名/ID，飞行计划页自动回填 |
 
 ## 端口分配（X-Plane 与 MSFS 必须错开）

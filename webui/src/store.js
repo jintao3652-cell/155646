@@ -33,7 +33,10 @@ export const store = reactive({
        gs: '—', alt: '—',
        lat: null, lon: null },   // 本机位置（在线列表算距离用）
   fsdState: 'Disconnected',   // Online / Connecting / WaitLogin / Disconnected / ...
-  xpState: 'waiting',          // waiting / connected / failed / disconnected
+  /* XC（XConnect/X-Plane）与 MC（MConnect/MSFS）是两个同级独立的桥分类，
+   * 各有自己的状态与标签，MC 不再挂在 XC 名下 */
+  xpState: 'waiting',          // XC：waiting / connected / failed / disconnected
+  mcState: 'waiting',          // MC：waiting / connected / failed / disconnected
   cslLoaded: [],
   cslMissing: [],
   roster: '',
@@ -83,11 +86,12 @@ export const fsdTag = computed(() => {
   }
 })
 
+/* XC（XConnect / X-Plane）状态标签 */
 export const xpText = computed(() => {
   switch (store.xpState) {
-    case 'connected': return t('status.simFound')
-    case 'failed': return t('status.connError')
-    default: return t('status.simNotFound')
+    case 'connected': return t('status.xcFound')
+    case 'failed': return t('status.xcError')
+    default: return t('status.xcNotFound')
   }
 })
 export const xpTag = computed(() => {
@@ -97,6 +101,26 @@ export const xpTag = computed(() => {
     default: return 'info'
   }
 })
+
+/* MC（MConnect / MSFS）状态标签：与 XC 同层级、互不包含 */
+export const mcText = computed(() => {
+  switch (store.mcState) {
+    case 'connected': return t('status.mcFound')
+    case 'failed': return t('status.mcError')
+    default: return t('status.mcNotFound')
+  }
+})
+export const mcTag = computed(() => {
+  switch (store.mcState) {
+    case 'connected': return 'success'
+    case 'failed': return 'danger'
+    default: return 'info'
+  }
+})
+
+/* 任一座桥在线（XC 或 MC）——"模拟机已发现"的通用判定 */
+export const bridgeActive = computed(() =>
+  store.xpState === 'connected' || store.mcState === 'connected')
 
 const cslTotal = computed(() => store.cslLoaded.length + store.cslMissing.length)
 export const cslText = computed(() => {
@@ -183,6 +207,7 @@ function applySettings(s) {
     xconnect_host: s.xconnect_host || '',
     xconnect_port: s.xconnect_port || 51001,
     debug: !!s.debug_mode,
+    msfs_traffic_lib: s.msfs_traffic_lib || 'auto',
     language: normalizeLocale(s.language),
   }
 }
@@ -223,7 +248,9 @@ export async function updateStatus(s) {
   store.atcCount = s.atc || 0
   store.plrCount = s.players || 0
   store.roster = (s.atc > 0 || s.players > 0) ? `ATC ${s.atc} · PLR ${s.players}` : ''
+  /* XC / MC 同级独立：谁在线点亮谁，互不覆盖 */
   if (s.xconnect) store.xpState = 'connected'
+  if (s.mconnect) store.mcState = 'connected'
   if (s.reg !== undefined) { store.reg = s.reg || ''; store.regSrc = s.reg_src || '' }
 }
 
@@ -250,7 +277,9 @@ function handleEvent(ev) {
       let cls = 'out'
       if (msg.startsWith('< ')) cls = 'in'
       else if (msg.startsWith('[fsd]')) cls = isErr ? 'err' : isWarn ? 'warn' : 'txt'
-      else if (msg.startsWith('[xconnect]') || msg.startsWith('[mconnect]'))
+      /* [xconnect]/[mconnect]/[bridge] 三类桥日志同级着色（探测未定归属时用 [bridge]） */
+      else if (msg.startsWith('[xconnect]') || msg.startsWith('[mconnect]') ||
+               msg.startsWith('[bridge]'))
         cls = isErr ? 'err' : isWarn ? 'warn' : 'txt'
       addLog(msg, cls)
       break
@@ -264,7 +293,8 @@ function handleEvent(ev) {
       store.reg = ev.data.reg || ''
       store.regSrc = ev.data.src || ''
       break
-    case 'xconnect': setXconnectState(ev.data); break
+    case 'xconnect': setBridgeState('xpState', ev.data); break
+    case 'mconnect': setBridgeState('mcState', ev.data); break
     case 'csl': setCslStatus(ev.data); break
     case 'xplog': addLog('◂ ' + JSON.stringify(ev.data), 'in'); break
     case 'sys': addLog(`[!] ${ev.data}`, 'err'); break
@@ -278,11 +308,14 @@ function handleEvent(ev) {
   }
 }
 
-function setXconnectState(state) {
-  if (state === 'failed') {
+/** 桥状态写入：XC→store.xpState，MC→store.mcState（两个同级分类互不覆盖）。 */
+function setBridgeState(key, state) {
+  if (key === 'mcState' && state === 'failed') {
+    addLog(t('log.mcNotRunning'), 'warn')
+  } else if (key === 'xpState' && state === 'failed') {
     addLog(t('log.simNotRunning'), 'warn')
   }
-  store.xpState = state
+  store[key] = state
 }
 
 function setCslStatus(d) {
@@ -531,8 +564,12 @@ export async function openSettings() {
     xphost: s.xconnect_host, xpport: s.xconnect_port,
     debug: !!s.debug_mode,
     msfs_labels: !!s.msfs_toggle_labels,
+    traffic_lib: s.msfs_traffic_lib || 'auto',
     language: normalizeLocale(s.language),
   }
+  // 记住打开时的开关状态：保存时对比变化，变化才下发 toggle
+  store.msfsLabelsPrev = !!s.msfs_toggle_labels
+  store.trafficLibPrev = s.msfs_traffic_lib || 'auto'
   store.overlays.set = true
 }
 
@@ -564,6 +601,7 @@ export async function saveSettings() {
     xconnect_port: parseInt(store.set.xconnect_port, 10),
     debug_mode: store.set.debug,
     msfs_toggle_labels: !!store.set.msfs_labels,
+    msfs_traffic_lib: store.set.traffic_lib || 'auto',
     language: normalizeLocale(store.set.language),
   }
   store.api.set_debug(d.debug_mode)
@@ -573,6 +611,40 @@ export async function saveSettings() {
     store.airline = d.airline_icao
     onCallsignInput()
     applyLanguage(d.language)
+    // MSFS 铭牌开关：保存时与打开前状态不同 → 立即下发 toggle，不再等重启
+    const labelsNow = !!store.set.msfs_labels
+    if (labelsNow !== !!store.msfsLabelsPrev) {
+      try {
+        const lr = await store.api.toggle_msfs_labels()
+        if (lr && lr.ok) {
+          store.msfsLabelsPrev = labelsNow
+          message(t('log.msfsLabelsToggled'))
+        } else if (lr && lr.code === 'not_connected') {
+          message(t('log.msfsLabelsNotConnected'), true)
+        } else {
+          message(t('log.msfsLabelsFailed'), true)
+        }
+      } catch (e) {
+        message(t('log.msfsLabelsFailed'), true)
+      }
+    }
+    // MSFS AI 模型库：保存时变了就立即下发（仅 MConnect；XC 固定 X-CSL）
+    const libNow = store.set.traffic_lib || 'auto'
+    if (libNow !== store.trafficLibPrev) {
+      try {
+        const rr = await store.api.set_msfs_traffic_lib(libNow)
+        if (rr && rr.ok) {
+          store.trafficLibPrev = libNow
+          message(t('log.msfsTrafficLibChanged', { lib: libNow }))
+        } else if (rr && (rr.code === 'not_connected' || rr.code === 'not_mconnect')) {
+          message(t('log.msfsTrafficLibNotConnected'), true)
+        } else {
+          message(t('log.msfsTrafficLibFailed'), true)
+        }
+      } catch (e) {
+        message(t('log.msfsTrafficLibFailed'), true)
+      }
+    }
     message(store.set.debug ? t('actions.savedDebug') : t('actions.saved'))
     store.overlays.set = false
   } else {

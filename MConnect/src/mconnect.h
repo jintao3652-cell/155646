@@ -89,4 +89,10 @@ void xc_infof(const char* fmt, ...);
 /* exe 所在目录（不含末尾分隔符）。 */
 const char* xc_exe_dir(void);
 
+/* 自绘呼号标签开关在 control.c（见 control.h 的
+ * control_labels_overlay_on / control_toggle_labels_overlay /
+ * control_set_labels_overlay）：--labels / Send:LABELS 控制 HTTP roster
+ * 快照（本进程同端口 51002-4）里的 labels_on，供 sim 内 xflysim-labels
+ * overlay 轮询显隐 —— MSFS 对注入 AI 不渲染原生铭牌（硬限制）。 */
+
 #endif /* MCONNECT_H */

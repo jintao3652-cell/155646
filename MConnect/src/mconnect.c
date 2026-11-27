@@ -312,7 +312,22 @@ static void handle_client_line(const char* line) {
 
     jt = json_get(root, "type");
     if (jt && jt->type == JSON_STR) {
-        if (strcmp(jt->sval, "Send:OPD:FSD9") == 0) {
+        if (strcmp(jt->sval, "Send:TRAFFICLIB") == 0) {
+            /* 运行时切换 AI 模型库偏好（FSLTL / AIG / auto）。
+             * catalog 内部有锁，网络线程可直接调；players 的 model-change
+             * 检测会在下一帧把已创建的 AI 换成新库的涂装。 */
+            const Json* jlib = json_get(root, "lib");
+            int lib = CAT_LIB_AUTO;
+            if (jlib && jlib->type == JSON_STR) {
+                if (_stricmp(jlib->sval, "fsltl") == 0) lib = CAT_LIB_FSLTL;
+                else if (_stricmp(jlib->sval, "aig") == 0) lib = CAT_LIB_AIG;
+            } else if (jlib && jlib->type == JSON_NUM) {
+                int v = (int)jlib->num;
+                lib = (v == CAT_LIB_FSLTL || v == CAT_LIB_AIG) ? v : CAT_LIB_AUTO;
+            }
+            catalog_set_lib(lib);
+            catalog_dump_stats();
+        } else if (strcmp(jt->sval, "Send:OPD:FSD9") == 0) {
             handle_player_list(root);
         } else if (strcmp(jt->sval, "Send:ATC") == 0) {
             /* 管制列表：MSFS 侧没有可渲染的对应物（不能注入塔台模型），
@@ -337,6 +352,85 @@ static void handle_client_line(const char* line) {
     json_free(root);
 }
 
+/* ---------------- HTTP roster 快照（自绘呼号标签数据源） ----------------
+ *
+ * MSFS 的 html_ui（Coherent JS）读不到注入 AI 的 SimVar，也没有原始 TCP
+ * 能力，但可以 fetch() 本机 HTTP。因此在桥接监听端口上做协议嗅探：
+ * 首包是 "GET " 等 HTTP 方法 → 应答一份 roster 快照（带 CORS 头，允许
+ * sim 内 JS 跨源读取）；否则按桥接协议走（先发 connected 再读行）。
+ *
+ * 消费方：Community 包 xflysim-labels —— JS overlay 把快照里的 AI 投影成
+ * 世界锚定呼号标签。MSFS 20/24 对 SimConnect 注入的 AI 永远不渲染原生
+ * Traffic Nameplates（渲染层限制，与铭牌开关无关），这是唯一可行的显示
+ * 路径，与 X-Plane 侧 XConnect 自绘标签对齐。
+ *
+ * 只在 net 线程跑：只读玩家表（持锁），不碰 SimConnect。
+ * 标签显隐开关在 control.c（control_labels_overlay_on），--labels /
+ * Send:LABELS 控制。 */
+
+static void serve_http_snapshot(net_sock_t sock) {
+    static char body[96 * 1024];    /* 256 玩家 × ~170B，留余量 */
+    static char head[512];
+    int off = 0, i, n = 0;
+
+    if (net_skip_http_head(sock) != 0) {
+        net_close(sock);
+        return;
+    }
+
+    off += snprintf(body, sizeof(body),
+                    "{\"type\":\"roster_snapshot\",\"labels_on\":%d,"
+                    "\"sim\":\"msfs\",\"players\":[",
+                    control_labels_overlay_on());
+
+    LOCK_ENTER(g_players_lock);
+    for (i = 0; i < PLAYER_MAX && off < (int)sizeof(body) - 256; i++) {
+        Player* p = &g_players[i];
+        const PositionFix* f;
+        if (!p->active || !p->have_first_fix || !p->callsign[0]) continue;
+        f = fix_at(p, p->fix_count - 1);
+        if (off > 40)   /* 非首个元素：补逗号 */
+            off += snprintf(body + off, sizeof(body) - off, ",");
+        off += snprintf(body + off, sizeof(body) - off,
+                        "{\"callsign\":\"%.23s\",\"icao\":\"%.7s\","
+                        "\"lat\":%.7f,\"lon\":%.7f,\"alt\":%.1f,"
+                        "\"heading\":%.1f,\"gs\":%.1f}",
+                        p->callsign, p->icao,
+                        p->cur_lat, p->cur_lon, p->cur_alt,
+                        p->cur_heading, f ? f->gs : 0.0);
+        n++;
+    }
+    LOCK_LEAVE(g_players_lock);
+
+    off += snprintf(body + off, sizeof(body) - off, "],\"count\":%d}", n);
+
+    {
+        int hlen = snprintf(head, sizeof(head),
+                            "HTTP/1.1 200 OK\r\n"
+                            "Content-Type: application/json; charset=utf-8\r\n"
+                            "Access-Control-Allow-Origin: *\r\n"
+                            "Access-Control-Allow-Methods: GET, OPTIONS\r\n"
+                            "Access-Control-Allow-Headers: Content-Type\r\n"
+                            "Cache-Control: no-store\r\n"
+                            "Connection: close\r\n"
+                            "Content-Length: %d\r\n\r\n", off);
+        net_write_all(sock, head, hlen);
+        net_write_all(sock, body, off);
+    }
+    net_close(sock);
+
+    /* 高频轮询（overlay 500ms 一次）不刷日志，仅在变化时打一条 */
+    {
+        static int s_last_logged = -1;
+        static double s_last_log_t = -1;
+        if (n != s_last_logged && xc_now_sec() - s_last_log_t > 10.0) {
+            xc_logf("http: roster snapshot served players=%d", n);
+            s_last_logged = n;
+            s_last_log_t = xc_now_sec();
+        }
+    }
+}
+
 /* ---------------- 网络线程 ---------------- */
 
 static THREAD_RET net_thread(THREAD_ARG arg) {
@@ -344,6 +438,13 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
     while (g_running) {
         net_sock_t sock = net_accept(g_listen_sock);
         if (sock == NET_INVALID) break;
+
+        /* 同端口双协议：浏览器 fetch（HTTP）与桥接客户端（行 JSON）共用端口。
+         * 首包嗅探不消费数据，桥接路径无感知。 */
+        if (net_peek_is_http(sock)) {
+            serve_http_snapshot(sock);
+            continue;
+        }
 
         LOCK_ENTER(g_sock_lock);
         if (g_client_sock != NET_INVALID) net_close(g_client_sock);
@@ -772,6 +873,14 @@ int main(int argc, char** argv) {
             /* 真机能力探针：注入一架带完整 canonical parts 的临时 AI 飞机，
              * 观察 SimVar 写入与灯光事件在当前 MSFS 版本是否被接受，打印结论后退出。 */
             parts_probe = 1;
+        } else if (_stricmp(arg, "--traffic-lib") == 0 && i + 1 < argc) {
+            /* 启动时指定 AI 模型库偏好：auto / fsltl / aig。
+             * 与设置里的 msfs_traffic_lib 等价，launcher 会透传。 */
+            const char* v = argv[++i];
+            int lib = CAT_LIB_AUTO;
+            if (_stricmp(v, "fsltl") == 0) lib = CAT_LIB_FSLTL;
+            else if (_stricmp(v, "aig") == 0) lib = CAT_LIB_AIG;
+            catalog_set_lib(lib);
         } else if (_stricmp(arg, "--labels") == 0) {
             /* 连上后翻转一次 MSFS 内置"机模标签"（显示的是 AI 的 ATC ID，
              * 本插件把它写成远端呼号）。toggle 语义：标签已开启时会被关闭。 */
@@ -787,6 +896,7 @@ int main(int argc, char** argv) {
                    "  --dump-profiles    打印机型档案表（各机模的实测写法与限制）\n"
                    "  --parts-probe      真机探针：注入临时 AI 飞机，检测部件 SimVar/灯光事件是否可写\n"
                    "  --labels           翻转 MSFS 内置机模标签（标签显示 AI 呼号，toggle 语义）\n"
+                   "  --traffic-lib <s>  AI 模型库偏好：auto（默认）/ fsltl / aig\n"
                    "  --simconnect <p>   指定 SimConnect.dll 路径（或所在目录）\n"
                    "  --verbose, -v      详细日志（打印每批玩家/枚举分页）\n"
                    "  --help, -h         显示本帮助\n",
@@ -800,6 +910,7 @@ int main(int argc, char** argv) {
     xc_infof("  日志: %s", g_log_path);
     xc_logf("==== MConnect start ====");
     xc_logf("exe dir: %s", g_exe_dir);
+    xc_logf("catalog: AI 模型库偏好 = %s", catalog_lib_name(catalog_lib()));
     /* 外部机型档案：MConnect.exe 同目录 profiles.json（热加载） */
     aircraftdb_init();
 
@@ -907,8 +1018,8 @@ int main(int argc, char** argv) {
         xc_infof("  反向控制: 应答机 / COM1-3 频率 可写");
     }
     if (toggle_labels) {
-        xc_infof("  --labels: 翻转内置机模标签（AI 标签显示远端呼号）");
-        control_toggle_aircraft_labels();
+        control_set_labels_overlay(1);
+        xc_infof("  --labels: 自绘呼号标签 overlay 已开启（roster 快照 labels_on=1）");
     }
 
     /* 4c. 真机能力探针：用一架临时 AI 飞机把 canonical parts 完整走一遍。

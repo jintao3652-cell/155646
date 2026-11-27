@@ -99,6 +99,9 @@ typedef struct {
     DWORD  pilot_xmit_type;
     DWORD  copilot_xmit_type;
     DWORD  com_receive_all;
+    DWORD  com_status_1;          /* COM STATUS:n：0=OK 1=不存在 2=断电 3=故障 */
+    DWORD  com_status_2;
+    DWORD  com_status_3;
     DWORD  master_battery;
     double gear_pct;
     /* 襟翼**实际**展开（TRAILING EDGE FLAPS LEFT/RIGHT PERCENT，0..100）。
@@ -118,10 +121,18 @@ typedef struct {
     double n1_2;
     double n1_3;
     double n1_4;
+    /* 引擎燃烧标志（GENERAL ENG COMBUSTION:1..4，Bool）。
+     * swift（VATSIM 客户端）的引擎开关判定就用它：N1 对活塞机恒 0，
+     * 只看 N1 会把活塞机全部报成熄火。 */
+    DWORD  eng_comb_1;
+    DWORD  eng_comb_2;
+    DWORD  eng_comb_3;
+    DWORD  eng_comb_4;
     char   title[256];
     char   atc_id[32];
     char   atc_airline[32];
     char   atc_model[32];
+    char   atc_type[32];          /* ATC TYPE = 标准 ICAO 机型代码（如 B738） */
     DWORD  parking_brake;
     /* IniBuilds A350 外部灯开关 LVar 直读（见 add() 末尾的说明）。
      * 非 A350 机模这些 LVar 不存在，SimConnect 恒返回 0 —— 由
@@ -133,6 +144,17 @@ typedef struct {
     double ini_strobe;
     double ini_wing;
     double ini_nose;
+    /* 起落架动画位置（GEAR ANIMATION POSITION:0..2，percent 0..100）。
+     * Fenix 等深度机模的起落架系统在 WASM 内实现，**只写动画位置**，
+     * 不维护 GEAR TOTAL PCT EXTENDED（实测停机坪上 TOTAL 恒 0）→
+     * 上报 gear_down=false，对端 CSL 起落架收起。两个来源取最大值兜底。 */
+    double gear_anim_0;
+    double gear_anim_1;
+    double gear_anim_2;
+    /* 起落架手柄（GEAR HANDLE POSITION，Bool）。swift 的本机起落架上报
+     * 来源：手柄由机模系统维护，是"选择放下/收起"的状态。第三个兜底
+     * 来源 —— 有的机模 TOTAL PCT 与动画都不写标准 SimVar。 */
+    DWORD  gear_handle;
 } FlightPkt;
 #pragma pack(pop)
 
@@ -178,6 +200,12 @@ int datadefs_init(void) {
     hr |= add(h, DEF_FLIGHT, "PILOT TRANSMITTER TYPE", "Enum", SC_DATATYPE_INT32);
     hr |= add(h, DEF_FLIGHT, "COPILOT TRANSMITTER TYPE", "Enum", SC_DATATYPE_INT32);
     hr |= add(h, DEF_FLIGHT, "COM RECEIVE ALL", "Bool", SC_DATATYPE_INT32);
+    /* COM STATUS:n 枚举（对齐 swift）：0=OK 1=不存在 2=断电 3=故障。
+     * transmit/receive 只有在 status==0 时才算真（swift 同款判定），
+     * 比 ELECTRICAL MASTER BATTERY 更精确 —— 按台区分。 */
+    hr |= add(h, DEF_FLIGHT, "COM STATUS:1", "Enum", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT, "COM STATUS:2", "Enum", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT, "COM STATUS:3", "Enum", SC_DATATYPE_INT32);
     /* 音频面板供电：断电时无线电实际不可用，客户端据此显示"离线"而不是
      * 把频率当成可用（XVoice 也是同样的判断逻辑）。 */
     hr |= add(h, DEF_FLIGHT, "ELECTRICAL MASTER BATTERY", "Bool", SC_DATATYPE_INT32);
@@ -213,6 +241,12 @@ int datadefs_init(void) {
     hr |= add(h, DEF_FLIGHT, "TURB ENG N1:2", "Percent", SC_DATATYPE_FLOAT64);
     hr |= add(h, DEF_FLIGHT, "TURB ENG N1:3", "Percent", SC_DATATYPE_FLOAT64);
     hr |= add(h, DEF_FLIGHT, "TURB ENG N1:4", "Percent", SC_DATATYPE_FLOAT64);
+    /* 引擎燃烧标志（Bool）。swift 判引擎开/关用的是它而非 N1 ——
+     * N1 只对涡轮机有意义，活塞机 N1 恒 0（只看 N1 全部报熄火）。 */
+    hr |= add(h, DEF_FLIGHT, "GENERAL ENG COMBUSTION:1", "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT, "GENERAL ENG COMBUSTION:2", "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT, "GENERAL ENG COMBUSTION:3", "Bool", SC_DATATYPE_INT32);
+    hr |= add(h, DEF_FLIGHT, "GENERAL ENG COMBUSTION:4", "Bool", SC_DATATYPE_INT32);
 
     /* 机型/尾号/涂装：字符串必须显式给 STRING256（不同长度会错位）。
      * units 参数：字符串 SimVar **不能传 "NULL" 字符串**——实测 MSFS 2020
@@ -223,6 +257,10 @@ int datadefs_init(void) {
     hr |= add(h, DEF_FLIGHT, "ATC ID",      "", SC_DATATYPE_STRING32);
     hr |= add(h, DEF_FLIGHT, "ATC AIRLINE", "", SC_DATATYPE_STRING32);
     hr |= add(h, DEF_FLIGHT, "ATC MODEL",   "", SC_DATATYPE_STRING32);
+    /* ATC TYPE = 标准 ICAO 机型代码（B738/A320…）。swift 的机型匹配首选
+     * 来源；识别链里排在 ATC MODEL 之前（ATC MODEL 经常是 "A20N" 这类
+     * 非标名或 "ATCCOM" 占位，ATC TYPE 几乎总是规范 ICAO）。 */
+    hr |= add(h, DEF_FLIGHT, "ATC TYPE",    "", SC_DATATYPE_STRING32);
 
     hr |= add(h, DEF_FLIGHT, "BRAKE PARKING POSITION", "Bool", SC_DATATYPE_INT32);
 
@@ -255,6 +293,17 @@ int datadefs_init(void) {
               SC_DATATYPE_FLOAT64);
     hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_NOSE, number)",    "number",
               SC_DATATYPE_FLOAT64);
+
+    /* 起落架动画位置（0..100，3 个支柱：前/左/右）。
+     * 与上面 GEAR TOTAL PCT EXTENDED 互补：Fenix 等 WASM 起落架只写
+     * GEAR ANIMATION POSITION，TOTAL PCT 恒 0；默认机两者一致。
+     * 合并取最大值，见 on_simobject_data 里的 gear_ratio 计算。
+     * 索引比支柱数多的机模恒返回 0，不影响 max。 */
+    hr |= add(h, DEF_FLIGHT, "GEAR ANIMATION POSITION:0", "percent", SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "GEAR ANIMATION POSITION:1", "percent", SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_FLIGHT, "GEAR ANIMATION POSITION:2", "percent", SC_DATATYPE_FLOAT64);
+    /* 起落架手柄（Bool，swift 的本机起落架上报来源）。第三个兜底来源。 */
+    hr |= add(h, DEF_FLIGHT, "GEAR HANDLE POSITION", "Bool", SC_DATATYPE_INT32);
 
     if (FAILED(hr)) {
         xc_logf("datadefs: AddToDataDefinition failed hr=0x%08lx",
@@ -659,6 +708,16 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     g_flight.com_transmit[0] = p->com_xmit_1 != 0;
     g_flight.com_transmit[1] = p->com_xmit_2 != 0;
     g_flight.com_transmit[2] = p->com_xmit_3 != 0;
+    /* COM STATUS:n（0=OK 1=不存在 2=断电 3=故障，对齐 swift）：
+     * 只有 status==0 的台才真正可用，发射状态要 && status==0。
+     * swift: com.setTransmitEnabled(comStatus == 0 && comTransmit)。
+     * 缺该变量的老模拟器返回 0（=OK），不改变行为。 */
+    g_flight.com_status[0] = (int)(p->com_status_1 & 0xFFFF);
+    g_flight.com_status[1] = (int)(p->com_status_2 & 0xFFFF);
+    g_flight.com_status[2] = (int)(p->com_status_3 & 0xFFFF);
+    if (g_flight.com_status[0]) g_flight.com_transmit[0] = 0;
+    if (g_flight.com_status[1]) g_flight.com_transmit[1] = 0;
+    if (g_flight.com_status[2]) g_flight.com_transmit[2] = 0;
     /* 发射台枚举：0=COM1 1=COM2 2=COM3，**-1 = 未选中/未知**（与 XConnect 统一）。
      * 交叉验证逻辑见 datadefs_derive_pilot_xmit。 */
     g_flight.pilot_xmit_type =
@@ -673,7 +732,26 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     g_flight.com_receive_all = p->com_receive_all != 0;
     g_flight.audio_panel_on = p->master_battery != 0;
     g_flight.on_ground = p->on_ground != 0;
-    g_flight.gear_ratio = p->gear_pct;
+    /* 起落架：TOTAL PCT EXTENDED（系统状态，0..1）与 GEAR ANIMATION POSITION
+     * （机模动画实际位置，percent 0..100）双来源取最大值。
+     *
+     * 为什么不能只用 TOTAL：Fenix 等 WASM 起落架只写动画位置，TOTAL 恒 0，
+     * 停在地面也报 gear_down=false（对端 CSL 起落架收起，CSN7412 实测）。
+     * 为什么敢用 max：动画位置就是玩家在模拟器里**看到的**起落架状态，
+     * 两来源一致时 max 不改变结果；Fenix 场景下只有动画位置有效。
+     * 各来源先过 sane() 挡 NaN/Inf（机模加载中会吐脏数据）。 */
+    {
+        double g = sane(p->gear_pct, 0.0, 1.0, 0.0);
+        double a0 = sane(p->gear_anim_0, 0.0, 100.0, 0.0) / 100.0;
+        double a1 = sane(p->gear_anim_1, 0.0, 100.0, 0.0) / 100.0;
+        double a2 = sane(p->gear_anim_2, 0.0, 100.0, 0.0) / 100.0;
+        double hd = (p->gear_handle != 0) ? 1.0 : 0.0;
+        if (a0 > g) g = a0;
+        if (a1 > g) g = a1;
+        if (a2 > g) g = a2;
+        if (hd > g) g = hd;
+        g_flight.gear_ratio = g;
+    }
     /* 左右平均；某侧缺数据（NaN 或未实现，读 0）时取另一侧。
      * MSFS 里未实现的 SimVar 通常返回 0，所以"两侧都 0"就是真的收起。 */
     {
@@ -705,6 +783,13 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     g_flight.n1_pct[1] = p->n1_2;
     g_flight.n1_pct[2] = p->n1_3;
     g_flight.n1_pct[3] = p->n1_4;
+    /* 引擎燃烧标志（swift 的判定来源）：N1 对活塞机恒 0，只看 N1 会把
+     * 活塞机全部上报熄火。on = combustion || N1>5（build_flight_json）。
+     * 变量未实现的机模返回 0，退化回纯 N1 判定，行为不变。 */
+    g_flight.eng_on[0] = p->eng_comb_1 != 0;
+    g_flight.eng_on[1] = p->eng_comb_2 != 0;
+    g_flight.eng_on[2] = p->eng_comb_3 != 0;
+    g_flight.eng_on[3] = p->eng_comb_4 != 0;
 
     str_field(g_flight.title, sizeof(g_flight.title), p->title, sizeof(p->title));
     str_field(g_flight.atc_id, sizeof(g_flight.atc_id), p->atc_id, sizeof(p->atc_id));
@@ -712,6 +797,8 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
               p->atc_airline, sizeof(p->atc_airline));
     str_field(g_flight.atc_model, sizeof(g_flight.atc_model),
               p->atc_model, sizeof(p->atc_model));
+    str_field(g_flight.atc_type, sizeof(g_flight.atc_type),
+              p->atc_type, sizeof(p->atc_type));
     g_flight.parking_brake = p->parking_brake != 0;
 
     /* 检测换机模：TITLE 变化时作废上次识别结果并重新反查 ICAO。
@@ -724,12 +811,13 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
                 g_flight.title);
     }
 
-    /* ICAO 机型识别，四级来源（逐级回退）：
+    /* ICAO 机型识别，五级来源（逐级回退）：
      *   1. TITLE → 目录精确反查（catalog 里 icao_type_designator）
      *   2. TITLE → 关键词猜测（"FenixA320 IAE ..." 连写涂装也能认出 A320）
-     *   3. ATC MODEL（很多机型在这里直接给 "A20N"/"B738"）
-     * 任何来源的结果都要过规范化（A350-900 → A359），并且 ATC MODEL 的
-     * 通用值（"ATCCOM"/"ATCPVT"…，机模没设 icao 时 MSFS 给的占位）不算
+     *   3. ATC TYPE（标准 ICAO 代码，swift 的机型匹配首选来源）
+     *   4. ATC MODEL（很多机型在这里直接给 "A20N"/"B738"）
+     * 任何来源的结果都要过规范化（A350-900 → A359），并且 ATC TYPE/MODEL
+     * 的通用值（"ATCCOM"/"ATCPVT"…，机模没设 icao 时 MSFS 给的占位）不算
      * 机型 —— 实测 Fenix A320 就返回 ATCCOM，老代码曾直接上报导致
      * 对端机型/涂装匹配全灭。 */
     {
@@ -746,12 +834,24 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
             if (by_title && by_title[0]) {
                 snprintf(canon, sizeof(canon), "%s", by_title);
                 have = 1;
+            } else if (g_flight.atc_type[0] &&
+                       strnicmp_chk(g_flight.atc_type, "ATC", 3) != 0) {
+                catalog_sanitize_icao(g_flight.atc_type, canon,
+                                      (int)sizeof(canon));
+                if (canon[0]) have = 1;
             } else if (g_flight.atc_model[0] &&
                        strnicmp_chk(g_flight.atc_model, "ATC", 3) != 0) {
                 catalog_sanitize_icao(g_flight.atc_model, canon,
                                       (int)sizeof(canon));
                 if (canon[0]) have = 1;
             }
+        }
+        if (have) {
+            /* 最终防线：无论哪条来源，都不允许 ATC* 占位符漏出去。
+             * 之前只挡了 atc_type/atc_model 两个来源，目录/内置表精确
+             * 命中存有占位符的条目时会漏（Fenix A320 实测，2026-11-26）；
+             * catalog 层已加防护，这里兜底全部路径。 */
+            if (strnicmp_chk(canon, "ATC", 3) == 0) have = 0;
         }
         if (have) {
             norm = catalog_canonical_icao(canon);
@@ -910,9 +1010,10 @@ static double n1_sane(double v) {
 void datadefs_build_flight_json(char* out, int size) {
     int en = g_flight.num_engines;
     if (en <= 0) {
-        /* 未知时按 N1 推断，不再默认 2 发（单发机不会有幽灵引擎） */
+        /* 未知时按 N1/燃烧标志推断，不再默认 2 发（单发机不会有幽灵引擎）。
+         * 燃烧标志兜底活塞机（N1 恒 0，见 eng_on 注释）。 */
         for (en = 4; en >= 1; --en)
-            if (g_flight.n1_pct[en - 1] > 5.0) break;
+            if (g_flight.n1_pct[en - 1] > 5.0 || g_flight.eng_on[en - 1]) break;
         if (en < 1) en = 1;
     }
     char eng[512];
@@ -938,9 +1039,11 @@ void datadefs_build_flight_json(char* out, int size) {
     XSTR_APPEND(eng, el, "\"engines\":{");
     for (ei = 0; ei < en; ei++) {
         double n1 = n1_sane(g_flight.n1_pct[ei]);
+        /* swift 的判定：GENERAL ENG COMBUSTION 优先，N1>5 兜底。
+         * 活塞机 N1 恒 0，只看 N1 会把活塞机全部报熄火。 */
+        int on = g_flight.eng_on[ei] || n1 > 5.0;
         XSTR_APPEND(eng, el, "%s\"%d\":{\"on\":%s}",
-                    ei ? "," : "", ei + 1,
-                    n1 > 5.0 ? "true" : "false");
+                    ei ? "," : "", ei + 1, on ? "true" : "false");
     }
     XSTR_APPEND(eng, el, "},");
 

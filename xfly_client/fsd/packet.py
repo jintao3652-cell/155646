@@ -271,6 +271,18 @@ XFlySim 服务器**从 `LIVERY` 反查机型**，而不是直接用 `EQUIPMENT=`
 插在中间，服务器按位置取第 4 项拿到 `REG=D-AIKI`，转数字失败 →
 `engines` 恒为 null（实测踩过）。所以顺序固定为：
     EQUIPMENT, AIRLINE, LIVERY, ENGINES, REG
+
+⚠️ **LIVERY 缺失时必须连带省略 ENGINES**（2026-11-27 实锤的第二种
+engines=null 路径）：机型 ICAO 无法反查 swift id（如 MSFS 老插件上报
+`ATCCOM` 占位符）时 LIVERY 为空——若仍发 ENGINES，报文变成
+`EQUIPMENT=ATCCOM:AIRLINE=SJX:ENGINES=2:REG=B-6419`，ENGINES 顶到
+LIVERY 的槽位，服务器按位置取第 4 项拿到 `REG=B-6419` → engines 恒
+null（fsd.log 23:13 会话实证：PI 里明明有 ENGINES=2，站点 JSON 里
+engines 却是 null）。所以本函数强制：`engines` 只在 `livery` 非空时
+才发 —— ENGINES 永远不会占错槽位。根治靠上游把 ICAO 识别对
+（model.py/webapp.py 统一走 aircraft_db.normalize_icao：空值、ATC*
+占位符、以及 `A350-900` 这类查不到 swift id 的非标准码，都按机模
+名称重推成库内标准码）。
 """
     tail = registration or ""
     parts = ["#SB" + callsign + ":" + to + ":PI:GEN"]
@@ -289,8 +301,11 @@ XFlySim 服务器**从 `LIVERY` 反查机型**，而不是直接用 `EQUIPMENT=`
     lv = (livery or "").strip()
     if lv:
         parts.append(f"LIVERY={lv}")
-    # ENGINES 必须在 REG 之前（见上，服务器按位置取第 4 项）
-    if engines and engines > 0:
+    # ENGINES 必须在 REG 之前（见上，服务器按位置取第 4 项）。
+    # 且必须在 LIVERY 存在时才发：没有 LIVERY 时 ENGINES 会顶到 LIVERY
+    # 的槽位，服务器位置解析拿到的就不是数字 → engines 恒 null
+    # （另一种实测过的 engines=null 路径）。
+    if lv and engines and engines > 0:
         parts.append(f"ENGINES={int(engines)}")
     if tail:
         parts.append(f"REG={tail}")

@@ -273,9 +273,9 @@ static void ai_create(Player* p) {
 
     /* 匹配结果行：明确记录用了哪个来源的模型（AIGAIM_/FSLTL_/Asobo），
      * 排查"映射没生效"时与 --scan-only 抽样对照 */
-    xc_logf("ai: %s match lvl=%d icao=%s airline=%s reg=%s -> \"%s\"/\"%s\"",
-            p->callsign, m.level, p->icao, p->airline, p->reg,
-            m.title, m.livery);
+    xc_logf("ai: %s match lvl=%d src=%s icao=%s airline=%s reg=%s -> \"%s\"/\"%s\"",
+            p->callsign, m.level, catalog_source_name(m.source),
+            p->icao, p->airline, p->reg, m.title, m.livery);
 
     /* 记住已选的模型（换型/换漆判断用） */
     snprintf(p->model_title, sizeof(p->model_title), "%s", m.title);
