@@ -58,6 +58,7 @@ cover/
 
 # Django stuff:
 *.log
+logs/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -230,3 +231,6 @@ build-vs2026/
 .commandcode/
 .workbuddy/
 assets/.workbuddy/
+
+# 诊断导出（可能含用户环境信息，禁止入库）
+*diagnostics*.json

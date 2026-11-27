@@ -870,6 +870,82 @@ def lookup(designator: str) -> Optional[dict]:
     return None
 
 
+def search(query: str, limit: int = 12) -> list[dict]:
+    """按关键词搜索机型库，返回供 UI 自动补全展示的候选。
+
+    应用场景：设置里手动填写机型时，输入 `A32` / `airbus` / `boeing 747`
+    即时列出库内合法机型，避免用户手输错误代码导致上报 equipment 无效。
+
+    匹配优先级（同名次的按 rank 升序，常见机型在前）：
+      1. designator 前缀命中（`A32` → A320/A321/A332…）
+      2. designator 子串命中（`32` → A320/PA32…）
+      3. model / manufacturer 前缀命中（`airb` → AIRBUS…）
+      4. model / manufacturer 子串命中（`cherokee` → PA-32 Cherokee）
+
+    只返回库内真实记录，代码天然合法 —— 选中的一定是可上报的 designator。
+    `limit` 上限保护：库 1 万条，全表扫描也要限制返回条数。
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    limit = max(1, min(int(limit or 12), 50))
+    # 多词查询（"boeing 747"）：每个词都要能命中，避免只匹配到泛词。
+    words = [w for w in re.split(r"[\s\-/]+", q) if w]
+    if not words:
+        return []
+    hits: list[tuple[int, tuple]] = []
+    for r in _load():
+        des, model, manuf = r[0], r[1], r[2] or ""
+        des_l = des.lower()
+        text_l = (model + " " + manuf).lower()
+        # 每个查询词都要在代码的某处命中，或文本的某处命中。
+        matched = True
+        best = 99
+        for w in words:
+            if des_l.startswith(w):
+                level = 0
+            elif w in des_l:
+                level = 1
+            elif text_l.startswith(w) or any(
+                    tok.startswith(w) for tok in text_l.split()):
+                level = 2
+            elif w in text_l:
+                level = 3
+            else:
+                matched = False
+                break
+            best = min(best, level)
+        if not matched:
+            continue
+        # 排序键：匹配级别 → rank（常见机型优先）→ designator
+        try:
+            rank = int(r[5] or 99)
+        except (TypeError, ValueError):
+            rank = 99
+        hits.append((best * 1000 + rank, r))
+
+    hits.sort(key=lambda x: x[0])
+    out: list[dict] = []
+    # 按 designator 去重：库里同一代码有多种型号写法（A320 / A320 Prestige、
+    # PA-32 Cherokee Six / Cherokee Six…），若不去重，下拉前 N 条全是同一
+    # 代码、只是描述不同 —— 用户选中后输入框都是同一个值，白白占满候选位。
+    # 排序后每条代码保留最优展示名（rank 最小、匹配级别最高）。
+    seen: set[str] = set()
+    for _, r in hits:
+        if r[0] in seen:
+            continue
+        seen.add(r[0])
+        out.append({
+            "designator": r[0], "model": r[1], "manufacturer": r[2],
+            "engines": r[3], "wtc": r[4],
+            "engine_type": engine_type_of(r[0]),
+            "combined_type": _combined_type(r[3], r[4], r[0]),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ---------------- swift LIVERY 生成 ----------------
 #
 # ## 为什么必须生成 swift 格式的 LIVERY

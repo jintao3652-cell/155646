@@ -1,6 +1,6 @@
 """FSD 报文构造（以 swift pilotclient 的 Legacy FSD 协议为准）。
 
-参考 xfly_client/fsd/FSD_PROTOCOL.md：
+参考 docs/FSD_PROTOCOL.md：
 - PBH 编码：pitch/bank 有符号并取反（×-1），heading 1024 量化
 - 位置 @ 经纬度 5 位小数
 - 保活：服务器无 $PI 处理器时沿用 #TM...:SERVER:ping（本地约定）
@@ -29,7 +29,7 @@ AUTH_KEY = "ImuL1WbbhVuD8d3MuKpWn2rrLZRa9iVP"
 
 SERVER_CALLSIGN = "SERVER"
 
-# 服务器错误码（enums.h ServerErrorCode，见 FSD_PROTOCOL.md §11）
+# 服务器错误码（enums.h ServerErrorCode，见 docs/FSD_PROTOCOL.md §11）
 NO_ERROR = 0
 ERR_CALLSIGN_IN_USE = 1
 ERR_INVALID_CALLSIGN = 2

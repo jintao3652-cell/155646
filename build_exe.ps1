@@ -10,20 +10,20 @@ param(
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 
-Write-Host "[1/3] Building webui/dist ..."
+Write-Host "[1/4] Building webui/dist ..."
 Push-Location "$root\webui"
 if (-not (Test-Path "node_modules")) { npm ci }
 npm run build
 if ($LASTEXITCODE -ne 0) { throw "webui build failed" }
 Pop-Location
 
-Write-Host "[2/3] Checking PyInstaller ..."
+Write-Host "[2/4] Checking PyInstaller ..."
 python -m PyInstaller --version *> $null
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller missing. Run: pip install pyinstaller pywebview"
 }
 
-Write-Host "[3/3] Running PyInstaller ..."
+Write-Host "[3/4] Running PyInstaller (client) ..."
 $mode = if ($OneDir) { "--onedir" } else { "--onefile" }
 $pyArgs = @(
     $mode, "--noconfirm", "--clean",
@@ -32,7 +32,7 @@ $pyArgs = @(
     # Model/livery DB used to build PI LIVERY; must be bundled or livery is empty.
     "--add-data", "$root\xfly_client\aircraft_db.b64;xfly_client",
     "--add-data", "$root\xfly_client\_aircraft_ids.b64;xfly_client",
-    # swift 官方 engine 类型表（J/T/P/R），供 AircraftProfile 判定动画语义
+    # swift engine type table (J/T/P/R) for AircraftProfile animation semantics
     "--add-data", "$root\xfly_client\aircraft_engine_types.b64;xfly_client",
     "--icon", "$root\assets\icon.ico",
     "--hidden-import", "webview.platforms.edgechromium",
@@ -45,9 +45,21 @@ python -m PyInstaller @pyArgs --windowed webapp.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 Pop-Location
 
+Write-Host "[4/4] Running PyInstaller (XUpdate) ..."
+$updArgs = @(
+    "--onefile", "--noconfirm", "--clean",
+    "--name", "XUpdate",
+    "--distpath", "$root\dist"
+)
+Push-Location $root
+python -m PyInstaller @updArgs xupdate.py
+if ($LASTEXITCODE -ne 0) { throw "XUpdate PyInstaller failed" }
+Pop-Location
+
 Write-Host ""
 Write-Host "Done. Output:"
 Write-Host "  $root\dist\XFlySimClient.exe"
+Write-Host "  $root\dist\XUpdate.exe"
 Write-Host "Config: binary file under %APPDATA%\XFlySim-Client\config.bin"
 Write-Host "(machine-bound; auto-migrates legacy config.json on first run)"
 Write-Host "Requires WebView2 Runtime (built into Windows 10/11)."

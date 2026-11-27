@@ -210,7 +210,7 @@ class XConnectClient:
         self.on_message: Optional[Callable[[dict], None]] = None
         self.on_csl_status: Optional[Callable[[dict], None]] = None
         # 机型能力：当前飞机能控制什么（MConnect 按实际机型探测后推送）
-        # 结构见 MConnect/PROTOCOL.md 的 aircraft_caps
+        # 结构见 docs/MConnect-PROTOCOL.md 的 aircraft_caps
         self.on_aircraft_caps: Optional[Callable[[dict], None]] = None
         self.aircraft_caps: dict = {}
         self.on_log: Optional[Callable[[str], None]] = None

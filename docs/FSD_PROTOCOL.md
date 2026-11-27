@@ -403,7 +403,7 @@ FSInn 格式字段序号（swift 解析只取 4、5、10、11）：
 > **`REG=<尾号>` 仍附带一份**（本客户端扩展键，swift 解析时忽略未知键，无害）：
 > 让对端不必猜 `LIVERY` 的语义，也兼容只看 `REG=` 的旧版客户端。插件据此按
 > "同一架飞机"选 CSL 涂装：注册号 → 同航司同机型 → 同机型 → 兜底（见
-> `XConnect/PROTOCOL.md`）。swift / FSInn 原生不发尾号，对端为它们时自动从
+> `XConnect-PROTOCOL.md`）。swift / FSInn 原生不发尾号，对端为它们时自动从
 > 第 2 级开始匹配。
 >
 > **`ENGINES=<数量>` 是 XFlySim 服务器识别的扩展键**（官方文档只列了

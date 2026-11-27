@@ -2,7 +2,8 @@
 
 **与 XConnect 协议完全兼容**——客户端不需要区分对面是 X-Plane 还是 MSFS，
 只多一个可选字段 `sim` 用于展示。本文件只记录与 XConnect 的差异点，
-其余字段语义见 `XConnect/PROTOCOL.md`。
+其余字段语义见 `XConnect-PROTOCOL.md`；
+**全字段速查（含两桥差异、单位、代码位置）见 `MC-XC字段手册.md`**。
 
 - 传输：TCP，端口 **51002**（占用时自动换 51003 / 51004，实际端口打印在启动日志）
   - 51001 留给 X-Plane 的 XConnect 插件；两边同时开时不冲突
@@ -13,11 +14,16 @@
 
 ### 插件 → 客户端
 
-`connected` 多一个 `sim` 字段：
+`connected` 多一个 `sim` 字段（下面是现行完整形态，旧文档里的
+`{"type":"connected","version":1,"sim":"msfs"}` 是 legacy 写法）：
 
 ```json
-{"type":"connected","version":1,"sim":"msfs"}
+{"type":"connected","protocol":1,"plugin":"MConnect","version":"1.0.0",
+ "sim":"msfs",
+ "capabilities":["csl","parts","controls","wasm","diagnostics"]}
 ```
+
+`hello_ack` 字段与 `connected` 相同，**但没有 `sim`**。
 
 `flight_data` 多一个 `sim` 字段，值为 `msfs2020` / `msfs2024` / `msfsunknown`：
 
@@ -52,6 +58,18 @@ MSFS 侧的取值说明：
 | `flaps_ratio` | `FLAPS HANDLE PERCENT` | 0..1 |
 | `throttle_ratio` | `GENERAL ENG THROTTLE LEVER POSITION:1` | 0..1 |
 | `flight_id` | `ATC FLIGHT NUMBER` | Mode-S 航班标识（AUX 遥测，失败时为空串） |
+| `sim` | `sc_sim_name()` | `msfs2020` / `msfs2024` / `msfsunknown`（仅 MC 发；客户端不在 `flight_data` 里解析它） |
+| `aircraft_name` | `TITLE` | 机型 UI 名 |
+| `elevation` | `alt_msl - alt_agl` | **ft**；注意 XC 同名字段是**米** |
+| `indicated_airspeed` | `AIRSPEED INDICATED` | **kt**；注意 XC 同名字段是 **m/s** |
+| `groundspeed` | `VELOCITY GROUNDSPEED` | kt |
+| `pitch` / `bank` | 姿态 SimVar | 度 |
+| `com*_standby` | `COM STANDBY FREQUENCY:1..3` | MHz×1000；无该台为 0 |
+| `has_audio_sel_com3` | 恒定 `1` | 不代表真有 COM3 收听能力（XC 是动态探测） |
+| `squark` | 由 `xpdr_state` 派生 | `"S"`=待机 `"N"`=发射 |
+| `parts.gear_down` | `GEAR TOTAL PCT EXTENDED>0.5` | 0/1；XC 是连续 0..1 |
+| `parts.flaps_pct` | `round(flaps_ratio*100)` | **0..100 整数** |
+| `parts.on_ground` | `SIM ON GROUND` | 0/1 |
 | `com1/2/3_power` | `ELECTRICAL MASTER BATTERY`（兜底） | MSFS 无单台 COM 电源 SimVar |
 | `audio_sel_com1/2/3` | `COM RECEIVE:1..3` | 收听状态（AUX 遥测，失败时恒 0） |
 | `audio_vol_com1/2` | 收听状态派生 | MSFS 无音量 SimVar：收听=1.0 否则 0.0 |
@@ -61,7 +79,7 @@ MSFS 侧的取值说明：
 | `tcas_filter/alert/advisory` | 固定 `0` | MSFS 2020 无标准 TCAS 输出 SimVar |
 | `parts.lights.*` | `LIGHT LANDING/TAXI/NAV/BEACON/STROBE/LOGO/WING/RECOGNITION/CABIN` | Bool（后 4 项走 AUX 遥测，失败时恒 0） |
 | `parts.spoilers_out` | `SPOILERS HANDLE POSITION` | >0.1 为伸出 |
-| `parts.engines[].rpm_pct` | `TURB ENG N1:1..4` | 活塞机无 N1 → 0 |
+| `parts.engines` | **JSON 对象** `{"1":{"on":true},...}`，键 1-based，值**只有 `on`**；不是数组，**没有 `rpm_pct`**（多余键会导致服务器丢弃该引擎） | `datadefs.c:1027-1048`；`on` 优先 `GENERAL ENG COMBUSTION`，N1>5 兜底 |
 | `on_ground` | `SIM ON GROUND` | |
 
 `csl_status` 语义改为「已成功注入的机型 / 机型目录里找不到的机型」，并多两个计数：
@@ -86,6 +104,7 @@ MSFS 侧的取值说明：
 
 ```json
 {"type":"aircraft_caps","icao":"A20N","title":"Fenix A320",
+ "profile":"FBW_A320","profile_caps":7,
  "standard":{"com":true,"xpdr":true},
  "inputev":{"total":10,"com_freq":2,"com_select":1,
             "xpndr_code":2,"xpndr_mode":1,"xpndr_ident":1},
@@ -99,9 +118,11 @@ MSFS 侧的取值说明：
 | 字段 | 含义 |
 |---|---|
 | `icao` / `title` | 当前机型（`title` 是容器标题，含机模名） |
+| `profile` | 命中的机型档案 ID，无档案为 `"none"`；客户端 `profile_id()` 依赖它 |
+| `profile_caps` | 档案能力位（uint）：`0x01` xpndr_code / `0x02` xpndr_mode / `0x04` com_set / `0x08` com_swap / `0x10` com_xmit；客户端 `supports()` 优先读它 |
 | `standard` | 标准 SimEvent 是否可用（兜底，几乎总是 true） |
 | `inputev.total` | 枚举到的自定义 InputEvent 总数（0 = 机模没暴露） |
-| `inputev.<cat>` | 各语义分类下的事件数 |
+| `inputev.<cat>` | 各语义分类下的事件数：`com_freq` / `com_select` / `xpndr_code` / `xpndr_mode` / `xpndr_ident`（`xpndr_ident` 优先级最高，先判 IDENT 再判 MODE/CODE） |
 | `wasm.state` | WASM 桥状态：`off`/`registering`/`ready`/`failed` |
 | `events[]` | **真实事件名 + hash**（每类最多 8 条），客户端直接拿来渲染选项 |
 
@@ -121,6 +142,7 @@ MSFS 侧的取值说明：
 分类优先级（容易错的地方）：
 `XPDR_IDENT` 必须先判 IDENT，否则会被 `XPDR` 泛匹配吃成 MODE；
 `XPDR_MODE` 必须先判 MODE，否则会被当成 CODE。
+各 `cat` 的完整判定关键字表见 `MC-XC字段手册.md` §2.3。
 
 ### Send:INPUTEV（按名字触发机模自定义事件）
 
@@ -128,8 +150,9 @@ MSFS 侧的取值说明：
 {"type":"Send:INPUTEV","name":"XPDR_CODE_SET","value":7000}
 ```
 
-`name` 来自 `aircraft_caps.events[]`，原样回传即可。名字不在当前机型事件表里
-会被拒绝并记日志（不会静默失败）。
+`name` 来自 `aircraft_caps.events[]`（大小写不敏感查找），原样回传即可。名字不在
+当前机型事件表里会被拒绝并记日志（不会静默失败）。`value` 是 double，
+实际按 `(int)(value+0.5)` 取整后作为事件参数。
 
 ### Send:RPN（执行任意 RPN，需 WASM 桥）
 
@@ -139,7 +162,8 @@ MSFS 侧的取值说明：
 ```
 
 仅在 `aircraft_caps.wasm.state == "ready"` 时可用（需装 MobiFlight WASM
-模块）。这是最强通道，能改 LVar、触发 B 事件。
+模块）。这是最强通道，能改 LVar、触发 B 事件。`rpn` 字符串上限 **160 字节**，
+超长会被截断或拒收（`control.c:1018-1026`）。
 
 ### Send:RADIO（设置无线电频率）
 
@@ -199,6 +223,8 @@ MSFS 侧的取值说明：
 
 - 显隐开关：`--labels`（启动默认）或 `{"type":"Send:LABELS"}`（运行时翻转）
   → 快照里的 `labels_on`，overlay 轮询后立即显隐，无需重启。
+- ⚠️ `players[].alt` 是**米**（`PositionFix.alt`），不同于桥协议 `flight_data`
+  的 ft；`players[]` 还含 `callsign`/`icao`/`lat`/`lon`/`heading`/`gs`。
 
 有效波段校验：`118000 ≤ freq ≤ 137000`（MHz×1000），越界直接拒收并记日志
 （客户端可能把 NAV 频率误发到 COM 通道）。
@@ -227,7 +253,7 @@ X-Plane 固定使用 X-CSL，不识别该命令。
 | 字段 | 含义 |
 |---|---|
 | `code` | 4 位码，**每位必须 0..7**（八进制语义）。字符串或数字都接受，`"8899"` 这类含 8/9 的拒收 |
-| `state` | 应答机模式 `0=Off 1=Stby 2=Test 3=On 4=Alt 5=Ground`，越界夹到 0..5 |
+| `state` | **写入侧规范枚举** `0=Off 1=Stby 2=On 3=Alt 4=Test 5=Ground`（与回读的 `xpdr_mode` 默认机路径顺序不同！）。MC 接受 6/7 并映射到 Alt，`>7`→Ground；写前再 remap 到 MSFS 顺序（`control.c:67-79,687`） |
 | `ident` | 触发/关闭 IDENT（模拟器会在 18 秒后自动关） |
 
 机制差异：

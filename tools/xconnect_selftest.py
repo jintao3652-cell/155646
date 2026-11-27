@@ -8,7 +8,7 @@
 层次 1（离线，任何机器可跑）：
   - 解析 XConnect.xpl 的 PE：x64、DLL(子系统 2)、只依赖 XPLM_64/WS2_32/OPENGL32/KERNEL32
     → 说明 XP 能加载，且无 VCRT/额外运行库依赖，单文件即可。
-  - 本机起一个假插件 socket，按 PROTOCOL.md 回 connected + flight_data，
+  - 本机起一个假插件 socket，按 docs/XConnect-PROTOCOL.md 回 connected + flight_data，
     客户端侧用 XConnectClient 连接，验证「输入（插件→客户端）」被正确解析。
   - 客户端推 Send:OPD:FSD9 roster，假插件读回，验证「输出（客户端→插件）」格式正确。
 

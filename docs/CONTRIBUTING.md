@@ -7,7 +7,7 @@
 - Windows：VS 2022/2026（MSVC）、CMake
 - X-Plane SDK（`XConnect/SDK` 已随仓库）
 - MSFS SimConnect SDK（仅 MConnect）
-- 支持矩阵见 [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md)
+- 支持矩阵见 [SUPPORT_MATRIX.md](SUPPORT_MATRIX.md)
 
 ## 一键开发环境
 
@@ -54,7 +54,7 @@ npm run build
 - C：C99；插件导出保持 `/MT` 静态 CRT；不要跨线程调用 XPLM/SimConnect。
 - Python：标准库优先；新增协议字段必须**向后兼容**（未知字段忽略）。
 - 日志：默认 info；原始 FSD/每帧数据只在 debug 下；任何日志先 `redact()`。
-- 桥协议改动：更新 [docs/BRIDGE_PROTOCOL.md](docs/BRIDGE_PROTOCOL.md)，
+- 桥协议改动：更新 [BRIDGE_PROTOCOL.md](BRIDGE_PROTOCOL.md)，
   并在 XConnect/MConnect 两侧同时实现。
 - 不提交 `fsd.log`、`xconnect.log`、配置里的密码、构建产物。
 

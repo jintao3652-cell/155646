@@ -11,7 +11,7 @@
 - `tests/` 单元测试：日志脱敏/轮转、VI/`^` 报文、桥握手、诊断、回放、mock FSD。
 - 诊断 UI：设置页“导出诊断”；后端 `Api.diagnostics/export_diagnostics`。
 - MConnect 外部机型档案：`MConnect.exe` 同目录 `profiles.json`，2s 热加载，
-  外部档案优先于内置表（`MConnect/PROFILES.md`）。
+  外部档案优先于内置表（`docs/MConnect-PROFILES.md`）。
 - CI：Windows XConnect 构建 + CTest；Python unittest + selftest。
   （Linux/macOS 暂时搁置，不纳入 CI/发布。）
 - 文档：FAQ、支持矩阵、桥协议、贡献指南、变更日志、MConnect 档案格式。
@@ -28,9 +28,43 @@
   下一帧重建他机模型。`--traffic-lib <auto|fsltl|aig>` 供启动与诊断使用。
   `catalog_dump_stats()` 按来源计数，`--scan-only` 可直接确认两库都读到。
   X-Plane 侧固定使用 X-CSL，不受该项影响。
+- **他机资源层**：CSL / FSLTL / AIG 从主程序更新通道拆出，按「机型包 / 航司包」
+  增量更新。启动只查目录存在性与小清单版本（零文件遍历、零哈希）；完整校验
+  需用户主动触发，支持按包过滤、限速、取消。详见 `docs/资源层更新设计.md`；
+  `xfly_client/resources.py` 提供 `quick_check` / `verify`，资源摘要进入诊断导出。
+- **XUpdate.exe 独立更新器**：客户端 / XConnect / MConnect 的版本检查与更新
+  统一到 `xupdate.py` + `xfly_client/updater.py`。默认 `--check` 只读，
+  `--apply` 才写盘；按 sha256 增量下载、下载后校验、替换前备份、失败整体
+  回滚，检测 exe/xpl 被客户端或模拟器占用（退出码 3）。日志独立写入
+  `logs/xupdate-YYYY-MM-DD.log`；`build_exe.ps1` 同步产出 XUpdate.exe。
+  CSL / FSLTL / AIG 仍走独立资源层，不在此更新器内。
+
+### Security
+
+- 诊断导出强化脱敏：`#AP` 登录报文的 CID 与密码、`#DP` 的 CID、通用
+  `key=value` 凭据字段均遮蔽；`extra` 递归脱敏并隐藏用户目录。
+  `.gitignore` 新增 `*diagnostics*.json`，已有诊断包从索引移除。
 
 ### Changed
 
+- **文档补全与纠错**：新增 `docs/MC-XC字段手册.md`，逐字段说明两桥握手、
+  `flight_data` / `parts` / `csl_status` / `aircraft_caps`、全部 `Send:*` 命令、
+  配置/CLI 与关键 C 结构体，并标注单位、取值、来源和两桥差异；修正三份协议文档中
+  `capabilities`、`hello_ack`、`engines.rpm_pct`、XPDR 状态枚举、`elevation`/IAS
+  单位、`--port` 无效等多处与代码不符的描述；README 增加文档索引。
+- **文档目录收敛**：除根目录 `README.md` / `CHANGELOG.md` 外，所有项目文档
+  统一放入 `docs/`（贡献指南、打包说明、MC/XC 协议与 dataref、机型档案、
+  FSD 协议参考等）；同名协议文档加桥名前缀区分，全仓引用同步更新。
+- **日志改为独立目录 + 按北京时间分日**：`logs/xflysim-YYYY-MM-DD.log`，
+  每天一个新文件（按 UTC+8 日切），启动与日切时自动删除早于 7 天窗口的
+  `<prefix>-YYYY-MM-DD.log`（保留今天及前 6 天），其它文件不动。
+  日志行时间戳同为北京时间；诊断导出优先读今天/最近的分日日志，旧 `fsd.log`
+  仅作回退且不再写入。支持 `XFLYSIM_LOG_DIR` 覆盖目录；打包后日志落在 exe
+  同级 `logs/`（不写 `sys._MEIPASS` 临时目录）。
+- **可观测性统一**：客户端日志统一 `DEBUG/INFO/WARN/ERROR` 四级标签，
+  前端按标签着色（DEBUG 淡显），桥日志转发时也带标签；诊断导出升级为
+  `xflysim-diagnostics` schema v1，附 `redaction` 标记与 `extra.log`
+  结构化日志（级别计数 + 最近 200 条脱敏记录），便于用户反馈时直接附上。
 - **本机字段读取对齐 swift（VATSIM 客户端）的 MSFS 2020/2024 实践**：
   - 引擎开关判定改为 `GENERAL ENG COMBUSTION`（|| N1>5 兜底）——N1 对
     活塞机恒 0，只看 N1 会把活塞机全部上报熄火；

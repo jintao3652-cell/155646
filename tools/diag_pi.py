@@ -9,7 +9,8 @@
 用法（先跑一次客户端，切换机型后重新运行本脚本）：
     python tools/diag_pi.py
 
-它会从 fsd.log 里抽取每次「登录 → PI → 服务器响应」的序列，按机型码
+它会从 logs/ 下最近的分日日志（旧版为 fsd.log）里抽取每次
+「登录 → PI → 服务器响应」的序列，按机型码
 长度分组统计：哪些机型码后面服务器给了正常欢迎语（说明 PI 被接受），
 哪些没有任何回应（说明被丢弃）。
 """
@@ -20,7 +21,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-LOG = Path(__file__).resolve().parent.parent / "fsd.log"
+ROOT = Path(__file__).resolve().parent.parent
+_daily_logs = sorted((ROOT / "logs").glob("xflysim-*.log"))
+LOG = _daily_logs[-1] if _daily_logs else ROOT / "fsd.log"
 
 # 登录 / PI / 欢迎语
 RE_AP = re.compile(r"^(\d{2}:\d{2}:\d{2}) > #AP(\S+?):SERVER:")
