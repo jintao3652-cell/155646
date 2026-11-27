@@ -2,14 +2,33 @@
 
 - 传输：TCP，端口 **51001**，UTF-8，每条消息一行（以 `\n` 结尾）
 - 角色：**插件 = TCP 服务端**（监听），客户端主动连接
+- 全字段速查（含两桥差异、单位、代码位置）：`MC-XC字段手册.md`
 
 ## 插件 → 客户端
 
 ### connected（连接建立，插件就绪）
 
 ```json
-{"type":"connected","version":1}
+{"type":"connected","protocol":1,"plugin":"XConnect","version":"1.0.0",
+ "sim":"xplane",
+ "capabilities":["csl","parts","controls","diagnostics",
+                 "position_vi","position_visual","acc"]}
 ```
+
+`hello` / `hello_ack`（握手）：客户端发
+`{"type":"hello","protocol":1,"client":"XFlySim-Client","version":"1.0.0"}`，
+插件回 `hello_ack`，字段与 `connected` 相同但**没有 `sim`**。
+插件只按 `type` 分发，不读取 `hello` 的其它字段。
+
+### csl_status（CSL 加载状态）
+
+```json
+{"type":"csl_status","loaded":["B738","A320"],"missing":["XXXX"]}
+```
+
+XC **没有** MC 的 `sim` / `active` / `pending` 字段。`loaded` 为已有实例的 ICAO，
+`missing` 为尝试过但实例数为 0 的 ICAO。
+
 
 ### flight_data（本机飞行数据，5Hz）
 
@@ -31,14 +50,14 @@
  "audio_sel_com1_copilot":1,"audio_sel_com2_copilot":0,
  "audio_vol_com1_copilot":0.80,"audio_vol_com2_copilot":0.60,
  "tx_com":1,"pilot_xmit":0,
- "transponder":1234,"xpdr_mode":3,"squark":"S",
+ "transponder":1234,"xpdr_mode":3,"squark":"N",
  "tcas_filter":0,"tcas_alert":0,"tcas_advisory":0,
+ "xpdr_sys":-1,"xpdr_pwr":-1,"xpdr_tcas_mode":-1,"xpdr_tcas_alt":-1,
  "gear_deploy":0.0,"flaps_ratio":0.0,"throttle_ratio":0.3,
  "parts":{"lights":{"strobe_on":0,"landing_on":1,"taxi_on":0,
                     "beacon_on":1,"nav_on":1,"logo_on":0,
                     "wing_on":0,"recognition_on":1,"cabin_on":1},
           "gear_down":1,"flaps_pct":15,"spoilers_out":0,
-          "throttle_ratio":0.35,
           "engines":{"1":{"on":true},"2":{"on":true}},
           "on_ground":1}}
 ```
@@ -78,7 +97,12 @@
 
   前端用 `avionics_on && audio_sel_comN` 决定 RMP 里该行频率是否"灰掉"——
   这是 XVoice 的做法：**频率有值 ≠ 可用**，只有通电且选中收听才是真正在守听的频道。
-- 高度/地速单位：ft / kt
+- 高度/地速单位：`altitude_msl` / `altitude_agl` / `altitude_indicated` 为 ft，
+  `groundspeed` 为 kt，**但 `elevation` 是米原值**（`position/elevation` 未换算），
+  **`indicated_airspeed` 也是 m/s 原值**——这两项与 MConnect 不同，跨桥混用需换算。
+  `gear_deploy` 在 XC 是连续 0..1（MC 是二值 0/1）。
+- `xpdr_sys` / `xpdr_pwr` / `xpdr_tcas_mode` / `xpdr_tcas_alt`：机型自定义枚举，
+  `-1` 表示该机型没有对应 dataref（MC 恒为 `-1`）。
 - `registration`：本机尾号。**涂装目录名优先于机模尾号**（v19 起）：
   1. `sim/aircraft/view/acf_livery_path` 涂装目录名里的尾号，如
      `.../liveries/Lufthansa D-AIKI` → `D-AIKI`
@@ -130,6 +154,11 @@
   > 实际上报与服务器回显都只有 `{"on":false}`。实测带 `rpm_pct` 时服务器返回
   > `"engines": {}`（空对象，key 全丢）；去掉后才有内容。
   > 结论：**服务器只认它认识的键，多余键会导致该台引擎被丢弃**。
+- **写入方向只消费 6 种灯**：客户端 `data[].parts.lights` 里的
+  `wing_on` / `recognition_on` / `cabin_on` 会被插件忽略，只有
+  `beacon/landing/taxi/nav/strobe/logo` 生效（`xconnect.c:226-238`）。
+  上报方向（`flight_data.parts`）9 种灯全发。
+- `parts` 里**没有 `throttle_ratio`**，油门只在顶层 `throttle_ratio`。
 - `squark`：`"S"` 应答机开启、`"N"` 应答机关闭
 - `xpdr_mode`：XP12 应答机模式枚举 `0=OFF 1=STBY 2=ON 3=ALT 4=TEST 5=GND(ModeS) 6=TA 7=TA/RA`
 - `tcas_filter`：TCAS 高度过滤 `0=ALL 1=THRT 2=ABV 3=BLW 4=URSTR`
@@ -204,6 +233,8 @@
  "data":[{"callsign":"ZGGG_TWR","frequency":"118.800","type":"TWR",
           "latitude":23.43,"longitude":113.20,"rating":2}]}
 ```
+
+插件只取 `data` 的**数量**存 `g_atc_count`（无管制模型可注入），不读任何子字段。
 
 ### Send:RADIO（设置无线电频率 / 触发音频面板动作）
 

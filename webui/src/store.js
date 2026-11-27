@@ -202,6 +202,7 @@ function applySettings(s) {
     remember: !!s.remember_password,
     callsign: s.callsign || '',
     airline: s.airline_icao || '',
+    aircraft_manual: s.aircraft_manual || '',
     server_host: s.server_host || '',
     server_port: s.server_port || 6809,
     xconnect_host: s.xconnect_host || '',
@@ -267,21 +268,27 @@ export const regSrcText = computed(() => {
 function handleEvent(ev) {
   switch (ev.event) {
     case 'log': {
-      /* 原始 FSD 报文（> 发送 / < 接收）只在调试模式显示。
-       * 关闭调试时这里原来也一直在追加，日志页会被位置包等刷成一片黄色。
-       * [fsd]/[xconnect] 状态始终保留：错误红、断线/离线等警告黄、其余绿。 */
-      const msg = String(ev.data == null ? '' : ev.data)
-      if (!store.set.debug && (msg.startsWith('> ') || msg.startsWith('< '))) break
-      const isErr = /错误|失败|error|failed|exception/i.test(msg)
-      const isWarn = /断开|断线|离线|未发现|未连接|未上线|超时|timeout|disconnect|offline|not found/i.test(msg)
+      /* 后端统一打 [DEBUG|INFO|WARN|ERROR] 标签；标签只用于着色，正文不改。
+       * 原始 FSD 报文（> 发送 / < 接收）只在调试模式显示。 */
+      const raw = String(ev.data == null ? '' : ev.data)
+      const lv = raw.match(/^\[(DEBUG|INFO|WARN|ERROR)\]\s*/)
+      const level = lv ? lv[1] : ''
+      const body = lv ? raw.slice(lv[0].length) : raw
+      if (!store.set.debug && (body.startsWith('> ') || body.startsWith('< '))) break
+      const isErr = /错误|失败|error|failed|exception/i.test(body)
+      const isWarn = /断开|断线|离线|未发现|未连接|未上线|超时|timeout|disconnect|offline|not found/i.test(body)
       let cls = 'out'
-      if (msg.startsWith('< ')) cls = 'in'
-      else if (msg.startsWith('[fsd]')) cls = isErr ? 'err' : isWarn ? 'warn' : 'txt'
+      if (body.startsWith('< ')) cls = 'in'
+      else if (body.startsWith('> ')) cls = 'out'
+      else if (level === 'ERROR') cls = 'err'
+      else if (level === 'WARN') cls = 'warn'
+      else if (level === 'DEBUG') cls = 'debug'
+      else if (body.startsWith('[fsd]')) cls = isErr ? 'err' : isWarn ? 'warn' : 'txt'
       /* [xconnect]/[mconnect]/[bridge] 三类桥日志同级着色（探测未定归属时用 [bridge]） */
-      else if (msg.startsWith('[xconnect]') || msg.startsWith('[mconnect]') ||
-               msg.startsWith('[bridge]'))
+      else if (body.startsWith('[xconnect]') || body.startsWith('[mconnect]') ||
+               body.startsWith('[bridge]'))
         cls = isErr ? 'err' : isWarn ? 'warn' : 'txt'
-      addLog(msg, cls)
+      addLog(raw, cls)
       break
     }
     case 'text':
@@ -560,6 +567,7 @@ export async function openSettings() {
     real_name: s.real_name, cid: s.cid, password: s.password,
     remember: !!s.remember_password,
     callsign: s.callsign, airline: s.airline_icao,
+    aircraft_manual: s.aircraft_manual || '',
     host: s.server_host, port: s.server_port,
     xphost: s.xconnect_host, xpport: s.xconnect_port,
     debug: !!s.debug_mode,
@@ -595,6 +603,7 @@ export async function saveSettings() {
     remember_password: store.set.remember,
     callsign: store.set.callsign.trim().toUpperCase(),
     airline_icao: store.set.airline.trim().toUpperCase(),
+    aircraft_manual: (store.set.aircraft_manual || '').trim().toUpperCase(),
     server_host: store.set.server_host.trim(),
     server_port: parseInt(store.set.server_port, 10),
     xconnect_host: store.set.xconnect_host.trim(),
@@ -609,6 +618,9 @@ export async function saveSettings() {
   if (r.ok) {
     store.callsign = d.callsign
     store.airline = d.airline_icao
+    // 手填机型立即生效到工具栏；清空则保留当前自动识别值，
+    // 等下一帧插件数据推来时恢复（后端已按 aircraft_manual 处理覆盖）
+    if (d.aircraft_manual) store.aircraft = d.aircraft_manual
     onCallsignInput()
     applyLanguage(d.language)
     // MSFS 铭牌开关：保存时与打开前状态不同 → 立即下发 toggle，不再等重启

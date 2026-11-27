@@ -32,6 +32,9 @@ class AppConfig:
     password: str = ""
     real_name: str = ""
     aircraft_icao: str = "A320"
+    # 机型手填值（从机型库候选选取的合法 designator）：空串 = 完全自动识别。
+    # 非空时连接与飞行计划均以它为准，连线后插件上报的机型不再覆盖（用户明确选定）。
+    aircraft_manual: str = ""
     airline_icao: str = ""
     # 注册号（尾号）：用户手填值，最高优先；空串 = 自动识别（模拟器 → 上次记录）
     registration: str = ""

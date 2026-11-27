@@ -27,9 +27,13 @@ from xfly_client.diagnostics import export as export_diagnostics_file
 from xfly_client.fsd import packet as pk
 from xfly_client.fsd.session import STATE_ONLINE
 from xfly_client.i18n import translate
-from xfly_client.logutil import RotatingFileWriter, redact
+from xfly_client.logutil import (LEVELS, DailyLogWriter, app_base_dir,
+                                 beijing_clock, classify_level,
+                                 default_log_dir, format_log_line, redact,
+                                 strip_level, tag_level)
 from xfly_client.model import NetworkModel
 from xfly_client.registration import norm_registration
+from xfly_client.resources import diagnostics_summary as resource_summary
 from xfly_client.simbrief import SimbriefError
 from xfly_client.simbrief import import_plan as simbrief_import_plan
 from xfly_client.xconnect.client import XConnectClient
@@ -40,9 +44,15 @@ BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 WEBUI_DIST = os.path.join(BASE_DIR, "webui", "dist", "index.html")
 WEBUI_URL = "file:///" + WEBUI_DIST.replace("\\", "/")
 ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.ico")
-# FSD 收发报文落盘（只记 > 开头的发送行与 [fsd] 状态行），排查协议问题用
-FSD_LOG_PATH = os.path.join(BASE_DIR, "fsd.log")
-_FSD_LOG = RotatingFileWriter(FSD_LOG_PATH, max_bytes=10 * 1024 * 1024, backups=3)
+# 日志落到独立目录，按北京时间每天一个文件，自动清理 7 天前的。
+# 只记 > 发送行、< 接收行与 [fsd] 状态行，排查协议问题用。
+LOG_DIR = default_log_dir()
+_FSD_LOG = DailyLogWriter(LOG_DIR, keep_days=7)
+
+
+def current_log_path() -> str:
+    """今天的日志文件路径（供诊断导出读取尾部）。"""
+    return getattr(_FSD_LOG, "path", os.path.join(LOG_DIR, "xflysim.log"))
 
 
 def _validate(cfg: AppConfig) -> list[str]:
@@ -79,6 +89,8 @@ class Api:
         self._cfg: AppConfig = load_config()
         self._model: Optional[NetworkModel] = None
         self._events: deque[tuple[str, object]] = deque()
+        # 最近日志的结构化缓冲（诊断导出用，全部已脱敏；上限防止无限增长）
+        self._log_records: deque[dict] = deque(maxlen=200)
         self._sim_type = pk.SIM_TYPE_XP12
         self._debug: bool = self._cfg.debug_mode
         # 最近一次插件上报的机型名 / 引擎数（connect() 兜底推断用）
@@ -125,23 +137,34 @@ class Api:
         self._xconnect.on_csl_status = lambda d: self._push("csl", d)
         self._start_xconnect()
 
+    def _manual_aircraft(self) -> str:
+        """手填机型（库内合法码）；空串表示完全交给自动识别。"""
+        m = (getattr(self._cfg, "aircraft_manual", "") or "").strip().upper()
+        return m if 2 <= len(m) <= 4 and m.isalnum() else ""
+
     def _push_flight(self, fd) -> None:
         """推送飞行数据到前端；机型缺失或非标准时先规范化补上。"""
         # 记下原始机型名与引擎数，供 connect() 在必要时兜底重推
         self._last_ac_name = getattr(fd, "aircraft_name", "") or ""
         self._last_eng = int(getattr(fd, "engine_count", 0) or 0)
-        # ATC* 是 MSFS 通用占位符（ATCCOM 等）；`A350-900` 这类非标准 ICAO
-        # 会让 swift_livery 查不到 id → PI 缺 LIVERY 键 → 站点 livery=null。
-        # normalize_icao 统一护栏：占位符当未知、库外码按名称重推
-        # （与 NetworkModel._on_xconnect_flight_data 同款逻辑）。
-        norm = aircraft_db.normalize_icao(
-            getattr(fd, "aircraft_icao", "") or "",
-            self._last_ac_name, self._last_eng)
-        fd.aircraft_icao = norm
-        if norm:
-            # 同时回写配置，否则下次 _validate 仍拿旧值
-            if self._cfg.aircraft_icao != norm:
-                self._cfg.aircraft_icao = norm
+        manual = self._manual_aircraft()
+        if manual:
+            # 用户在设置里明确选定了机型（来自机型库候选）：前端显示、上报
+            # 都以它为准，插件每帧上报的机型不再覆盖。清空手填值即恢复自动。
+            fd.aircraft_icao = manual
+        else:
+            # ATC* 是 MSFS 通用占位符（ATCCOM 等）；`A350-900` 这类非标准 ICAO
+            # 会让 swift_livery 查不到 id → PI 缺 LIVERY 键 → 站点 livery=null。
+            # normalize_icao 统一护栏：占位符当未知、库外码按名称重推
+            # （与 NetworkModel._on_xconnect_flight_data 同款逻辑）。
+            norm = aircraft_db.normalize_icao(
+                getattr(fd, "aircraft_icao", "") or "",
+                self._last_ac_name, self._last_eng)
+            fd.aircraft_icao = norm
+            if norm:
+                # 同时回写配置，否则下次 _validate 仍拿旧值
+                if self._cfg.aircraft_icao != norm:
+                    self._cfg.aircraft_icao = norm
         self._push("flight", asdict(fd))
 
     def _start_xconnect(self) -> None:
@@ -172,6 +195,8 @@ class Api:
                 "capabilities": sorted(getattr(xc, "capabilities", set()) or []),
             }
         }
+        # 资源层：只做目录存在性 + 读小清单，不遍历文件、不算哈希。
+        extra["resources"] = resource_summary()
         m = self._model
         if m is not None:
             extra["model"] = {
@@ -179,19 +204,26 @@ class Api:
                 "atc": len(m._atc),
                 "fsd_state": m.fsd.state if m.fsd else None,
             }
+        extra["log"] = {
+            "level_counts": {
+                lv: sum(1 for r in self._log_records if r["level"] == lv)
+                for lv in LEVELS
+            },
+            "recent": list(self._log_records),
+        }
         return extra
 
     def diagnostics(self) -> dict:
         """返回可展示/复制的诊断 JSON（日志尾部已脱敏）。"""
-        return collect_diagnostics(log_path=FSD_LOG_PATH,
+        return collect_diagnostics(log_path=current_log_path(),
                                    extra=self._diagnostics_extra())
 
     def export_diagnostics(self) -> dict:
         """导出诊断 JSON 到程序目录，返回路径。"""
         name = f"xflysim-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.json"
-        path = os.path.join(BASE_DIR, name)
+        path = os.path.join(app_base_dir(), name)
         try:
-            p = export_diagnostics_file(path=path, log_path=FSD_LOG_PATH,
+            p = export_diagnostics_file(path=path, log_path=current_log_path(),
                                         extra=self._diagnostics_extra())
             return {"ok": True, "path": p}
         except OSError as exc:
@@ -204,23 +236,32 @@ class Api:
         return translate(self._cfg.language, msg)
 
     def _push(self, event: str, payload) -> None:
-        # 日志/UI 回显前先脱敏（#AP 密码等），落盘同样使用脱敏后的内容
+        # 日志/UI 回显前先脱敏（#AP 密码 / CID 等），落盘用同一份脱敏正文。
+        level = "INFO"
+        stamp = beijing_clock()
         if event == "log" and isinstance(payload, str):
-            payload = redact(payload)
+            body = redact(payload).strip()
+            level = classify_level(body)
+            self._log_records.append({"time": stamp, "level": level,
+                                      "text": body})
+            payload = tag_level(level, body)
         self._events.append((event, payload))
         # 关键报文落盘，方便事后排查（UI 日志关掉就丢了）。
         # 记：> 发送行、< 接收行、[fsd] 状态/错误行；不记 flight（5Hz 刷爆）。
         if event in ("log", "fsdstate") or event == "xconnect":
             try:
                 if event == "log" and isinstance(payload, str):
-                    s = payload.strip()
+                    _level, s = strip_level(payload)
+                    s = s.strip()
                     if not (s.startswith(">") or s.startswith("<")
                             or s.startswith("[fsd]")):
                         s = ""
+                    if s:
+                        _FSD_LOG.write(
+                            format_log_line(level, s, stamp) + "\n")
                 else:
-                    s = f"<{event}> {payload}"
-                if s:
-                    _FSD_LOG.write(f"{time.strftime('%H:%M:%S')} {redact(s)}\n")
+                    s = f"<{event}> {redact(str(payload))}"
+                    _FSD_LOG.write(format_log_line("INFO", s, stamp) + "\n")
             except OSError:
                 pass
         if len(webview.windows):
@@ -234,6 +275,17 @@ class Api:
         return out
 
     # ---------- 设置 ----------
+
+    def search_aircraft(self, query: str, limit: int = 12) -> list[dict]:
+        """机型自动补全：输入关键词返回库内合法候选。
+
+        供设置对话框的机型输入框调用。只返回机型库里的真实记录，
+        因此选中的 designator 一定是可上报的标准代码。
+        """
+        try:
+            return aircraft_db.search(query, limit)
+        except Exception:
+            return []
 
     def get_settings(self) -> dict:
         return asdict(self._cfg)
@@ -320,6 +372,10 @@ class Api:
         callsign = callsign.strip().upper()
         aircraft = aircraft.strip().upper()
         airline = callsign[:3] or airline.strip().upper()
+        # 手填机型（设置里从机型库候选选定）优先于前端传来的自动识别值。
+        manual = self._manual_aircraft()
+        if manual:
+            aircraft = manual
         # 机型兜底：前端传来的值不可用时，用**最后一次插件原始数据**重新推断。
         #
         # 为什么需要这层：前端 `store.aircraft` 可能因为某些时序问题仍是空值
@@ -344,6 +400,8 @@ class Api:
         # 注入应用级共享插件客户端（保持监听插件上线，断开 FSD 不影响）
         model = NetworkModel(xconnect=self._xconnect)
         model.aircraft_icao = self._cfg.aircraft_icao
+        # 手填机型锁定：连线后插件上报机型不再覆盖用户明确选定的值
+        model.aircraft_manual = manual
         model.airline_icao = self._cfg.airline_icao
         # 尾号：先按「手动填写 > 同机型上次记录」定值，首包 PI 即可带上；
         # 连线后插件每帧上报 acf_tailnum / 涂装目录，自动覆盖为模拟器值

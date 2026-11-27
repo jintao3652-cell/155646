@@ -3,7 +3,7 @@
 > 参考源码：[swift-project/pilotclient](https://github.com/swift-project/pilotclient)
 > `src/core/fsd/fsdclient.cpp`（连接/登录/定时器）；本地实现
 > `xfly_client/fsd/session.py`（模型侧驱动见 `xfly_client/model.py`）。
-> 协议细节（报文字段、PBH、频率偏移）见 `xfly_client/fsd/FSD_PROTOCOL.md`。
+> 协议细节（报文字段、PBH、频率偏移）见 `FSD_PROTOCOL.md`。
 
 ---
 
@@ -292,5 +292,5 @@ $ZRCCA1501:SERVER:eaf9c2f5b1c1f7d8c7b1e2a3f4d5b6c7  ← MD5 challenge/response
 ## 7. 参考
 
 - pilotclient：`src/core/fsd/fsdclient.cpp`（`handleSocketConnected` / `startPositionTimers` / `sendPilotDataUpdate`）
-- 协议字段详解：`xfly_client/fsd/FSD_PROTOCOL.md`
+- 协议字段详解：`FSD_PROTOCOL.md`
 - 本地实现：`xfly_client/fsd/session.py`、`xfly_client/model.py`、`webapp.py::connect`

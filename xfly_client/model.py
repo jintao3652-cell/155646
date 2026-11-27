@@ -148,6 +148,9 @@ class NetworkModel:
         self.my_callsign = ""
         self.my_cid = ""
         self.aircraft_icao = "A320"
+        # 用户在设置里手填的机型（机型库候选）：非空时连线后插件上报的
+        # 机型不再覆盖它，清空即恢复自动识别。与 registration_manual 对称。
+        self.aircraft_manual = ""
         # 上次因机模缺 ICAO 而推断出的机型。仅用于抑制重复日志
         # （推断每帧都会跑，但同一机型只打印一次）。
         self._last_guessed_icao = ""
@@ -833,6 +836,9 @@ class NetworkModel:
             icao = (fd.aircraft_icao or "").strip().upper()
             if icao.startswith("ATC"):
                 icao = ""
+            # 手填机型锁定：用户明确选定后，模拟器每帧上报的机型不再覆盖它
+            if self.aircraft_manual:
+                icao = self.aircraft_manual
             changed = False
             if icao != self.aircraft_icao:
                 self.aircraft_icao = icao

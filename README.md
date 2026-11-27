@@ -51,7 +51,7 @@
   发射台选择（`xmit`）与按台收听（`recv_all` 精准 toggle 不符的台）、
   远端油门写入 `thrust_ratio` 动画
 
-协议细节见 `XConnect/PROTOCOL.md`；`tools/xconnect_bridge.py` 为演示客户端。
+协议细节见 `docs/XConnect-PROTOCOL.md`；`tools/xconnect_bridge.py` 为演示客户端。
 
 ## 数据源：MConnect（MSFS 2020 / 2024）
 
@@ -90,7 +90,7 @@ build\MConnect.exe            # 先启动 MSFS，再运行
 build\MConnect.exe --scan-only  # 只看机型目录扫描结果（排查用）
 ```
 
-详见 `MConnect/README.md` 与 `MConnect/PROTOCOL.md`。
+详见 `MConnect/README.md` 与 `docs/MConnect-PROTOCOL.md`。
 
 ## 目录结构
 
@@ -112,7 +112,7 @@ xfly_client/
   model.py       roster 管理、机型应答、飞行数据 → FSD 上报、roster 推送插件
   registration.py 尾号归一化与「手动 > 模拟器 > 缓存」优先级
   simbrief.py    SimBrief 最新 OFP 导入（用户名 → 飞行计划表单字段）
-  config.py      config.json 读写
+  config.py      config.bin 读写（机器绑定混淆，旧 config.json 自动迁移）
   selftest.py    协议层自测
 XConnect/        X-Plane 原生插件（数据桥接 + CSL 渲染），含 GitHub Action 编译
 tools/
@@ -123,6 +123,24 @@ start-client.ps1  启动脚本的实际逻辑（找 Python / 检查依赖 / 启�
 gui.py            Tkinter 深色界面（备选）
 requirements.txt  依赖：pywebview
 ```
+
+## 文档索引
+
+除 `README.md` 与 `CHANGELOG.md` 保留在根目录外，其余文档统一放在 `docs/`。
+
+| 文档 | 内容 |
+|---|---|
+| `docs/MC-XC字段手册.md` | **字段总表**：握手、`flight_data`、`parts`、所有 `Send:*` 命令、配置/CLI、C 结构体，含两桥单位差异与代码位置 |
+| `docs/BRIDGE_PROTOCOL.md` | 桥协议 v1 概览、握手、能力位、消息清单 |
+| `docs/MConnect-PROTOCOL.md` | MC 差异：MSFS SimVar 来源、机型能力 `aircraft_caps`、呼号 overlay、机模控制各通道 |
+| `docs/XConnect-PROTOCOL.md` | XC 差异：dataref 单位、CSL 匹配四级规则、`radio.json` 机型适配表 |
+| `docs/XConnect-DATAREFS.md` | X-Plane dataref 清单与读法 |
+| `docs/FSD_PROTOCOL.md` | FSD 报文协议 |
+| `docs/MConnect-PROFILES.md` | MConnect 外部机型档案 `profiles.json` 格式与优先级 |
+| `docs/CONTRIBUTING.md`、`docs/PACKAGING.md` | 贡献约定 / PyInstaller 打包说明 |
+| `docs/XUpdate更新器.md` | 客户端 / MC / XC 更新器：清单格式、增量、备份回滚、CLI |
+| `docs/资源层更新设计.md` | CSL / FSLTL / AIG 独立资源层（启动零哈希、包级增量、7 天校验提醒） |
+| `docs/FAQ.md`、`docs/SUPPORT_MATRIX.md` | 常见问题与支持矩阵 |
 
 ## 使用
 
@@ -191,8 +209,23 @@ CLI 命令：`/text <呼号> <消息>`、`/freq <MHz> <消息>`、`/metar <ICAO>
 
 ```bat
 python main.py --selftest        # 68 项协议断言（纯离线）
-python -m unittest discover -s tests   # 54 项单元测试（报文/ACC/桥握手/诊断等）
+python -m unittest discover -s tests   # 104 项单元测试（报文/ACC/桥握手/诊断/资源层/分日日志等）
 ```
+
+诊断导出（`python -m xfly_client.diagnostics` 或设置页“导出诊断”）采用固定
+schema（`xflysim-diagnostics` v1），含级别计数与最近 200 条结构化日志；
+CID、密码、Token 等凭据自动遮蔽，用户目录替换为 `~`，可直接附上反馈。
+`*diagnostics*.json` 已被 git 忽略。客户端日志统一四级标签
+`DEBUG/INFO/WARN/ERROR`，UI 按标签着色。
+
+客户端日志写在程序目录下的独立 `logs/`，每天一个 `xflysim-YYYY-MM-DD.log`
+（北京时间 UTC+8 日切），自动保留最近 7 天、更早的分日日志在启动/日切时删除；
+可用环境变量 `XFLYSIM_LOG_DIR` 改目录。根目录旧 `fsd.log` 只作历史回退读取，
+不再写入。
+
+CSL / FSLTL / AIG 属于独立资源层，不随主程序更新：启动只检查目录与清单版本，
+不遍历几万个文件算哈希；需要时用 `xfly_client.resources.verify()` 按包校验。
+设计、清单格式与待办见 `docs/资源层更新设计.md`。诊断导出附带资源状态摘要。
 
 C 侧：XConnect `csl_match_test`（9 用例，四级匹配）；MConnect 8 套 442 断言（机型匹配/反向控制/Input Events/WASM 桥/PMDG
 双协议等，均不需要模拟器，见各 README）。

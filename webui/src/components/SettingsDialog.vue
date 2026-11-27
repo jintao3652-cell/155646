@@ -8,6 +8,25 @@ const LANGS = [
   { value: 'zh-CN', label: t('settings.languages.zh-CN') },
   { value: 'zh-TW', label: t('settings.languages.zh-TW') },
 ]
+
+/* 机型自动补全：调用后端机型库搜索，候选只含库内合法代码。
+ * el-autocomplete 要求每项有 value 字段（选中后写入输入框）。
+ * detail 用于下拉里展示「厂商 · 型号 · WTC」。 */
+async function queryAircraft(q, cb) {
+  const list = []
+  if (q && q.trim() && store.api && store.api.search_aircraft) {
+    try {
+      const rows = await store.api.search_aircraft(q.trim(), 10) || []
+      for (const r of rows) {
+        list.push({
+          value: r.designator,
+          detail: `${r.manufacturer || ''} · ${r.model || ''} · WTC ${r.wtc || '-'}`,
+        })
+      }
+    } catch (e) { /* 搜索失败不阻塞输入 */ }
+  }
+  cb(list)
+}
 </script>
 
 <template>
@@ -25,7 +44,17 @@ const LANGS = [
       <fieldset>
         <legend>{{ t('settings.flightInfo') }}</legend>
         <label>{{ t('settings.callsign') }} <el-input v-model="store.set.callsign" size="small" /></label>
-        <label>{{ t('settings.aircraft') }}</label>
+        <label>{{ t('settings.aircraft') }}
+          <el-autocomplete v-model="store.set.aircraft_manual" size="small"
+                           class="ac-input" :fetch-suggestions="queryAircraft"
+                           :placeholder="t('settings.aircraftPlaceholder')"
+                           :trigger-on-focus="false" clearable>
+            <template #default="{ item }">
+              <div class="ac-item"><b>{{ item.value }}</b><span>{{ item.detail }}</span></div>
+            </template>
+          </el-autocomplete>
+        </label>
+        <p class="tip">{{ t('settings.aircraftTip') }}</p>
         <label>{{ t('settings.airline') }} <el-input v-model="store.set.airline" maxlength="3" size="small" /></label>
       </fieldset>
       <fieldset>

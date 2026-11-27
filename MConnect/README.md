@@ -111,7 +111,8 @@ cmake --build build --config Release
 ```
 MConnectConsole.exe [选项]
 
-  --port <n>         TCP 监听端口（默认 51002；占用时自动换 51003/51004）
+  --port <n>         **当前无效**：解析后即丢弃；端口固定 51002，占用退 51003/51004
+  --labels           启动时把呼号 overlay 开关设为 1（toggle 语义，非内置铭牌）
   --scan <dir>       只用指定目录作为机型目录
   --scan-only        只扫描机型目录并打印统计，不连模拟器
   --dump-input       把当前机模的 Input Events 表写入日志（调试深度机模）

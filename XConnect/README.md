@@ -66,7 +66,7 @@ XConnect/
     labels.c / labels.h    自绘呼号标签（投影 + 2D 顶层绘制）
   CMakeLists.txt     跨平台构建
   Makefile           Linux/macOS 简单构建
-  PROTOCOL.md        TCP JSON 协议文档
+  （协议文档已移至 ../docs/XConnect-PROTOCOL.md）
   README.md          本文件
   CSL/               存放 CSL 模型包（如 X-CSL），见下文
 ```
@@ -167,7 +167,7 @@ python tools/xconnect_selftest.py --live   # 离线检查 + 真机验证
 - 发送 `Send:ATC` 推送管制列表（可附带，用于标注）
 - 断开连接时插件清空已渲染模型
 
-完整报文见 `PROTOCOL.md`。仓库根目录现有 Python 客户端可参考
+完整报文见 `../docs/XConnect-PROTOCOL.md`。仓库根目录现有 Python 客户端可参考
 `tools/xconnect_bridge.py`（将 XFlySim-Client 的 FSD 数据转发给插件）。
 
 ## 查机模私有 dataref（填 radio.json 用）

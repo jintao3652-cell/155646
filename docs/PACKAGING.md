@@ -68,14 +68,29 @@ python -m PyInstaller --onefile --noconfirm --clean --windowed `
 - **无数据库**：状态全在内存，仅配置文件持久化。
 - **运行时依赖**：目标机需 **WebView2 Runtime**（Windows 10/11 自带；Server
   版需微软官网安装）。缺失时启动报错"WebView2 not found"。
+- **XUpdate.exe**：`build_exe.ps1` 还会产出 `dist\XUpdate.exe`（独立更新器，
+  无 WebView2 依赖），负责客户端与 MC/XC 插件的版本检查/下载/替换；
+  用法与清单格式见 `XUpdate更新器.md`。CSL/FSLTL/AIG 不走这个通道。
 
-## 5. 其他入口
+## 5. 独立更新器 XUpdate.exe
+
+```powershell
+XUpdate.exe --check          # 只检查，不写磁盘
+XUpdate.exe --apply          # 下载 + 校验 + 备份 + 原子替换（失败回滚）
+XUpdate.exe --sample-manifest
+```
+
+默认清单是 exe 同目录 `update/manifest.json`，可用 `--manifest` 指定本地路径
+或 URL。更新 X-Plane 插件时用 `--xplane-dir`（或环境变量 `XPLANE_ROOT`）。
+完整说明见 `XUpdate更新器.md`。
+
+## 6. 其他入口
 
 - **tkinter 界面** `gui.py`：`--windowed gui.py`（无 WebView2 依赖，纯标准库，
   体积更小）。
 - **命令行版** `main.py`：去掉 `--windowed` 保留控制台输出。
 
-## 6. 常见问题
+## 7. 常见问题
 
 | 现象 | 原因 / 处理 |
 |---|---|
@@ -86,9 +101,12 @@ python -m PyInstaller --onefile --noconfirm --clean --windowed `
 | 前端改动不生效 | 必须先 `npm run build`，`webui/dist` 才会被 `--add-data` 收进包 |
 | 端口占用/插件无数据 | 插件单客户端，exe 与 webapp/bridge 不要同时连 51001 |
 
-## 7. 更新发版流程
+## 8. 更新发版流程
 
 1. 改代码 → `python -m xfly_client.selftest` 自检；
 2. 前端改动先 `cd webui && npm run build`；
-3. 重跑 `build_exe.ps1` → 覆盖 `dist\XFlySimClient.exe`；
-4. 分发 exe（用户首次运行会在同目录生成 config.json，填呼号/CID/密码即可）。
+3. 重跑 `build_exe.ps1` → 覆盖 `dist\XFlySimClient.exe` 与 `dist\XUpdate.exe`；
+4. 更新发布目录：把新文件与生成的 `manifest.json` 放到版本目录
+   （模板见 `XUpdate.exe --sample-manifest`，格式见 `XUpdate更新器.md`）；
+5. 分发 exe（配置在 `%APPDATA%\XFlySim-Client\config.bin`，
+   用户首次运行生成后填写呼号/CID/密码即可）。
