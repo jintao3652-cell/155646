@@ -84,6 +84,14 @@
 
 ### Fixed
 
+- **设置保存后同一条日志打印两次**：后端 `set_msfs_traffic_lib()` /
+  `toggle_msfs_labels()` 已通过 `_push("log")` 推送并落盘，前端保存流程又
+  用 `message()` 打印同一句话。去掉前端重复提示，并补齐后端日志的
+  en / zh-TW 翻译，保证只有一条且按界面语言显示。
+- **X-Plane CSL 缺失 E19L**：`E19L` 是 E190LR 在部分 VATSIM/航司数据里的
+  写法，别名表里只有 `E190`。XConnect 补 `E19L -> E190`，MConnect 同步补
+  `E19L -> E195`（与现有 E190 映射一致）；两侧各加一条回归测试。
+  注意这条日志来自 X-Plane 侧 CSL，与 MSFS 的模型库偏好（FSLTL/AIG）无关。
 - **MSFS 侧本机机型无法自动识别（Fenix A320 实测）**：两处独立 bug 叠加。
   1. `DEF_FLIGHT` 主数据定义里混入 7 个 IniBuilds A350 灯光 LVar
      `(L:INI_LIGHTS_*, number)`，MSFS 2020 的 SimConnect 不认 calculator

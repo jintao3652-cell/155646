@@ -31,6 +31,11 @@ LOG_MESSAGES: dict[str, dict[str, str]] = {
         "上次记录": "last used",
         "未设置": "not set",
         "设置注册号失败": "failed to set registration",
+        "[mconnect] 呼号标签 overlay 显隐已切换，立即生效":
+            "[mconnect] Callsign label overlay visibility toggled, effective immediately",
+        "[mconnect] AI 模型库偏好已切换为":
+            "[mconnect] AI model library preference switched to",
+        "，下一帧重建他机模型": "; traffic models rebuild next frame",
     },
     "zh-CN": {},
     "zh-TW": {
@@ -57,6 +62,11 @@ LOG_MESSAGES: dict[str, dict[str, str]] = {
         "上次记录": "上次記錄",
         "未设置": "未設定",
         "设置注册号失败": "設定註冊號失敗",
+        "[mconnect] 呼号标签 overlay 显隐已切换，立即生效":
+            "[mconnect] 呼號標籤 overlay 顯隱已切換，立即生效",
+        "[mconnect] AI 模型库偏好已切换为":
+            "[mconnect] AI 模型庫偏好已切換為",
+        "，下一帧重建他机模型": "，下一幀重建他機模型",
     },
 }
 
