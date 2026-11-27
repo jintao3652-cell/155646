@@ -29,6 +29,7 @@ from .registration import (
     norm_registration as _norm_registration,
     resolve_registration, source_label,
 )
+from .report_identity import AircraftIdentity, resolve_identity
 from .xconnect.client import AtcEntry, FlightData, PlayerEntry, XConnectClient
 
 ATC_TIMEOUT = 45.0     # ATC 每 15s 重播 %，45s 无更新判离线
@@ -154,6 +155,10 @@ class NetworkModel:
         # 上次因机模缺 ICAO 而推断出的机型。仅用于抑制重复日志
         # （推断每帧都会跑，但同一机型只打印一次）。
         self._last_guessed_icao = ""
+        self._ghost_frame_logged = False   # 断线无效帧只提示一次（见帧门控）
+        self._sim_aircraft_name = ""     # 最近一帧的机模名（机型反查用）
+        self.identity: AircraftIdentity = AircraftIdentity()
+        self._identity_key: tuple | None = None   # 输入指纹（跳过重复解析）
         self.airline_icao = ""
         self.livery_icao = ""
         # 注册号（尾号）四级来源，见 registration.py：
@@ -253,17 +258,21 @@ class NetworkModel:
 
         session = FsdSession(host, port, callsign, cid, password,
                              real_name, sim_type)
-        session.aircraft_icao = self.aircraft_icao
-        session.airline_icao = self.airline_icao
-        session.livery_icao = self.livery_icao
+        # 机型/航司/涂装/发动机数统一由 report_identity 解析：
+        # 四个字段要么都有出处，要么明确知道缺哪个（不再各自为政地漏字段）。
+        self.refresh_identity()
+        ident = self.identity
+        session.aircraft_icao = ident.equipment or self.aircraft_icao
+        session.airline_icao = ident.airline
+        session.livery_icao = ""
         session.registration = self.registration
-        session.engines = self.engine_count
+        session.engines = ident.engines
         # 重置发动机数缓存：让插件首帧数据必然触发一次 PI 重发。
         # _on_xconnect_flight_data 里靠 "eng != self.engine_count" 判定变化，
         # 若这里保留上次会话的值（2），首帧 2 == 2 不成立 → ENGINES= 永远不发，
         # 服务器侧 aircraft.engines 就一直是 null。归零后首帧必然是 0→2 变化。
+        # 注意 session.engines 保留档案兜底值：PI 首包就必须带 ENGINES。
         self.engine_count = 0
-        session.engines = 0
         session.on_log = self._log
         session.on_position_packet = self._on_fsd_packet
         session.on_plane_info_requested = self._on_plane_info_requested
@@ -312,6 +321,7 @@ class NetworkModel:
         if state == STATE_ONLINE:
             fsd = self.fsd
             if fsd is not None:
+                self.refresh_identity()   # 首包就带全 equipment/livery/engines
                 fsd.send_aircraft_info()
         if self.on_fsd_state_changed is not None:
             self.on_fsd_state_changed(state)
@@ -324,6 +334,54 @@ class NetworkModel:
             self._log(f"[fsd] {text}")
         if self.on_fsd_error is not None:
             self.on_fsd_error(text)
+
+    # ---------- 上报身份 ----------
+
+    def refresh_identity(self) -> AircraftIdentity:
+        """重算并落地 equipment/airline/livery/engines（幂等，可随时调用）。
+
+        四个字段在站点上分属两条通道（PI / ACC），过去由几个调用点各自维护，
+        任何一个分支漏更新就表现为"某字段 null"。这里收敛成单一出口：
+
+        * `equipment`：手填机型 → 桥上报（规范化）→ 机模名反查
+        * `airline`：配置/界面 → 呼号前三字
+        * `livery`：swift 机型库 `A<id>`（+ 尾号）
+        * `engines`：桥实测 → 机型库台数
+
+        每帧都会调用它，所以先用输入指纹挡掉重复计算：机型库反查是线性扫描
+        （~1 万条），20~50Hz 直接跑会白烧 CPU。
+        """
+        key = (self.aircraft_icao, self._sim_aircraft_name, self.airline_icao,
+               self.registration, self.engine_count, self.aircraft_manual,
+               self.my_callsign)
+        if key == getattr(self, "_identity_key", None):
+            return self.identity
+        ident = resolve_identity(
+            icao=self.aircraft_icao,
+            name=self._sim_aircraft_name,
+            airline=self.airline_icao,
+            registration=self.registration,
+            measured_engines=self.engine_count,
+            manual_icao=self.aircraft_manual,
+            callsign=self.my_callsign,
+        )
+        changed = ident != self.identity
+        self.identity = ident
+        self._identity_key = key
+        if ident.equipment:
+            self.aircraft_icao = ident.equipment
+        if ident.airline:
+            self.airline_icao = ident.airline
+        fsd = self.fsd
+        if fsd is not None:
+            fsd.aircraft_icao = self.aircraft_icao
+            fsd.airline_icao = self.airline_icao
+            fsd.registration = self.registration
+            if ident.engines > 0:
+                fsd.engines = ident.engines
+        if changed:
+            self._log(ident.audit())
+        return ident
 
     def _clear_roster(self) -> None:
         with self._gate:
@@ -786,6 +844,25 @@ class NetworkModel:
         if self.on_local_flight_data:
             self.on_local_flight_data(fd)
 
+        # ⚠️ **断线僵尸帧必须丢弃**（站点 aircraft 段变 null 的最常见来源）。
+        #
+        # SimConnect 管道断开重连时会推来一帧"全默认"数据：机型空、尾号空、
+        # engine_count=1、坐标是**接近** 0,0 的默认值 —— 实测 MConnect 给的是
+        # (0.0004150, 0.0139740)。旧判据 `|lon| < 0.01` 恰好放过这一帧
+        # （fsd.log 18:17:29 仍在发残缺 PI）。现在阈值放到 0.05°，并且要求
+        # 机型/机模名/尾号**全都**为空才判废，正常航班不可能同时满足。
+        self._sim_aircraft_name = (fd.aircraft_name or "").strip()
+        near_null = (abs(fd.latitude) <= 0.05 and abs(fd.longitude) <= 0.05)
+        identify_ok = bool(norm) or bool(self._sim_aircraft_name) \
+            or bool((fd.registration or "").strip())
+        if near_null and not identify_ok:
+            if not self._ghost_frame_logged:
+                self._log("[fsd] 忽略断线后的无效 flight_data（机型未知 + 坐标"
+                          "接近 0,0），不覆盖已上报的机型/部件")
+                self._ghost_frame_logged = True
+            return
+        self._ghost_frame_logged = False
+
         fsd = self.fsd
         if fsd is not None and fsd.state == STATE_ONLINE:
             # @ 包字段 9 = 气压高 − 真高（swift PilotDataUpdate::toTokens）。
@@ -840,18 +917,29 @@ class NetworkModel:
             if self.aircraft_manual:
                 icao = self.aircraft_manual
             changed = False
-            if icao != self.aircraft_icao:
+            # ⚠️ 机型**识别不出**（icao 与机模名都为空）时保留上次已知值：
+            # 把 aircraft_icao 清空会立刻产出 `PI:GEN:AIRLINE=SJX` 这种残缺
+            # 报文，服务器会拿它覆盖站点记录。真换了机型但读不到 ICAO 的
+            # 情况走"机模名非空 → 推断"，不会卡在旧值上。
+            if identify_ok and icao != self.aircraft_icao:
                 self.aircraft_icao = icao
                 fsd.aircraft_icao = icao
                 changed = True
-            # 发动机数量（PI 的 ENGINES= 扩展键）：换机模时数量会变，需重发
+            # 发动机数量（PI 的 ENGINES= 扩展键 / ACC 的 engines 掩码）：换机模时
+            # 数量会变，需重发。桥在机型未加载完时给 0 → 由 refresh_identity
+            # 用机型库台数兜底，绝不让站点 engines 因为"没数据"变成 null。
             eng = int(fd.engine_count or 0)
             if eng > 0 and eng != self.engine_count:
                 self.engine_count = eng
                 fsd.engines = eng
                 changed = True
-            reg_changed = self._apply_registration(
-                fd.registration, fd.registration_src, icao)
+            reg_changed = False
+            if identify_ok:
+                reg_changed = self._apply_registration(
+                    fd.registration, fd.registration_src, icao)
+            # 四个上报字段的统一出口：补全 airline/livery/engines 的兜底值，
+            # 并把当前身份写回 session（PI 直接读它）。
+            self.refresh_identity()
             if changed or reg_changed:
                 fsd.send_aircraft_info()
             # 机模部件变化 → 增量机模配置 ACC 上报（$CQ:@94836）
@@ -892,15 +980,22 @@ class NetworkModel:
         此时不使用缓存（避免给刚换的机型套上一个无关尾号）。
         """
         icao = (icao or "").strip().upper()
+        # 自己的呼号不是尾号：MSFS 机模常把 `ATC ID` 写成呼号（SJX110），
+        # MSFS 免费机模也常留空。不挡的话会把呼号当注册号上报，还会拼进
+        # `LIVERY=SWIFT_A672-SJX110`，对端按这个变体码匹配涂装必然失败。
+        sim_reg = (fsd_reg or "").strip()
+        my_cs = (self.my_callsign or "").strip().upper()
+        if sim_reg and my_cs and sim_reg.upper() == my_cs:
+            sim_reg = ""
         key = icao or self.aircraft_icao
-        if icao and _norm_registration(fsd_reg):
+        if icao and _norm_registration(sim_reg):
             # 记住模拟器最近一次上报值：用户清空手填时立刻回落到它
             self._sim_reg = _norm_registration(fsd_reg)
             self._sim_reg_src = sim_src
             self._sim_reg_icao = icao
         cached = self.registration_cache.get(key, "") if icao else ""
         reg, src = resolve_registration(
-            self.registration_manual, fsd_reg, cached, sim_src)
+            self.registration_manual, sim_reg, cached, sim_src)
         if reg and src in ("tailnum", "livery", "sim") and icao:
             # 记入缓存（仅模拟器读到的值；手动值不入缓存，避免清空后仍被回填）
             if self.registration_cache.get(icao, "") != reg:

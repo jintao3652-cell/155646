@@ -100,6 +100,10 @@ typedef struct {
     int    com_recv[3];           /* COM RECEIVE:1..3（音频面板收听，0/1） */
     char   flight_id[32];         /* ATC FLIGHT NUMBER（Mode-S 航班标识） */
     int    light_logo, light_wing, light_recog, light_cabin;
+    unsigned light_mask;          /* LIGHT ON STATES 位掩码（AUX）。
+                                  * 位：0 NAV 1 BEACON 2 LANDING 3 TAXI 4 STROBE
+                                  * 6 RECOGNITION 7 WING 8 LOGO 9 CABIN。
+                                  * 深度机模只维护这个总线，逐灯 Bool 恒 false。 */
     int    transponder;           /* 4 位八进制码（如 1234） */
     int    xpdr_state;            /* 0=Off 1=Stby 2=Test 3=On 4=Alt 5=Ground */
     int    on_ground;
@@ -208,5 +212,16 @@ int datadefs_derive_pilot_xmit(const int com_transmit[3], int raw_enum);
 
 /* 处理 SIMCONNECT_RECV_SYSTEM_STATE（"Sim" 状态）。 */
 void datadefs_on_system_state(const void* pkt);
+
+/* 距上一帧有效 flight_data 的秒数（-1 = 从未收到过）。
+ * 主循环据此检测 SimConnect 断线：模拟器重启后管道断开，
+ * CallDispatch 不再投递数据，但进程还活着、socket 还连着，
+ * 若不检测就会一直把最后已知坐标（可能接近 0,0）当实时数据上报，
+ * 且 AI 创建全部失败（0xc000014b = STATUS_PIPE_BROKEN）。 */
+double datadefs_frame_age(void);
+
+/* 连接重建后重置本地快照（valid/标题/缓存），让下一帧重新走
+ * "first flight frame" / 机型重识别流程。不碰 SimConnect 本身。 */
+void datadefs_session_reset(void);
 
 #endif /* MCONNECT_DATADEFS_H */

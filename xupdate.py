@@ -9,6 +9,14 @@
 
 默认清单：程序目录下的 ``update/manifest.json``，可用环境变量
 ``XFLYSIM_UPDATE_MANIFEST`` 覆盖。CSL / FSLTL / AIG 不归本更新器管。
+
+软件中心模式（与清单模式二选一）：
+
+    XUpdate.exe --software-api https://host/api --software-uuid <uuid> --check
+    XUpdate.exe --software-api https://host/api --software-uuid <uuid> --apply
+    XUpdate.exe --software-api https://host/api --software-uuid <uuid> --software-history
+
+下载包非 zip 直接放根目录；zip 先解压再按包内路径放根目录。
 """
 from __future__ import annotations
 
@@ -18,10 +26,11 @@ import os
 import sys
 
 from xfly_client.logutil import app_base_dir
+from xfly_client import software_update as S
 from xfly_client.updater import (
     COMPONENTS, DEFAULT_MANIFEST, PreconditionError, UpdateError,
     UPDATER_VERSION, UpdatePlan, apply_plans, build_plans, read_manifest,
-    sample_manifest,
+    sample_manifest, installed_versions, same_version, default_fetch,
 )
 
 
@@ -62,6 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait-timeout", type=float, default=60.0,
                    help="等待客户端退出的秒数（默认 60）")
     p.add_argument("--quiet", action="store_true", help="不输出到标准输出")
+    # 软件中心模式（与清单模式二选一）：解析发布包并按 zip/非 zip 规则落盘。
+    p.add_argument("--software-api",
+                   default=os.environ.get("XFLYSIM_SOFTWARE_API", ""),
+                   help="飞行员中心 API 根地址（也可用 XFLYSIM_SOFTWARE_API）；指定后走软件中心模式")
+    p.add_argument("--software-uuid",
+                   default=os.environ.get("XFLYSIM_SOFTWARE_UUID", ""),
+                   help="软件标识 uuid（也可用 XFLYSIM_SOFTWARE_UUID）")
+    p.add_argument("--software-legacy", action="store_true",
+                   help="用 /software/latest 旧路径代替 /softwareVersion/latest")
+    p.add_argument("--software-history", action="store_true",
+                   help="只打印软件中心版本记录，不检查/更新")
     p.add_argument("--version", action="version",
                    version=f"XUpdate {UPDATER_VERSION}")
     return p
@@ -73,6 +93,70 @@ def _plan_report(plans: list[UpdatePlan]) -> dict:
         "update_available": any(not p.up_to_date for p in plans),
         "plans": [p.summary() for p in plans],
     }
+
+
+def _software_flow(args, base: str, log, api: str, uuid: str) -> int:
+    """软件中心模式：读 latest -> 下载发布包 -> 按 zip/非 zip 规则落根目录。"""
+    if not uuid:
+        raise PreconditionError(
+            "软件中心模式需要 --software-uuid（或 XFLYSIM_SOFTWARE_UUID）")
+    api = api.strip().rstrip("/")
+    legacy = args.software_legacy
+
+    if args.software_history:
+        records = S.fetch_logs(api, uuid, default_fetch, args.timeout,
+                               legacy=legacy)
+        if args.json:
+            print(json.dumps({"mode": "history", "records": records},
+                             ensure_ascii=False, indent=2))
+        else:
+            for r in records:
+                log(f"{r['version']} {r['createdTime']} {r['logs']}", "INFO")
+        return 0
+
+    release = S.fetch_release(api, uuid, default_fetch, args.timeout,
+                              legacy=legacy)
+    installed = installed_versions(base).get("client")
+    available = not same_version(installed, release.version)
+
+    if not args.apply:
+        report = {
+            "mode": "check",
+            "source": "software-center",
+            "software": release.software_name,
+            "version": release.version,
+            "installed": installed,
+            "logs": release.logs,
+            "createdTime": release.created_time,
+            "md5": release.md5,
+            "update_available": available,
+        }
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            log(f"[{release.software_name}] installed={installed} "
+                f"target={release.version} md5={release.md5}", "INFO")
+            if release.logs:
+                log(f"update notes: {release.logs}", "INFO")
+            log("update available" if available else "everything up to date",
+                "INFO")
+        return 1 if available else 0
+
+    data = S.download_package(release, default_fetch, args.timeout, api_base=api)
+    result = S.apply_package(release, data, base)
+    report = {
+        "mode": "apply",
+        "source": "software-center",
+        "version": release.version,
+        **result.summary(),
+    }
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        kind = "zip" if result.zipped else "file"
+        log(f"applied {kind}: {len(result.replaced)} files, "
+            f"version={release.version}", "INFO")
+    return 0 if result.ok else 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -96,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
     log = UpdaterLog(base, quiet=args.json)
 
     try:
+        api = (args.software_api or "").strip()
+        if api:
+            return _software_flow(
+                args, base, log, api, (args.software_uuid or "").strip())
+
         source = args.manifest or os.path.join(base, DEFAULT_MANIFEST)
         if not os.path.isfile(source) and "://" not in source:
             raise UpdateError(

@@ -37,6 +37,8 @@ export default {
     mcError: 'MC error',
     cslTitle: 'CSL model load status',
     cslMissing: 'CSL missing models: {list} (place in plugins/XConnect/CSL/)',
+    msfsAiTitle: 'MSFS AI model load status',
+    msfsAiMissing: 'MSFS model library missing types: {list} (check FSLTL/AIG installation or switch library preference)',
   },
   log: {
     welcome: 'Welcome to XFlySim Client',

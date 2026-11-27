@@ -93,6 +93,10 @@ typedef struct {
     int     create_attempts;
     double  retry_at;            /* 下次允许重试的时间 */
     int     write_fail_logged;
+    /* 上次 catalog_match 是否彻底未命中。只有它为真时 csl_status 的
+     * missing 才算“机型库里没有”；AI 创建失败/对象被回收属暂态，
+     * 会退避重试，不应报成缺模型。 */
+    int     catalog_miss;
 
     /* 远端 canonical 部件（随 roster 下发，与 XConnect 同 schema） */
     int     has_parts;

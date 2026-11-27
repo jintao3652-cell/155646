@@ -59,6 +59,34 @@ class TestAccNorm(unittest.TestCase):
         empty = FsdSession._acfg_swift_shape({"lights": {"beacon_on": True}})
         self.assertNotIn("aircraft", empty)
 
+    def test_acfg_swift_shape_synthesizes_engines(self):
+        """桥当前帧没给 engines 时按台数补"全关"掩码。
+
+        站点 `aircraft.engines` 只来自 ACC；缺这个键就是 null。宁可先报
+        全关（下一帧真实值覆盖），也不留空。
+        """
+        out = FsdSession._acfg_swift_shape({"lights": {"beacon_on": True}},
+                                           engine_count=2)
+        self.assertEqual(out["engines"],
+                         {"1": {"on": False}, "2": {"on": False}})
+        self.assertEqual(out["aircraft"]["engines"],
+                         {"1": {"on": False}, "2": {"on": False}})
+        # 台数未知（0）时不伪造
+        self.assertNotIn("engines",
+                         FsdSession._acfg_swift_shape({"lights": {}}))
+
+    def test_acfg_targets_include_server(self):
+        """全量 ACC 必须同时发给服务器本体：站点 engines 的唯一来源。
+
+        PI 里没有 engines（swift 的 PlaneInformation 只发 EQUIPMENT/AIRLINE/
+        LIVERY），而 PI 我们本来就是发给 SERVER 的；ACC 过去只发 @94836。
+        """
+        fsd = FsdSession.__new__(FsdSession)
+        fsd._acfg_server_ok = True
+        self.assertEqual(fsd._acfg_targets(), ("@94836", "SERVER"))
+        fsd._acfg_server_ok = False          # 服务器拒绝后自动退回
+        self.assertEqual(fsd._acfg_targets(), ("@94836",))
+
     def test_flatten_swift_acfg(self):
         """接收侧：swift 客户端的嵌套 engines / flapsDown 归一化为内部形状。"""
         swift_cfg = {

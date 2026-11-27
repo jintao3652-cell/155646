@@ -15,6 +15,17 @@ static int g_sim_running = 1;
 static char g_icao[16] = "";
 static char g_last_title[256] = "";   /* 上次 TITLE，用于检测换机模并重新识别 ICAO */
 
+/* 最近一帧有效 flight_data 的单调时刻（-1 = 从未收到）。
+ * 用于断线检测：SimConnect 管道被模拟器重启打断后，进程仍在、socket 仍在，
+ * 但再没有 SIMOBJECT_DATA 投递 —— 只有数据新鲜度能发现这种"静默死亡"。 */
+static double g_last_frame_tick = -1.0;
+
+/* 本次会话见过的最大发动机台数。
+ * `NUMBER OF ENGINES` 在个别 WASM 机模上偶发给 0；没有这个记忆值的话，
+ * 冷舱（全部熄火）的 4 发机会被推断成 1 发（见 datadefs_build_flight_json）。
+ * 换机模（TITLE 变化）与会话重置时清零。 */
+static int g_max_engines_seen = 0;
+
 /* ---------------- BCD 解码 ---------------- */
 
 /* Frequency BCD16 → MHz*1000。
@@ -434,8 +445,35 @@ typedef struct {
     DWORD  lt_wing;
     DWORD  lt_recog;
     DWORD  lt_cabin;
+    /* LIGHT ON STATES 位掩码（单位 Mask）。深度机模（PMDG/Fenix/iFly/A2A…）
+     * 不维护逐个 `LIGHT LANDING/BEACON…` 的 Bool，但绝大多数会用模拟器
+     * 自己的灯光总线（这个掩码）。位定义（FSX/MSFS SDK）：
+     *   0 NAV 1 BEACON 2 LANDING 3 TAXI 4 STROBE 5 PANEL
+     *   6 RECOGNITION 7 WING 8 LOGO 9 CABIN
+     * 放在 AUX 末尾：DEF_FLIGHT 主包长度不变（主包有 780/724 字节硬校验，
+     * 不能随便加字段），AUX 失败也只是退回"逐灯 Bool"。 */
+    DWORD  lt_states;
 } FlightAuxPkt;
 #pragma pack(pop)
+
+/* LIGHT ON STATES 位定义（与 SimConnect SDK 的 Lights 枚举一致） */
+#define LT_BIT_NAV     0
+#define LT_BIT_BEACON  1
+#define LT_BIT_LANDING 2
+#define LT_BIT_TAXI    3
+#define LT_BIT_STROBE  4
+#define LT_BIT_RECOG   6
+#define LT_BIT_WING    7
+#define LT_BIT_LOGO    8
+#define LT_BIT_CABIN   9
+
+/* 逐灯 Bool ∨ 掩码位：只增不减。
+ * 为什么用"或"而不是"以掩码为准"：掩码在部分机模上恒 0（不实现），
+ * 这时必须保留逐灯读数；掩码有效时它比逐灯更接近实际观感。 */
+static int light_or_mask(int per_light, int bit) {
+    if (per_light) return 1;
+    return (g_flight.light_mask >> bit) & 1u;
+}
 
 static int g_aux_valid = 0;   /* AUX 注册成功且收到过数据 */
 
@@ -453,6 +491,8 @@ int datadefs_register_aux(void) {
     hr |= add(h, DEF_FLIGHT_AUX, "LIGHT WING",        "Bool", SC_DATATYPE_INT32);
     hr |= add(h, DEF_FLIGHT_AUX, "LIGHT RECOGNITION", "Bool", SC_DATATYPE_INT32);
     hr |= add(h, DEF_FLIGHT_AUX, "LIGHT CABIN",       "Bool", SC_DATATYPE_INT32);
+    /* 灯光总线掩码：深度机模的灯只有这里可靠（见 FlightAuxPkt 注释）。 */
+    hr |= add(h, DEF_FLIGHT_AUX, "LIGHT ON STATES",   "Mask", SC_DATATYPE_INT32);
     if (FAILED(hr)) {
         xc_logf("datadefs: AUX definition failed hr=0x%08lx "
                 "(flight_id/audio_sel/ext-lights disabled)",
@@ -708,6 +748,7 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
         g_flight.light_wing  = a->lt_wing != 0;
         g_flight.light_recog = a->lt_recog != 0;
         g_flight.light_cabin = a->lt_cabin != 0;
+        g_flight.light_mask  = a->lt_states;
         g_flight.aux_valid = 1;
         /* AUX 的标准 SimVar 会冲掉 A350 LVar 覆盖结果，补一次覆盖 */
         apply_ini_lights();
@@ -827,6 +868,8 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     g_flight.num_engines = (int)p->num_engines;
     if (g_flight.num_engines < 0) g_flight.num_engines = 0;
     if (g_flight.num_engines > 4) g_flight.num_engines = 4;
+    if (g_flight.num_engines > g_max_engines_seen)
+        g_max_engines_seen = g_flight.num_engines;
     g_flight.n1_pct[0] = p->n1_1;
     g_flight.n1_pct[1] = p->n1_2;
     g_flight.n1_pct[2] = p->n1_3;
@@ -838,6 +881,17 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     g_flight.eng_on[1] = p->eng_comb_2 != 0;
     g_flight.eng_on[2] = p->eng_comb_3 != 0;
     g_flight.eng_on[3] = p->eng_comb_4 != 0;
+    /* 在转的引擎也参与"最大台数"记忆：个别机模 NUMBER OF ENGINES 恒 0，
+     * 但 3/4 号发动机照样会点燃，用最高在转编号兜底。 */
+    {
+        int ei;
+        for (ei = 3; ei >= 0; --ei) {
+            if (g_flight.eng_on[ei]) {
+                if (ei + 1 > g_max_engines_seen) g_max_engines_seen = ei + 1;
+                break;
+            }
+        }
+    }
 
     str_field(g_flight.title, sizeof(g_flight.title), p->title, sizeof(p->title));
     str_field(g_flight.atc_id, sizeof(g_flight.atc_id), p->atc_id, sizeof(p->atc_id));
@@ -855,6 +909,7 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
         snprintf(g_last_title, sizeof(g_last_title), "%s", g_flight.title);
         g_icao[0] = '\0';
         g_flight.icao_type[0] = '\0';
+        g_max_engines_seen = 0;   /* 换机模：台数记忆不能跨机型复用 */
         xc_logf("datadefs: aircraft changed -> \"%s\", re-detect ICAO",
                 g_flight.title);
     }
@@ -915,6 +970,10 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
 
     /* IniBuilds A350 外部灯 LVar 覆盖（需 ICAO 判定，见函数注释） */
     apply_ini_lights();
+
+    /* 每帧刷新新鲜度时间戳。断线检测完全依赖它 —— 必须在赋值之后、
+     * 任何早退之前更新。 */
+    g_last_frame_tick = xc_now_sec();
 
     if (!g_flight.valid) {
         g_flight.valid = 1;
@@ -1055,14 +1114,119 @@ static double n1_sane(double v) {
     return v;
 }
 
+/* ---------------- 注册号（尾号）来源链 ----------------
+ *
+ * MSFS 侧 `ATC ID` **不是可靠的尾号**：很多机模/涂装把它留空，或者干脆写入
+ * 呼号（"SJX110"）。旧代码把 `ATC ID` 直接当 registration 上报 → 站点显示
+ * "registration = SJX110"，还会污染 PI 的 `LIVERY=SWIFT_A672-SJX110` 与对端
+ * CSL 匹配（把呼号当变体码去匹配涂装，必然匹配不到）。
+ *
+ * 现在的顺序（与 XConnect 的 livery→tailnum、客户端四级优先级对齐）：
+ *   1) ATC ID —— 形状像尾号才用（src="atc_id"）
+ *   2) TITLE 里的尾号 token —— 涂装标题常写 "... D-AIKI"（src="title"）
+ *   3) 都不像 → 空串，不伪造
+ *
+ * 形状判定比较保守：必须含 '-'（B-6419 / D-AIKI）或 N 字头数字（N829PL），
+ * 且长度 5~10 —— 这样 "A320NEO"/"B738"/"Lufthansa" 都不会被当成尾号。 */
+static int reg_like(const char* s) {
+    int n = 0, digit = 0, alpha = 0, dash = 0;
+    const char* p = s;
+    if (!s || !*s) return 0;
+    for (; *p; p++) {
+        const unsigned char c = (unsigned char)*p;
+        if (isalnum(c)) { n++; if (isdigit(c)) digit++; else alpha++; }
+        else if (c == '-') { n++; dash++; }
+        else return 0;
+    }
+    if (n < 5 || n > 10) return 0;
+    if (!digit) return dash && alpha >= 4;          /* D-AIKN（无数字） */
+    if (dash && alpha) return 1;                    /* B-6419 / D-AIKI */
+    if (toupper((unsigned char)s[0]) == 'N') return 1; /* N829PL */
+    return 0;                                       /* A320NEO / 737-800 */
+}
+
+/* 从自由文本里取第一个像尾号的 token（只按空白/下划线切，'-' 属于尾号）。 */
+static int reg_from_text(const char* text, char* out, int cap) {
+    char tok[32];
+    int ti = 0;
+    const char* p = text;
+    if (!text || !out || cap < 2) return 0;
+    out[0] = '\0';
+    for (;;) {
+        const char c = *p;
+        const int sep = (c == '\0' || c == ' ' || c == '\t' || c == '_' ||
+                         c == '\r' || c == '\n' || c == ',' || c == '(' ||
+                         c == ')' || c == '[' || c == ']');
+        if (sep) {
+            int i;
+            tok[ti] = '\0';
+            if (reg_like(tok)) {
+                for (i = 0; i < ti && i < cap - 1; i++)
+                    out[i] = (char)toupper((unsigned char)tok[i]);
+                out[i] = '\0';
+                return 1;
+            }
+            ti = 0;
+            if (c == '\0') break;
+        } else if (ti < (int)sizeof(tok) - 1) {
+            tok[ti++] = c;
+        }
+        p++;
+    }
+    return 0;
+}
+
+/* 生效尾号（静态缓冲，供 JSON 直接 %s）。src 回填来源。 */
+static const char* effective_registration(const char** src) {
+    static char buf[16];
+    char norm[16];
+    int i, j = 0;
+    buf[0] = '\0';
+    if (src) *src = "";
+
+    /* 1) ATC ID */
+    for (i = 0; g_flight.atc_id[i] && j < (int)sizeof(norm) - 1; i++) {
+        const unsigned char c = (unsigned char)g_flight.atc_id[i];
+        if (isalnum(c) || c == '-') norm[j++] = (char)toupper(c);
+    }
+    norm[j] = '\0';
+    if (reg_like(norm)) {
+        snprintf(buf, sizeof(buf), "%s", norm);
+        if (src) *src = "atc_id";
+        return buf;
+    }
+
+    /* 2) TITLE 里的尾号（涂装标题 "... Lufthansa D-AIKI"） */
+    if (reg_from_text(g_flight.title, buf, (int)sizeof(buf))) {
+        if (src) *src = "title";
+        return buf;
+    }
+    return buf;   /* 空串：客户端三级兜底（手动 > 模拟器 > 上次记录） */
+}
+
 void datadefs_build_flight_json(char* out, int size) {
     int en = g_flight.num_engines;
     if (en <= 0) {
-        /* 未知时按 N1/燃烧标志推断，不再默认 2 发（单发机不会有幽灵引擎）。
-         * 燃烧标志兜底活塞机（N1 恒 0，见 eng_on 注释）。 */
-        for (en = 4; en >= 1; --en)
-            if (g_flight.n1_pct[en - 1] > 5.0 || g_flight.eng_on[en - 1]) break;
-        if (en < 1) en = 1;
+        /* NUMBER OF ENGINES 缺失（个别 WASM 机模给 0）。
+         *
+         * ⚠️ 旧逻辑 `for (en=4; en>=1; --en) if (n1||comb) break;` 在**全部
+         * 熄火**时把 en 落到 0，然后 `if (en<1) en=1` —— 冷舱的 4 发机被
+         * 上报成"1 台发动机"，站点/对端据此把机型判断全搞错（B744 显示
+         * 1 发）。现在改为：先看本次会话记得的最大台数，再退"实测在转的
+         * 最高编号"；两者都没有就报 0（=未知），由客户端用 swift 机型库
+         * 兜底，绝不编造台数。 */
+        en = g_max_engines_seen;
+        if (en <= 0) {
+            int i;
+            for (i = 4; i >= 1; --i) {
+                if (g_flight.n1_pct[i - 1] > 5.0 || g_flight.eng_on[i - 1]) {
+                    en = i;
+                    break;
+                }
+            }
+        }
+        if (en < 0) en = 0;
+        if (en > 4) en = 4;
     }
     char eng[512];
     int el = 0;
@@ -1070,6 +1234,8 @@ void datadefs_build_flight_json(char* out, int size) {
     int flaps_pct;
     int spoilers_out;
     const char* squark;
+    const char* reg_src = "";
+    const char* reg = effective_registration(&reg_src);
 
     if (en > 4) en = 4;
     /* **JSON 对象**，不是数组！键是发动机编号（1 基），值只含 `{on}`。
@@ -1094,6 +1260,7 @@ void datadefs_build_flight_json(char* out, int size) {
                     ei ? "," : "", ei + 1, on ? "true" : "false");
     }
     XSTR_APPEND(eng, el, "},");
+    if (en <= 0) eng[0] = '\0';   /* 台数未知：整键不发，交给客户端用机型库补 */
 
     flaps_pct = (int)(g_flight.flaps_ratio * 100.0 + 0.5);
     if (flaps_pct < 0) flaps_pct = 0;
@@ -1216,8 +1383,10 @@ void datadefs_build_flight_json(char* out, int size) {
          * 必须和上面格式串里新增的 %s 位置严格对应，否则后面全部错位。 */
         g_flight.title,
         g_flight.flight_id,
-        g_flight.atc_id,
-        g_flight.atc_id[0] ? "atc_id" : "",
+        /* 注册号：ATC ID（形状像尾号才算）→ TITLE 里的尾号 → 空。
+         * 绝不再把 ATC ID 里的呼号当尾号上报（见 effective_registration）。 */
+        reg,
+        reg_src,
         en,
         g_flight.lat_deg, g_flight.lon_deg,
         g_flight.alt_msl_ft, g_flight.alt_agl_ft,
@@ -1246,10 +1415,18 @@ void datadefs_build_flight_json(char* out, int size) {
         g_flight.transponder, g_flight.xpdr_state, squark,
         g_flight.gear_ratio > 0.5 ? 1.0 : 0.0,
         g_flight.flaps_ratio, g_flight.throttle_ratio,
-        g_flight.light_strobe, g_flight.light_landing, g_flight.light_taxi,
-        g_flight.light_beacon, g_flight.light_nav,
-        g_flight.light_logo, g_flight.light_wing,
-        g_flight.light_recog, g_flight.light_cabin,
+        /* 灯光：逐灯 Bool ∨ LIGHT ON STATES 掩码位。
+         * 深度机模（PMDG/Fenix/iFly/A2A）只维护灯光总线，逐灯 SimVar
+         * 恒 false —— 之前对端看到的是一架"全灭"的飞机。 */
+        light_or_mask(g_flight.light_strobe,  LT_BIT_STROBE),
+        light_or_mask(g_flight.light_landing, LT_BIT_LANDING),
+        light_or_mask(g_flight.light_taxi,    LT_BIT_TAXI),
+        light_or_mask(g_flight.light_beacon,  LT_BIT_BEACON),
+        light_or_mask(g_flight.light_nav,     LT_BIT_NAV),
+        light_or_mask(g_flight.light_logo,    LT_BIT_LOGO),
+        light_or_mask(g_flight.light_wing,    LT_BIT_WING),
+        light_or_mask(g_flight.light_recog,   LT_BIT_RECOG),
+        light_or_mask(g_flight.light_cabin,   LT_BIT_CABIN),
         g_flight.gear_ratio > 0.5 ? 1 : 0, flaps_pct, spoilers_out,
         eng,
         g_flight.on_ground);
@@ -1311,4 +1488,24 @@ void datadefs_on_system_state(const void* pkt) {
     if (!s) return;
     if (s->dwRequestID != REQ_SYSSTATE) return;
     g_sim_running = s->dwInteger != 0;
+}
+
+/* 距上一帧有效 flight_data 的秒数（-1 = 从未收到过）。 */
+double datadefs_frame_age(void) {
+    if (g_last_frame_tick < 0.0) return -1.0;
+    return xc_now_sec() - g_last_frame_tick;
+}
+
+/* 连接重建后重置本地快照。
+ * 不清 g_last_frame_tick：重连后可能还要等 1~2s 才有第一帧，
+ * 这段时间的"超时"应该由调用方的冷却期覆盖，而不是立刻再次重连。 */
+void datadefs_session_reset(void) {
+    memset(&g_flight, 0, sizeof(g_flight));
+    g_icao[0] = '\0';
+    g_last_title[0] = '\0';
+    g_max_engines_seen = 0;
+    g_sim_running = 1;
+    g_aux_valid = 0;
+    g_last_frame_tick = xc_now_sec();   /* 给重连后的首帧一个宽限期 */
+    datadefs_reset_profile_reads();
 }

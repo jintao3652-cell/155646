@@ -45,6 +45,10 @@ XUpdate.exe --sample-manifest
 | `--apply-package <JOB.json>` | 客户端自更新专用：按作业文件等客户端退出后替换 exe 并重启（由客户端拉起，不需要手工调用） |
 | `--wait-timeout <秒>` | `--apply-package` 等客户端退出的上限（默认 60） |
 | `--quiet` | 不输出到标准输出（`--apply-package` 日志仍写入文件） |
+| `--software-api <URL>` | 飞行员中心 API 根地址（或 `XFLYSIM_SOFTWARE_API`）；指定即走软件中心模式 |
+| `--software-uuid <uuid>` | 软件标识（或 `XFLYSIM_SOFTWARE_UUID`） |
+| `--software-legacy` | 用 `/software/latest` 旧路径代替 `/softwareVersion/latest` |
+| `--software-history` | 只打印版本记录，不检查/更新 |
 
 退出码：`0` = 无需更新/应用成功；`1` = 检查到有更新（仅 `--check`）；
 `2` = 清单/下载/写入错误；`3` = 前置条件不满足（根目录未指定、文件被占用）。
@@ -103,7 +107,36 @@ XUpdate.exe --sample-manifest
 `unmanaged`（用户自行安装的插件）边界与资源层一致：清单里没列的文件一律不碰；
 备份文件也只保留一份 `.xupdate-bak`，便于用户手动回滚。
 
-## 5. 服务端接入
+## 5. 软件中心模式（飞行员中心）
+
+软件中心发布的是**一个包**，不是逐文件清单。指定 `--software-api` 后
+本更新器改走下面四个接口，`--manifest` 被忽略：
+
+| 接口 | 用途 |
+|---|---|
+| `GET /softwareVersion/latest/{uuid}` | 最新版本：`softwareName/version/logs/link/md5/createdTime` |
+| `GET /softwareVersion/logs/{uuid}` | 历史记录：`records[]` |
+| `GET /software/latest/{uuid}` / `GET /software/logs/{uuid}` | 旧路径别名（`--software-legacy`） |
+
+`link` 是绝对 URL 时直接下载；相对路径按 API 根地址解析。下载后**先按
+服务端 md5 校验**，再按文件内容（不看扩展名）决定落盘方式：
+
+1. **非 zip**：直接放进根目录，文件名取下载链接末段；
+2. **zip**：先解压，按包内相对路径放进根目录，不额外套一层以压缩包
+   命名的子目录。
+
+与清单模式共用安全边界：单包 ≤ 2 GB、拒绝绝对路径/盘符/`..` 的 zip
+成员（zip slip）与符号链接逃逸、落盘前备份、失败整体回滚。版本号写入
+`xupdate-installed.json` 的 `client` 字段，下次 `--check` 用 `version`
+比较。
+
+```bat
+XUpdate.exe --software-api https://host/api --software-uuid <uuid> --check
+XUpdate.exe --software-api https://host/api --software-uuid <uuid> --apply
+XUpdate.exe --software-api https://host/api --software-uuid <uuid> --software-history --json
+```
+
+## 6. 服务端接入（清单模式）
 
 服务端只需托管一个静态 `manifest.json` 和清单里列出的文件。建议：
 
@@ -119,11 +152,12 @@ XUpdate.exe --sample-manifest
 > 直链）：客户端下载校验后写作业文件、拉起 `XUpdate.exe --apply-package`，
 > 由助手在客户端退出后替换并重启。见 `客户端在线更新.md`。
 
-## 6. 测试
+## 7. 测试
 
 ```powershell
-python -m unittest tests.test_updater -v
+python -m unittest tests.test_updater tests.test_software_update -v
 ```
 
 覆盖：清单结构/路径逃逸/符号链接逃逸、版本比较、增量跳过、备份与原子替换、
-下载失败整体回滚、X-Plane 根目录前置条件、CLI JSON 报告。
+下载失败整体回滚、X-Plane 根目录前置条件、CLI JSON 报告；软件中心
+latest/logs 解析、md5 校验、zip/非 zip 落盘、zip slip 拒绝。

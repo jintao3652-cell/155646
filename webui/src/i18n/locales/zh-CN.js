@@ -37,6 +37,8 @@ export default {
     mcError: 'MC 连接错误',
     cslTitle: 'CSL 模型加载情况',
     cslMissing: 'CSL 缺失模型: {list}（放入 plugins/XConnect/CSL/）',
+    msfsAiTitle: 'MSFS AI 模型加载情况',
+    msfsAiMissing: 'MSFS 模型库缺少机型: {list}（检查 FSLTL/AIG 是否安装该机型，或调整模型库偏好）',
   },
   log: {
     welcome: '欢迎使用 XFlySim Client',

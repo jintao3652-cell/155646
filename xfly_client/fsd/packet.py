@@ -284,6 +284,15 @@ engines 却是 null）。所以本函数强制：`engines` 只在 `livery` 非�
 占位符、以及 `A350-900` 这类查不到 swift id 的非标准码，都按机模
 名称重推成库内标准码）。
 """
+    eq0 = (equipment or "").strip()
+    lv0 = (livery or "").strip()
+    # **机型完全未知时整条不发送**（2026-11-27 断线幽灵帧覆盖站点数据的根因）：
+    # EQUIPMENT 与 LIVERY 都为空时，只剩 AIRLINE/REG，服务器按位置解析会把
+    # 这条残缺 PI 当成一次机型更新，覆盖掉之前正确的 equipment/livery/engines
+    # （实测 fsd.log 18:17:29：`PI:GEN:AIRLINE=SJX` 让站点四个字段全变 null）。
+    # 返回空串 → FsdSession._send 会跳过，不产生任何报文。
+    if not eq0 and not lv0:
+        return ""
     tail = registration or ""
     parts = ["#SB" + callsign + ":" + to + ":PI:GEN"]
     # EQUIPMENT 不能发空值：`EQUIPMENT=` 这种"有键无值"在服务器侧很可能
@@ -347,6 +356,23 @@ def client_query_fp(callsign: str, target: str) -> str:
     """$CQ 飞行计划查询：向服务器请求某呼号的缓存飞行计划（应答 $FP 含机型）。
     用于远程玩家机型识别（位置包不带机型，PIR 无人应答时的兜底）。"""
     return f"$CQ{callsign}:SERVER:FP:{target}"
+
+
+def caps_response(callsign: str, to: str,
+                  capabilities: "tuple[str, ...] | list[str]" = ()) -> str:
+    """CAPS 应答：`$CR<呼号>:<目标>:CAPS:<cap>=1:...`。
+
+    `ACCONFIG` 是机模配置（ACC）的前提能力 —— swift / vPilot 的约定是
+    "对方声明 ACCONFIG=1 才给它发 ACC"。我们不回答 CAPS，对端就永远不知道
+    我们支持 ACC；服务器侧的站点记录 `aircraft.engines` 又只能来自 ACC。
+
+    能力列表与顺序对齐 swift `Capabilities`：ATCINFO/SECPOS/MODELDESC/
+    ONGOINGCOORD/INTERIMPOS/VISUPDATE/ACCONFIG。
+    """
+    caps = tuple(capabilities or (
+        "ATCINFO=1", "SECPOS=1", "MODELDESC=1", "ONGOINGCOORD=1",
+        "INTERIMPOS=1", "VISUPDATE=1", "ACCONFIG=1"))
+    return f"$CR{callsign}:{to}:CAPS:" + ":".join(caps)
 
 
 def flight_plan(callsign: str, flight_type: str, aircraft: str,

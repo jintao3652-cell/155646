@@ -24,6 +24,12 @@
       radTab.value = 'xpdr'
       xpdrOpen.value = true
     }
+    /* 点 MSG 键：打开消息抽屉（不是日志屏），并清掉 NEW MSG 提示。
+     * MsgDrawer 挂在 App.vue，由 store.overlays.msg 控制显隐。 */
+    function openMsg() {
+      store.overlays.msg = true
+      store.newMsg = false
+    }
 
     /* 频率可用的前提（对齐 XVoice）：
      *   ① 航电通电（avionics_on）—— 断电时 dataref 仍读到旧值，但实际不可用
@@ -158,7 +164,7 @@
             <ScreenButton direction="left"></ScreenButton>
             <ScreenButton direction="left"></ScreenButton>
             <ScreenButton direction="left"></ScreenButton>
-            <ScreenButton direction="left" :onClick="() => router.push('/log')"></ScreenButton>
+            <ScreenButton direction="left" :onClick="openMsg"></ScreenButton>
         </el-col>
     </el-row>
 

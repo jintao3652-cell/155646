@@ -288,6 +288,12 @@ int main(void) {
     check(m.level == 4, "级别 = FALLBACK(4)", NULL);
     check_str(m.title, "Embraer E195 Asobo", "E19L -> E195 同族");
 
+    /* --- 4b3. A343 → A333：MC 侧不应把 A343 报成“缺模型” --- */
+    printf("\n[4b3] A343 别名回退（不是缺模型）\n");
+    catalog_match("A343", "", "", &m);
+    check(m.found == 1, "A343 命中", NULL);
+    check(m.level == 4, "级别 = FALLBACK(4)", NULL);
+
     /* --- 4c. 内置表有精确机型时优于别名（B38M 是 737 MAX 8） --- */
     printf("\n[4c] 精确机型优先于别名（B38M）\n");
     catalog_match("B38M", "CCA", "", &m);

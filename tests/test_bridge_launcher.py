@@ -48,6 +48,25 @@ class TestBridgeLauncher(unittest.TestCase):
             self.assertFalse(launcher.start())
             self.assertTrue(any("未编译" in m for m in logs))
 
+    def test_webapp_passes_repo_root_not_parent(self):
+        """webapp.py 必须传 app_base_dir()，不能对 __file__ 做两层 dirname。"""
+        code = read("webapp.py")
+        block = code[code.index("self._bridge = BridgeLauncher("):
+                     code.index("self._bridge = BridgeLauncher(") + 400]
+        self.assertIn("app_base_dir()", block)
+        self.assertNotIn("dirname(os.path.dirname", block)
+
+    def test_find_exe_tolerates_parent_dir_passed_by_mistake(self):
+        from xfly_client.bridge_launcher import BridgeLauncher
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "XFlySim-Client"
+            exe = root / "MConnect" / "build" / "MConnect.exe"
+            exe.parent.mkdir(parents=True)
+            exe.touch()
+            # 传仓库根、传上一级，都应找到同一个 exe
+            self.assertEqual(BridgeLauncher(str(root))._exe, str(exe))
+            self.assertEqual(BridgeLauncher(tmp)._exe, str(exe))
+
     def test_traffic_lib_setting_passthrough(self):
         from xfly_client.config import AppConfig
         from xfly_client.bridge_launcher import BridgeLauncher

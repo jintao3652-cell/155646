@@ -49,12 +49,30 @@ class BridgeLauncher:
         self._traffic_lib = traffic_lib if traffic_lib in ("auto", "fsltl", "aig") else "auto"
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
-        self._exe = os.path.join(app_dir, "MConnect", "build", "MConnect.exe")
-        # 也认本地 VS2026 构建目录（开发机）
-        if not os.path.isfile(self._exe):
-            alt = os.path.join(app_dir, "MConnect", "build-vs2026", "MConnect.exe")
-            if os.path.isfile(alt):
-                self._exe = alt
+        # 候选路径：兼容源码根目录、打包后 exe 目录，以及误把上一级传进来的
+        # 情况（历史 bug：webapp.py 曾对 __file__ 做两层 dirname）。只要任一
+        # 命中就用之；全部落空才判定"未编译"。
+        self._exe = self._find_exe(app_dir)
+
+    @staticmethod
+    def _find_exe(app_dir: str) -> str:
+        build_dirs = ("build", "build-vs2026")
+        roots = [app_dir, os.path.dirname(app_dir)]
+        # 传错一层时（上一级目录），子目录里就藏着真正的项目根：
+        # 扫描直接子目录，而不是猜目录名。
+        try:
+            with os.scandir(app_dir) as it:
+                roots.extend(e.path for e in it if e.is_dir())
+        except OSError:
+            pass
+        candidates = [
+            os.path.join(root, "MConnect", b, "MConnect.exe")
+            for root in roots for b in build_dirs
+        ]
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+        return os.path.join(app_dir, "MConnect", "build", "MConnect.exe")
 
     def _log(self, msg: str) -> None:
         if self._on_log:

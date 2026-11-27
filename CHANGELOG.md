@@ -89,9 +89,88 @@
 - **MSFS 铭牌开关改为运行时生效**：新增 `Send:LABELS` 桥命令，设置里改开关
   并保存时立即下发切换，不再要求重启 MConnect（见 Added：语义已改为自绘
   overlay 显隐，废弃的铭牌事件不再发送）。
+- **软件中心发布包解析器**：XUpdate 新增 `--software-api` / `--software-uuid`
+  （或对应环境变量）模式，按 `/softwareVersion/latest|logs/{uuid}` 取版本与
+  更新记录，下载后校验服务端 md5；**非 zip 直接放根目录，zip 解压后按包内
+  相对路径放根目录**，带 zip slip 防护、备份与失败回滚。原清单模式不变。
 
 ### Fixed
 
+- **MSFS 把呼号当尾号上报（注册号 / LIVERY 双重污染）**：`ATC ID` 在不少机模/
+  涂装里被写成呼号（`SJX110`）或留空，MConnect 直接当 registration 上报 →
+  站点显示呼号、PI 变成 `LIVERY=SWIFT_A672-SJX110`（对端按这个变体码匹配
+  涂装必然失败）。现在 MConnect 走"ATC ID（形状像尾号才算）→ TITLE 里的尾号
+  → 空"的来源链（`src=atc_id/title`），客户端再加一道"模拟器值 == 本机呼号
+  一律丢弃"的护栏。形状判定保守到能挡住 `B738`/`A320NEO`/`Lufthansa`。
+- **深度机模（PMDG/Fenix/iFly/A2A）灯光全灭**：这些机模不维护逐个
+  `LIGHT LANDING/BEACON/…` 的 Bool，只驱动模拟器自己的灯光总线。MConnect
+  AUX 包新增 `LIGHT ON STATES`（Mask）并按位与逐灯读数**取并集**
+  （NAV/BEACON/LANDING/TAXI/STROBE/RECOGNITION/WING/LOGO/CABIN），
+  掩码恒 0 的机模行为不变。掩码放 AUX 而非主包：主包有字节数硬校验。
+- **冷舱多发动机机型被报成"1 台"**：两侧桥的"台数未知"兜底是
+  `en = 0 → 1`，于是 `NUMBER OF ENGINES`/`acf_num_engines` 缺失且全部熄火时，
+  B744 之类被上报成 1 发（站点/对端据此误判机型）。改为"本次会话见过的最大
+  台数 → 实测在转的最高编号 → 0（未知，整键不发）"，由客户端用 swift 机型库
+  兜底；XConnect 的 `engine_count` 与 `parts.engines` 条目数同步一致。
+- 站点 `aircraft.engines` 恒 null（ACC 只发广播地址，从未进服务器）：
+  站点那四个字段分属两条通道——`equipment/airline/livery` 走 PI
+  （`#SB…:PI:GEN`），`engines` **只能**走 ACC（`$CQ…:ACC`；swift 的
+  `PlaneInformation::toTokens()` 只发三对键，PI 里根本没有 engines）。
+  而 PI 我们发给 `SERVER`、ACC 只发 `@94836` 广播地址 —— 正好解释"前三个
+  有值、engines 恒 null"。修复：
+  - 全量 ACC 现在同时发给 `@94836` **和 `SERVER`**（增量仍只发广播）；
+    若服务器回 004，自动退回仅广播并打日志（自愈，不刷屏）。
+  - `_acfg_swift_shape()` 在桥当前帧未给 `engines` 时按台数补"全关"掩码
+    （站点缺键就是 null，下一帧真实值覆盖）。
+  - 新增 CAPS 应答：声明 `ACCONFIG=1`（swift/vPilot 只给声明了该能力的
+    客户端发 ACC；不声明服务器也可能不采纳我们发的 ACC）。
+  - `tools/verify_site_aircraft.py`：把"日志里实际发出的 PI"与"站点返回的
+    aircraft 对象"并排成一张表，逐字段判定是本机没发还是服务器没采纳。
+- **`equipment`/`airline`/`livery`/`engines` 由四处各自维护 → 收敛为一个解析点**：
+  新增 `xfly_client/report_identity.py`（值对象 + 纯函数）。固定兜底顺序：
+  equipment（手填 → 桥值规范化 → 机模名反查）、airline（配置 → 呼号前缀）、
+  livery（swift 机型库 `A<id>` + 尾号）、engines（桥实测 → 机型库台数）。
+  过去桥报 `engine_count=0`（机型未加载完）时 `if eng > 0` 分支直接跳过，
+  PI/ACC 双双缺 engines —— 现在按机型库兜底，首包就有值。
+  PI 线级再加一道防线：`airline_icao` 为空时按呼号补 `AIRLINE=`。
+- **断线幽灵帧判据太窄，实测那帧仍被放过**：MConnect 卡死时的坐标不是
+  精确 `0,0`，而是 `(0.0004150, 0.0139740)`；`|lon| < 0.01` 刚好放过它，
+  于是 `PI:GEN:AIRLINE=SJX` 照发（这正是"以为修好、其实还在覆盖"的原因）。
+  阈值放到 0.05° 并要求机型/机模名/尾号三者全空才判废；同时不再让"机型
+  识别为空"的帧清空 `aircraft_icao`（清空即产出残缺 PI）。
+- 站点在线用户 `equipment`/`livery`/`engines` 变 null（断线幽灵帧覆盖）：
+  SimConnect 断线重连期间插件推来一帧全默认 flight_data（位置 0,0、机型空、
+  尾号空），客户端据此触发 PI 重发，发出残缺报文 `PI:GEN:AIRLINE=SJX`；
+  服务器按位置解析后把站点已正确的 aircraft 段整块覆盖成 null（fsd.log
+  18:17:29 会话实证）。三层防御：① `model.py` 帧门控——机型未知且位置 0,0
+  的幽灵帧直接丢弃，不更新 FSD 状态/PI/ACC；② `packet.plane_info()` 在
+  EQUIPMENT 与 LIVERY 都为空时返回空串；③ `_send()` 跳过空报文。补 8 条
+  回归测试（幽灵帧不触碰 FSD、只提示一次、正常帧不误杀、残缺 PI 不生成）。
+  注：`controller`/`isVirtual` 对站点所有用户都是 null，属服务端管制员字段，
+  客户端无上报路径，非本 bug。
+- **启动后误报「MConnect 未编译，跳过自动启动」**：`webapp.py` 位于仓库根目录，
+  却对 `__file__` 做了两层 `dirname`（那是 `xfly_client/` 子目录模块的写法），
+  把启动器根目录指到了仓库上一级，永远找不到 `MConnect/build/MConnect.exe`。
+  改用 `app_base_dir()`（源码=仓库根，打包=exe 同目录），并给启动器加候选
+  路径搜索（含子目录/父目录，兼容 build-vs2026）。实测能定位到已编译的 exe。
+- **MSFS 重启后在线地图不显示自己 / 游戏内看不到其他飞机（SimConnect 断线不重连）**：
+  模拟器退出再开时旧 SimConnect 管道被服务端关闭，但本进程收不到 QUIT，
+  陷入"静默死亡"：`CallDispatch` 不再投递数据，位置停在默认值
+  `0.00042:0.01397`（约 0°,0°）被上报到服务器，`AICreateNonATCAircraft`
+  持续返回 `0xc000014b`（STATUS_PIPE_BROKEN）导致所有他机 AI 创建失败。
+  MConnect 现在用 flight_data 新鲜度检测断线（超过 8s 无新帧），自动
+  `close → load → open` 重建会话、重注册全部数据定义/事件映射/能力枚举，
+  并有 20s 冷却防模拟器未就绪时反复重试。实测重启后新进程读到正常坐标。
+- **MAIN 屏右侧 MSG 键点了没反应**：该键原先错误地跳到日志屏（`/log`），
+  而消息抽屉 `MsgDrawer` 由 `store.overlays.msg` 控制、没有任何入口打开它。
+  现在 MSG 键直接打开消息抽屉并清除 NEW MSG 提示。
+- **MSFS（MC）下误报 X-Plane CSL 缺失模型**：MConnect 借用 `csl_status`
+  通道上报 AI 模型注入状态（报文中带 `sim:"msfs"`），前端原先不区分来源，
+  把 MSFS 的 AI 失败显示成「CSL 缺失模型（放入 plugins/XConnect/CSL/）」。
+  前端现在按 `sim` 分流文案与状态标签（MC 显示 `AI x/y`，XC 才显示 CSL）；
+  MC 侧 `missing` 只统计 `catalog_match` 彻底未命中的机型，AI 创建失败、
+  对象被回收等暂态问题会退避重试，不再误报。实测 A343 本就有
+  `A343 → A333` 别名，之前的提示是误报，已补回归断言。
 - **设置保存后同一条日志打印两次**：后端 `set_msfs_traffic_lib()` /
   `toggle_msfs_labels()` 已通过 `_push("log")` 推送并落盘，前端保存流程又
   用 `message()` 打印同一句话。去掉前端重复提示，并补齐后端日志的

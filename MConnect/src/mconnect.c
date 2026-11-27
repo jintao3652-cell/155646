@@ -485,7 +485,9 @@ static THREAD_RET net_thread(THREAD_ARG arg) {
 /* ---------------- 状态上报 ---------------- */
 
 /* csl_status：协议沿用 XConnect 的名字（客户端按 type 处理），
- * 语义改为"已成功注入的机型列表" / "机型目录里找不到的机型"。 */
+ * 语义改为"已成功注入的机型列表" / "机型目录里找不到的机型"。
+ * missing 只收 catalog_miss（catalog_match 彻底未命中）；AI 创建失败、
+ * UNRECOGNIZED_ID 风暴等暂态失败会退避重试，不能报成"缺模型"。 */
 static void refresh_status(void) {
     char loaded[PLAYER_MAX][8];
     char missing[PLAYER_MAX][8];
@@ -496,26 +498,14 @@ static void refresh_status(void) {
     memset(loaded, 0, sizeof(loaded));
     memset(missing, 0, sizeof(missing));
 
-    /* 机型目录里没有的：遍历玩家，标出 fallback 到 ZZZZ 的机型 */
-    {
-        int total_players = 0;
-        LOCK_ENTER(g_players_lock);
-        for (i = 0; i < PLAYER_MAX; i++) {
-            Player* p = &g_players[i];
-            if (!p->active || !p->icao[0]) continue;
-            total_players++;
-        }
-        LOCK_LEAVE(g_players_lock);
-        (void)total_players;
-    }
-
     players_stats(&ac, &pd, &ln, loaded, PLAYER_MAX);
 
+    /* 机型目录里真正没有的（catalog_miss）才标为缺模型；暂态失败会重试 */
     LOCK_ENTER(g_players_lock);
     for (i = 0; i < PLAYER_MAX; i++) {
         Player* p = &g_players[i];
         if (!p->active || !p->icao[0]) continue;
-        if (p->state == AI_STATE_FAILED) {
+        if (p->state == AI_STATE_FAILED && p->catalog_miss) {
             int k, dup = 0;
             for (k = 0; k < mn; k++)
                 if (_stricmp(missing[k], p->icao) == 0) { dup = 1; break; }
@@ -659,6 +649,82 @@ static void CALLBACK dispatch_proc(SC_RECV* pData, DWORD cbData, void* ctx) {
     }
 }
 
+/* ---------------- SimConnect 断线重连 ----------------
+ *
+ * 模拟器被重启（退出再开 / 重新载入飞行）时，旧 SimConnect 管道会被
+ * 服务端关闭，但本进程收不到 QUIT（QUIT 只在"正常退出且连接还在"时投递），
+ * 于是出现"静默死亡"：
+ *   - CallDispatch 不再投递任何 SIMOBJECT_DATA；
+ *   - g_flight 停在最后一帧（往往是 0,0 附近的默认值）→ 客户端据此向
+ *     服务器上报错误坐标，在线地图看不到自己；
+ *   - AICreateNonATCAircraft 返回 0xc000014b (STATUS_PIPE_BROKEN) →
+ *     所有他机 AI 创建失败，游戏里看不到其他飞机。
+ * 唯一可靠的检测信号是"数据新鲜度"：曾经收到过帧（age>=0），但超过
+ * STALE_SEC 秒没有新帧。此时主动 close→load→open 重建会话，并重注册
+ * 全部数据定义与事件映射。 */
+
+#define SC_STALE_SEC      8.0    /* 超过 8s 无新帧判定断线（正常 20~50Hz） */
+#define SC_RECONNECT_COOL 20.0   /* 两次重连最小间隔，防模拟器未就绪时刷屏 */
+
+static double g_last_reconnect = -1.0;
+
+static void reconnect_simconnect(void) {
+    char err[512];
+    double age = datadefs_frame_age();
+
+    /* 从未收到过帧：模拟器可能还没进飞行 / 仍在加载，交给初始流程，不重连 */
+    if (age < 0.0) return;
+    if (age < SC_STALE_SEC) return;
+    /* 冷却期：上一次重连还没来得及收到首帧，不要重复折腾 */
+    if (g_last_reconnect >= 0.0 &&
+        xc_now_sec() - g_last_reconnect < SC_RECONNECT_COOL)
+        return;
+
+    g_last_reconnect = xc_now_sec();
+    xc_infof("[mconnect] SimConnect 数据停滞 %.1fs，尝试重连…", age);
+
+    /* 1) 先清 AI（旧 handle 上的对象已失效）与各类会话态 */
+    players_remove_all();
+    wasmbridge_shutdown();
+    pmdgbridge_shutdown();
+    sc_close();
+    datadefs_session_reset();
+    g_title_seen[0] = '\0';
+    g_last_sysstate = -1.0;
+    g_last_csl_status = -1.0;
+
+    /* 2) 重新装载 DLL + 打开连接。
+     * sc_load 会 memset g_sc 并重新 LoadLibrary —— 模拟器重启后
+     * SimConnect.dll 路径/版本可能变化，必须重新解析所有函数指针。 */
+    if (sc_load(err, sizeof(err)) != 0) {
+        xc_infof("[x] 重连失败：%s", err);
+        return;
+    }
+    if (sc_open(dispatch_proc, NULL) != 0) {
+        xc_infof("[!] 重连暂未成功（模拟器可能仍在启动），%0.fs 后重试",
+                 SC_RECONNECT_COOL);
+        return;
+    }
+    xc_infof("  模拟器: MSFS %s（模块化机型支持: %s）",
+             sc_sim_name(), g_sc.supports_modular ? "是" : "否");
+
+    /* 3) 新 handle 上重建全部数据定义 / 事件映射 / 能力枚举 */
+    datadefs_init();
+    datadefs_register_ai();
+    datadefs_register_xpdr();
+    datadefs_register_ai_parts();
+    datadefs_register_aux();
+    datadefs_register_ini_lights();
+    datadefs_register_ai_atcid();
+    control_init();
+    if (g_sc.EnumerateSimObjectsAndLiveries && g_sc.supports_modular)
+        g_sc.EnumerateSimObjectsAndLiveries(
+            g_sc_handle, players_next_request_id(), SC_SIMOBJECT_TYPE_AIRCRAFT);
+    inputev_request_enum();
+    wasmbridge_init();
+    xc_infof("[mconnect] 重连完成，等待新的飞行数据帧");
+}
+
 /* ---------------- 主循环 ---------------- */
 
 static void sim_loop(void) {
@@ -670,6 +736,9 @@ static void sim_loop(void) {
         g_sc.CallDispatch(g_sc_handle, dispatch_proc, NULL);
 
         now = xc_now_sec();
+
+        /* 1a) 断线检测与自动重连（必须在派发之后、使用 g_sc_handle 之前） */
+        reconnect_simconnect();
 
         /* 1b) 外部机型档案热加载（每 2s 检查 profiles.json） */
         aircraftdb_tick();

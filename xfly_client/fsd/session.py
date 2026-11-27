@@ -31,6 +31,22 @@ KEEPALIVE_INTERVAL = 60.0
 ACFG_CAPACITY = 10          # 桶容量（突发上限）
 ACFG_REFILL_INTERVAL = 5.0  # 每 5s 补 1 token（≈1 条/5s）
 ACFG_BROADCAST_TO = "@94836"
+# **全量 ACC 同时发给服务器本体**。
+#
+# 为什么需要：站点的 `aircraft.engines` 只可能来自 ACC（PI 里没有 engines ——
+# swift 的 `PlaneInformation::toTokens()` 只发 EQUIPMENT/AIRLINE/LIVERY 三对），
+# 而 PI 我们是发给 `SERVER` 的、ACC 过去只发 `@94836` 广播地址。实测站点上
+# equipment/airline/livery 有值、engines 恒 null，正好是"发给 SERVER 的通道
+# 生效、只发广播的通道没被采纳"的形状。
+#
+# 只重播全量（登录/60s/对端请求）才走这条，增量仍只发 @94836，流量可忽略；
+# 若服务器不认这个目标（回 004），`_maybe_disable_unsupported` 会自动关掉。
+ACFG_SERVER_TARGET = "SERVER"
+
+# 我们声明的客户端能力（CAPS 应答）。ACCONFIG 是 ACC 的前提：
+# swift/vPilot 系只有在对方声明 ACCONFIG=1 时才给它发机模配置。
+CAPABILITIES = ("ATCINFO=1", "SECPOS=1", "MODELDESC=1", "ONGOINGCOORD=1",
+                "INTERIMPOS=1", "VISUPDATE=1", "ACCONFIG=1")
 
 # 登录后机型信息（PI）与机模配置（ACC）的重发节奏。
 # 原因：登录（#AP）与首条 PI/ACC 几乎同时发出，服务器此时可能还没建立好
@@ -122,6 +138,11 @@ class FsdSession:
         self._acfg_full: Optional[dict] = None
         self._acfg_tokens = ACFG_CAPACITY
         self._acfg_refill_at = time.monotonic()
+        # 服务器是否接受"直发 SERVER 的 ACC"（收到 004 自动关，见
+        # `_maybe_disable_unsupported`）
+        self._acfg_server_ok = True
+        self._last_acc_server_sent = 0.0
+        self._last_pi_audit = ""     # [report] 自检行去重
 
         # 机型信息/机模配置的重发调度（见 ACFG_INFO_RETRY_DELAYS）
         self._info_next_at = 0.0
@@ -149,6 +170,9 @@ class FsdSession:
         self._info_retries = 0
         self._info_acked = False
         self._last_pi_requester = ""
+        self._acfg_server_ok = True
+        self._last_acc_server_sent = 0.0
+        self._last_pi_audit = ""
         # 新连接重新探测（服务器可能不同）
         self._visual_pos_disabled = False
         self._interim_pos_disabled = False
@@ -181,8 +205,8 @@ class FsdSession:
     # ---------- 发送 ----------
 
     def _send(self, line: str) -> None:
-        if not self._link.connected:
-            return
+        if not line or not self._link.connected:
+            return   # 空报文不发送（plane_info 机型未知时返回空串）
         if line.startswith("^"):
             self._last_visual_sent = time.monotonic()
         elif line.startswith("#SB") and ":VI:" in line:
@@ -217,10 +241,66 @@ class FsdSession:
             return f"{lv}-{reg}"
         return lv
 
+    def _ensure_engines(self) -> int:
+        """`engines` 为 0 时用 swift 机型库台数兜底。
+
+        桥（XConnect/MConnect）在"机型还没加载完"的帧里会报
+        `engine_count=0`，旧代码只在 `eng > 0` 时才写回 → 站点 `engines`
+        永远缺这一项。机型库里的台数是权威静态值，比"不发"安全得多。
+        """
+        if self.engines > 0:
+            return self.engines
+        try:
+            from .. import aircraft_db
+            rec = aircraft_db.lookup(self.aircraft_icao)
+            n = int((rec or {}).get("engines") or 0)
+        except Exception:
+            n = 0
+        if n > 0:
+            self.engines = n
+        return self.engines
+
     def _pi_line(self, to: str) -> str:
-        return pk.plane_info(self.callsign, to, self.aircraft_icao,
-                             self.airline_icao, self._effective_livery(),
+        self._ensure_engines()
+        airline = self.airline_icao
+        if not airline:
+            # 线级最后一道防线：配置/界面没给航司时按呼号前缀补。
+            # 缺 AIRLINE 的 PI 会让站点 aircraft.airline 恒 null。
+            from ..report_identity import airline_from_callsign
+            airline = airline_from_callsign(self.callsign)
+        line = pk.plane_info(self.callsign, to, self.aircraft_icao,
+                             airline, self._effective_livery(),
                              self.registration, self.engines)
+        self._audit_pi(line)
+        return line
+
+    def _audit_pi(self, line: str) -> None:
+        """机型上报自检：内容变化时打一行 `[report]`，便于和站点 JSON 对照。
+
+        只在内容变化时打（三个目标地址共用同一内容），切换机模/尾号才出现，
+        不会刷屏。缺失项会带 `⚠ missing=` 前缀，下次出问题一眼定位是哪个字段。
+        """
+        body = line.split(":PI:GEN:", 1)[1] if ":PI:GEN:" in line else line
+        if not body or body == self._last_pi_audit:
+            return
+        self._last_pi_audit = body
+        pairs = [kv for kv in body.split(":") if "=" in kv]
+        missing = [k for k in ("EQUIPMENT", "AIRLINE", "LIVERY", "ENGINES")
+                   if not any(p.startswith(k + "=") for p in pairs)]
+        # 带呼号：`tools/verify_site_aircraft.py` 靠它把本地发放与站点记录对齐
+        text = f"[report] {self.callsign} PI " + " ".join(pairs)
+        if missing:
+            text += f" ⚠ missing={','.join(missing)}"
+        self._log(text)
+
+    def send_capabilities(self, to: str) -> None:
+        """CAPS 应答：声明支持 ACC（`ACCONFIG=1`）。
+
+        swift/vPilot 系的约定是"对方声明 ACCONFIG=1 才给它发机模配置"；
+        我们不声明，对端就没必要发、服务器也可能据此决定是否采纳我们发的
+        ACC（`aircraft.engines` 的唯一来源）。
+        """
+        self._send(pk.caps_response(self.callsign, to, CAPABILITIES))
 
     def send_plane_info(self, to: str) -> None:
         """PIR 应答（PI:GEN）。
@@ -367,17 +447,30 @@ class FsdSession:
             return None
 
     @staticmethod
-    def _acfg_swift_shape(cfg: dict) -> dict:
-        """engines 嵌入 config.aircraft.engines（swift 的 ACC 形状）。
+    def _acfg_swift_shape(cfg: dict, engine_count: int = 0) -> dict:
+        """ACC 的线上形状：标准顶层 + 一份 swift 形状的冗余副本。
 
-        swift 的 CAircraftConfiguration::toJson() 把含引擎状态的
-        CAircraftModel::toJson() 放在 "aircraft" 键下，服务器
-        （api.xflysim.com）只从 aircraft.engines 读引擎状态——实测
-        swift 客户端 engines 全部入库，而 config 顶层 engines 被忽略
-        （站点 JSON engines=null）。顶层副本保留：自家客户端 roster
-        解析认的是顶层。"""
+        权威格式是 VATSIM ACC 文档写的那七个顶层键（`is_full_data` /
+        `lights` / `engines` / `gear_down` / `flaps_pct` / `spoilers_out` /
+        `on_ground`）——swift 与 vPilot 都这么发，对端只认这些。
+
+        额外再放一份 `config.aircraft.engines`：swift 的
+        `CAircraftConfiguration::toJson()` 把模型（含引擎）放在 `aircraft`
+        键下，XFlySim 服务器实测会读这个位置。未知键对宽容解析器无害，对
+        位置敏感的部分也只会多一层，所以两个位置同时给，最大化命中率。
+
+        `engine_count` > 0 且 `engines` 缺失时（桥当前帧没给引擎状态）
+        按台数补一份"全关"掩码 —— 站点 `aircraft.engines` 缺键就是 null，
+        宁可先报全关让下一帧覆盖，也不要留空。
+        """
         out = dict(cfg)
         eng = out.get("engines")
+        if not isinstance(eng, dict) or not eng:
+            n = int(engine_count or 0)
+            if n > 0:
+                from ..report_identity import engine_mask
+                eng = engine_mask(n)
+                out["engines"] = eng
         if isinstance(eng, dict) and eng:
             ac = dict(out.get("aircraft") or {})
             ac["engines"] = eng
@@ -417,7 +510,7 @@ class FsdSession:
         if not diff:
             return
         payload = self._acfg_dump(
-            {"config": self._acfg_swift_shape(diff)})
+            {"config": self._acfg_swift_shape(diff, self._ensure_engines())})
         if payload is None:
             return
         # 第 ② 级诊断：组装后的 ACC JSON（与插件 raw/anim 日志对照）
@@ -433,10 +526,20 @@ class FsdSession:
         full = dict(self._acfg_full)
         full["is_full_data"] = True
         payload = self._acfg_dump(
-            {"config": self._acfg_swift_shape(full)})
+            {"config": self._acfg_swift_shape(full, self._ensure_engines())})
         if payload is None:
             return
         self._send(pk.aircraft_config(self.callsign, to, payload))
+
+    def _acfg_targets(self) -> tuple[str, ...]:
+        """全量 ACC 的发送目标：广播地址 + 服务器本体。
+
+        服务器本体那条是站点 `aircraft.engines` 的关键（见 `ACFG_SERVER_TARGET`
+        的说明）；被服务器拒绝（004）后自动剔除，只留广播。
+        """
+        if self._acfg_server_ok:
+            return (ACFG_BROADCAST_TO, ACFG_SERVER_TARGET)
+        return (ACFG_BROADCAST_TO,)
 
     # ---------- 接收 ----------
 
@@ -515,6 +618,13 @@ class FsdSession:
             # 机模配置：JSON 可能被冒号切开，重拼后解析
             self._on_aircraft_config_query(p.from_, ":".join(p.flds))
 
+        elif p.kind == "$CQ" and p.type == "CAPS":
+            # 服务器/对端询问能力：必须声明 ACCONFIG=1，否则对方不会给我们
+            # 发机模配置，服务器也可能据此不采纳我们发的 ACC（engines 的
+            # 唯一来源，见 ACFG_SERVER_TARGET）。
+            if p.from_:
+                self.send_capabilities(p.from_)
+
         if self.on_position_packet:
             self.on_position_packet(p)
 
@@ -550,6 +660,17 @@ class FsdSession:
                 and now - self._last_interim_sent < 1.5):
             self._interim_pos_disabled = True
             self._log("[fsd] 服务器不支持 #SB VI，已自动关闭（保留 @）")
+            return True
+        # ACC 直发 SERVER 被拒（服务器不认这个目标）→ 永久退回只发广播。
+        # 放在 ^ / VI 之后判定，并额外要求最近没有发过 ^/VI：否则登录时
+        # 同时发出的 ^ 引发的 004 会被误记到 ACC 头上。
+        if (getattr(self, "_acfg_server_ok", True)
+                and now - getattr(self, "_last_acc_server_sent", 0.0) < 2.0
+                and now - self._last_visual_sent > 1.5
+                and now - self._last_interim_sent > 1.5):
+            self._acfg_server_ok = False
+            self._log("[fsd] 服务器不接受直发 SERVER 的 ACC，已退回仅广播"
+                      "（站点 engines 可能需要服务器侧支持）")
             return True
         return False
 
@@ -622,17 +743,40 @@ class FsdSession:
         self._broadcast_full_aircraft_config()
 
     def _broadcast_full_aircraft_config(self) -> None:
+        """全量机模配置重播：广播地址 **+ 服务器本体**。
+
+        服务器本体那条是站点 `aircraft.engines` 的唯一可能来源（PI 里没有
+        engines；见 `ACFG_SERVER_TARGET`）。每个目标各吃一个令牌，令牌不足
+        时按顺序优先广播地址。
+        """
         if not self._acfg_full or not self._link.connected:
-            return
-        if not self._acfg_take_token():
             return
         full = dict(self._acfg_full)
         full["is_full_data"] = True       # 重播必须整块覆盖，不能当增量
+        full["engines"] = (full.get("engines")
+                           or self._engine_mask_or_none())
         payload = self._acfg_dump(
-            {"config": self._acfg_swift_shape(full)})
+            {"config": self._acfg_swift_shape(full, self._ensure_engines())})
         if payload is None:
             return
-        self._send(pk.aircraft_config(self.callsign, ACFG_BROADCAST_TO, payload))
+        sent_server = False
+        for target in self._acfg_targets():
+            if not self._acfg_take_token():
+                break
+            self._send(pk.aircraft_config(self.callsign, target, payload))
+            if target == ACFG_SERVER_TARGET:
+                sent_server = True
+        if sent_server:
+            self._last_acc_server_sent = time.monotonic()
+            self._log("[parts] full ACC -> SERVER（engines="
+                      f"{len(full.get('engines') or {})} 台）")
+
+    def _engine_mask_or_none(self) -> Optional[dict]:
+        n = self._ensure_engines()
+        if n <= 0:
+            return None
+        from ..report_identity import engine_mask
+        return engine_mask(n)
 
     def _set_state(self, state: str) -> None:
         self.state = state

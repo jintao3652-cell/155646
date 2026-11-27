@@ -56,6 +56,40 @@ class TestPlaneInfoEnginesSlot(unittest.TestCase):
         self.assertLess(keys.index("LIVERY=SWIFT_A672"),
                         keys.index("ENGINES=2"))
 
+    def test_no_equipment_no_livery_returns_empty(self):
+        """机型完全未知时整条不发送：残缺 PI 会覆盖服务器已有的正确记录。
+
+        实测 fsd.log 18:17:29：`PI:GEN:AIRLINE=SJX` 让站点 equipment/livery/
+        engines 全变 null（只剩 airline）。返回空串由 _send 跳过。
+        """
+        self.assertEqual(
+            packet.plane_info("SJX110", "SERVER", "", "SJX", "", "B-8493", 2),
+            "")
+        # 只有尾号、连航司都没有，同样不发送
+        self.assertEqual(
+            packet.plane_info("SJX110", "SERVER", "", "", "", "B-8493", 0),
+            "")
+
+    def test_airline_only_with_no_registration_returns_empty(self):
+        """只有 AIRLINE 一个键时绝不能发出（用户贴的 null JSON 的直接来源）。"""
+        self.assertEqual(
+            packet.plane_info("SJX110", "atis_collector", "", "SJX", "", "", 0),
+            "")
+
+
+class TestCapsResponse(unittest.TestCase):
+    def test_caps_declares_acconfig(self):
+        """CAPS 必须声明 ACCONFIG=1 —— 不声明对方就不发机模配置，
+        `aircraft.engines`（唯一来源是 ACC）也就永远拿不到。"""
+        line = packet.caps_response("SJX110", "SERVER")
+        self.assertTrue(line.startswith("$CRSJX110:SERVER:CAPS:"), line)
+        self.assertIn("ACCONFIG=1", line)
+        self.assertIn("MODELDESC=1", line)
+
+    def test_caps_accepts_custom_list(self):
+        line = packet.caps_response("A1", "B2", ("ACCONFIG=1",))
+        self.assertEqual(line, "$CRA1:B2:CAPS:ACCONFIG=1")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,7 @@ export const store = reactive({
   mcState: 'waiting',          // MC：waiting / connected / failed / disconnected
   cslLoaded: [],
   cslMissing: [],
+  cslSim: 'xplane',            // 状态来自哪座桥：xplane(X-CSL) / msfs(FSLTL/AIG)
   roster: '',
   atcCount: 0, plrCount: 0,
   log: [],
@@ -134,17 +135,22 @@ export const bridgeActive = computed(() =>
   store.xpState === 'connected' || store.mcState === 'connected')
 
 const cslTotal = computed(() => store.cslLoaded.length + store.cslMissing.length)
+/* MC 与 XC 共用 csl_status 通道，但语义不同：XC 是 X-CSL 包，MC 是
+ * MSFS 里注入的 AI 模型（FSLTL/AIG）。标签与提示必须按 sim 分开。 */
+const cslLabel = computed(() => store.cslSim === 'msfs'
+  ? t('status.msfsAiTitle') : t('status.cslTitle'))
+const cslShort = computed(() => store.cslSim === 'msfs' ? 'AI' : 'CSL')
 export const cslText = computed(() => {
-  if (cslTotal.value === 0) return 'CSL —'
-  return `CSL ${store.cslLoaded.length}/${cslTotal.value}`
+  if (cslTotal.value === 0) return `${cslShort.value} —`
+  return `${cslShort.value} ${store.cslLoaded.length}/${cslTotal.value}`
 })
 export const cslTag = computed(() => {
   if (cslTotal.value === 0) return 'info'
   return store.cslMissing.length ? 'danger' : 'success'
 })
 export const cslTitle = computed(() => {
-  if (cslTotal.value === 0) return t('status.cslTitle')
-  return `${t('status.cslTitle')}: ${store.cslLoaded.length}/${cslTotal.value}`
+  if (cslTotal.value === 0) return cslLabel.value
+  return `${cslLabel.value}: ${store.cslLoaded.length}/${cslTotal.value}`
 })
 
 /** 切换界面语言（本地即刻生效，持久化由 setLanguageAndSave / saveSettings 完成）。 */
@@ -350,10 +356,14 @@ function setBridgeState(key, state) {
 }
 
 function setCslStatus(d) {
+  store.cslSim = d.sim === 'msfs' ? 'msfs' : 'xplane'
   store.cslLoaded = d.loaded || []
   store.cslMissing = d.missing || []
-  if (store.cslMissing.length)
-    addLog(t('status.cslMissing', { list: store.cslMissing.join(', ') }), 'err')
+  if (store.cslMissing.length) {
+    const key = store.cslSim === 'msfs'
+      ? 'status.msfsAiMissing' : 'status.cslMissing'
+    addLog(t(key, { list: store.cslMissing.join(', ') }), 'err')
+  }
 }
 
 /* ---------- 在线更新 ----------

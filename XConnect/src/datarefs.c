@@ -152,6 +152,12 @@ static int g_parts_spoilers = 0;
 static int g_parts_eng_on[MAX_ENGINES] = { 0 };
 static float g_parts_eng_n1[MAX_ENGINES] = { 0 };
 static int g_num_engines = 0;          /* 本机真实发动机数量（0 = 未知） */
+/* 本次会话见过的最大台数：acf_num_engines 缺失时用它兜底，避免冷舱的
+ * 多发动机机型被推断成 1 台（见 build_flight_data 的 engines 块）。 */
+static int g_max_engines_seen = 0;
+/* 上报给客户端的台数：优先 acf_num_engines，缺失时用推断值，
+ * 保证 flight_data.engine_count 与 parts.engines 的条目数一致。 */
+static int g_engine_count_out = 0;
 
 /* ---------------- dataref 安全读取 ---------------- */
 
@@ -915,6 +921,15 @@ void build_flight_data(char* out, int size) {
     read_flight_id(flight_id, sizeof(flight_id));
     radio_table_select(icao, reg, ui_name);
 
+    /* 换机型：台数记忆不能跨机型复用（否则 4 发机 → 双发机会多报两台） */
+    {
+        static char last_icao[16] = "";
+        if (strcmp(icao, last_icao) != 0) {
+            snprintf(last_icao, sizeof(last_icao), "%s", icao);
+            g_max_engines_seen = 0;
+        }
+    }
+
     /* 频率：优先机型覆盖 dataref（ToLiss/Fenix 等），否则通用 hz_833 */
     long com1 = freq_to_mhz1000(dref_float(radio_com_dref(1, 0)));
     long com2 = freq_to_mhz1000(dref_float(radio_com_dref(2, 0)));
@@ -997,6 +1012,8 @@ void build_flight_data(char* out, int size) {
                         ? dref_int(g_drefs[DR_NUM_ENGINES]) : 0;
         if (g_num_engines < 0) g_num_engines = 0;
         if (g_num_engines > MAX_ENGINES) g_num_engines = MAX_ENGINES;
+        if (g_num_engines > g_max_engines_seen)
+            g_max_engines_seen = g_num_engines;
         if (g_drefs[DR_N1]) XPLMGetDatavf(g_drefs[DR_N1], n1, 0, MAX_ENGINES);
         g_parts_nav = light_state(DR_LT_NAV_BRI, 1, DR_NAV_LT);
         g_parts_strobe = light_state(DR_LT_STROBE_BRI, 4, DR_STROBE_LT);
@@ -1093,6 +1110,13 @@ void build_flight_data(char* out, int size) {
             for (i = 0; i < MAX_ENGINES; i++)
                 g_parts_eng_on[i] = g_parts_eng_n1[i] > 5.0f;
         }
+        /* 在转的引擎也参与"最大台数"记忆（acf_num_engines 偶发为 0 的机模） */
+        for (i = MAX_ENGINES - 1; i >= 0; --i) {
+            if (g_parts_eng_on[i]) {
+                if (i + 1 > g_max_engines_seen) g_max_engines_seen = i + 1;
+                break;
+            }
+        }
         /* 引擎状态变化时记一行（不是每帧）。用于核对
          * "编号 ↔ N1 数组下标" 的映射，以及 on 判定阈值是否合适。
          * N1_percent 是 float[16]，下标 0 = 1 号引擎。 */
@@ -1171,13 +1195,21 @@ void build_flight_data(char* out, int size) {
         int el = 0;
         int en = g_num_engines;
         if (en <= 0) {
-            /* 机模没提供 ENG_N 时的兜底：按实测 on 掩码最高位推断，
-             * 再不行就报 1 台。旧代码固定按 2 发上报，双发以下的机模会
-             * 凭空多出一台"幽灵引擎"。 */
-            for (en = MAX_ENGINES; en >= 1; --en)
-                if (g_parts_eng_on[en - 1]) break;
-            if (en < 1) en = 1;
+            /* 机模没提供 ENG_N 时的兜底：先用本次会话见过的最大台数，
+             * 再看实测在转的最高编号。
+             *
+             * ⚠️ 旧逻辑在**全部熄火**时把 en 落到 0，然后 `if (en < 1) en = 1`
+             * —— 冷舱的 4 发机被报成"1 台"，站点/对端据此把机型判断搞错。
+             * 现在两者都拿不到就报 0（=未知）并整键不发，由客户端用 swift
+             * 机型库补台数，绝不编造。 */
+            en = g_max_engines_seen;
+            if (en <= 0) {
+                for (en = MAX_ENGINES; en >= 1; --en)
+                    if (g_parts_eng_on[en - 1]) break;
+            }
+            if (en < 0) en = 0;
         }
+        g_engine_count_out = en;
         /* **JSON 对象**，不是数组！键是发动机编号（1 基），值是该台状态。
          *
          * swift 的 CAircraftEngineList::toJson() 实现：
@@ -1212,6 +1244,7 @@ void build_flight_data(char* out, int size) {
                         g_parts_eng_on[ei] ? "true" : "false");
         }
         XSTR_APPEND(eng, el, "},");
+        if (en <= 0) eng[0] = '\0';   /* 台数未知：整键不发，客户端用机型库补 */
         /* eng 只含合法 JSON 片段，作为 %s 嵌入主报文 */
         snprintf(out, size,
             "{\"type\":\"flight_data\","
@@ -1251,7 +1284,7 @@ void build_flight_data(char* out, int size) {
             "\"spoilers_out\":%d,"
             "%s"
             "\"on_ground\":%d}}",
-            icao, ui_name, flight_id, reg, reg_src, g_num_engines,
+            icao, ui_name, flight_id, reg, reg_src, g_engine_count_out,
             dref_float(g_drefs[DR_LAT]), dref_float(g_drefs[DR_LON]),
             dref_float(g_drefs[DR_ELEV]) * 3.28084,
             dref_float(g_drefs[DR_AGL]) * 3.28084,

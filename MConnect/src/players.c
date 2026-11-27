@@ -222,6 +222,7 @@ static void ai_remove(Player* p) {
     p->object_id = 0;
     p->create_request_id = 0;
     p->write_fail_logged = 0;
+    p->catalog_miss = 0;
 }
 
 /* 创建 AI 飞机。level 仅用于日志。
@@ -266,10 +267,13 @@ static void ai_create(Player* p) {
     if (!m.found) {
         xc_logf("ai: %s no catalog match icao=%s airline=%s reg=%s",
                 p->callsign, p->icao, p->airline, p->reg);
+        p->catalog_miss = 1;
         p->state = AI_STATE_FAILED;
         p->retry_at = xc_now_sec() + 30.0;   /* 机型目录可能还没扫完，晚点再试 */
         return;
     }
+    /* 匹配成功：创建失败/对象回收等暂态问题不算“缺模型” */
+    p->catalog_miss = 0;
 
     /* 匹配结果行：明确记录用了哪个来源的模型（AIGAIM_/FSLTL_/Asobo），
      * 排查"映射没生效"时与 --scan-only 抽样对照 */

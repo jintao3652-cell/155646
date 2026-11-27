@@ -100,8 +100,11 @@ class Api:
         self._last_eng: int = 0
 
         # MConnect 自动启动（无窗口；仅当 exe 存在且未运行时拉起）
+        # 用 app_base_dir()（源码=仓库根，打包=exe 同目录），不能对 __file__
+        # 再做两层 dirname：webapp.py 本身就在仓库根，两层会指到上一级，
+        # 导致永远找不到 MConnect/build/MConnect.exe 而误报"未编译"。
         self._bridge = BridgeLauncher(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            app_base_dir(),
             on_log=lambda m: self._push("log", self._tr(m)),
             toggle_labels=getattr(self._cfg, "msfs_toggle_labels", False),
             traffic_lib=getattr(self._cfg, "msfs_traffic_lib", "auto"))

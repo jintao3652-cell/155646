@@ -136,6 +136,7 @@ requirements.txt  依赖：pywebview
 | `docs/XConnect-PROTOCOL.md` | XC 差异：dataref 单位、CSL 匹配四级规则、`radio.json` 机型适配表 |
 | `docs/XConnect-DATAREFS.md` | X-Plane dataref 清单与读法 |
 | `docs/FSD_PROTOCOL.md` | FSD 报文协议 |
+| `docs/上报四字段-根因与修复.md` | 站点 `equipment`/`airline`/`livery`/`engines` 的两条通道、历史坑位与排障流程（`tools/verify_site_aircraft.py`） |
 | `docs/MConnect-PROFILES.md` | MConnect 外部机型档案 `profiles.json` 格式与优先级 |
 | `docs/CONTRIBUTING.md`、`docs/PACKAGING.md` | 贡献约定 / PyInstaller 打包说明 |
 | `docs/XUpdate更新器.md` | 客户端 / MC / XC 更新器：清单格式、增量、备份回滚、CLI |
