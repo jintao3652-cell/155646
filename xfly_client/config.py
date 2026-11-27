@@ -68,6 +68,10 @@ class AppConfig:
     #   3. 事件只在 MConnect 启动时发一次，改配置后需重启 MConnect。
     #   4. X-Plane 侧呼号标签由 XConnect 自绘（贴机身），无需此开关。
     msfs_toggle_labels: bool = False
+    # MSFS 他机 AI 模型库偏好：auto（两套库按匹配质量选用）/ fsltl / aig。
+    # 仅影响 MConnect 的 AI 涂装匹配；X-Plane 侧固定使用 X-CSL 模型库，
+    # 不提供该项选择。切换后 MConnect 运行时立即生效（下一帧重建 AI 模型）。
+    msfs_traffic_lib: str = "auto"
 
     @classmethod
     def from_dict(cls, d: dict) -> "AppConfig":

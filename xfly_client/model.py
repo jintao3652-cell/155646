@@ -207,8 +207,13 @@ class NetworkModel:
             self.xconnect.port = port
         self.xconnect.start()
 
+    def _bridge_tag(self) -> str:
+        """当前桥的日志标签：XConnect 与 MConnect 是同级独立组件，各归各类。"""
+        kind = getattr(self.xconnect, "bridge_kind", "")
+        return "[mconnect]" if kind == "mconnect" else "[xconnect]"
+
     def _on_xconnect_connected(self) -> None:
-        self._log("[xconnect] 数据通道就绪")
+        self._log(f"{self._bridge_tag()} 数据通道就绪")
         if self.on_xconnect_connected:
             self.on_xconnect_connected()
 
@@ -223,7 +228,7 @@ class NetworkModel:
             self.on_csl_status(doc)
 
     def _on_xconnect_disconnected(self) -> None:
-        self._log("[xconnect] 未发现模拟机")
+        self._log(f"{self._bridge_tag()} 未发现模拟机")
         if self.on_xconnect_disconnected:
             self.on_xconnect_disconnected()
         # 插件离线（X-Plane 关闭）→ 自动断开 FSD 连接
@@ -569,7 +574,7 @@ class NetworkModel:
             try:
                 self.push_roster()
             except Exception as exc:
-                self._log(f"[xconnect] roster 推送失败: {exc}")
+                self._log(f"{self._bridge_tag()} roster 推送失败: {exc}")
 
     def push_roster(self) -> None:
         if not self.xconnect.connected:
@@ -740,18 +745,40 @@ class NetworkModel:
         # 这里，而有些机模（F-14 等）插件读到的是空串。若只把插件原值推给
         # 前端，工具栏会一直显示**上一架飞机**的机型（实测：切 F-14 后
         # 仍显示 MD82）。所以先把推断结果写回 fd.aircraft_icao。
+        #
+        # ⚠️ `ATC*` 开头的是 MSFS 的通用占位符（ATCCOM/ATCPVT…机模没设
+        # icao 时 MSFS 给的值），不是真机型 —— 必须当**未知**处理走名称
+        # 推断。曾直接当真 ICAO 上报：服务器 equipment 存成 "ATCCOM"，
+        # 且 swift_livery("ATCCOM") 反查不到 id → PI 缺 LIVERY 键 →
+        # ENGINES 顶错槽位 → 站点 JSON 里 engines 恒 null（两条链一起坏）。
+        #
+        # ⚠️ **非空但非标准码同样要推断**（2026-11-27 livery=null 的根因）：
+        # IniBuilds A350 上报 `A350-900`——非空、非 ATC*，直接穿透了上面
+        # 的护栏 → swift 库查不到 id → PI 缺 LIVERY 键 → 站点 livery 恒
+        # null。normalize_icao 统一处理：查得到 id 原样保留，查不到按
+        # 名称重推（A350-900 → A359）。
         raw_icao = (fd.aircraft_icao or "").strip().upper()
-        if not raw_icao:
-            guessed = aircraft_db.guess_designator(
-                fd.aircraft_name or "", int(fd.engine_count or 0))
-            if guessed:
-                fd.aircraft_icao = guessed
-                if guessed != self._last_guessed_icao:
-                    self._last_guessed_icao = guessed
-                    self._log(f"机型推断：\"{fd.aircraft_name}\" → {guessed}"
-                              f"（机模未提供 ICAO，按 swift 机型库匹配）")
+        was_placeholder = raw_icao.startswith("ATC")
+        norm = aircraft_db.normalize_icao(
+            raw_icao, fd.aircraft_name or "", int(fd.engine_count or 0))
+        fd.aircraft_icao = norm
+        if norm and norm != raw_icao:
+            if was_placeholder or not raw_icao:
+                # 原"空/占位符 → 名称推断"路径，保留原日志文案
+                if norm != self._last_guessed_icao:
+                    self._last_guessed_icao = norm
+                    self._log(f"机型推断：\"{fd.aircraft_name}\" → {norm}"
+                              f"（机模未提供有效 ICAO，按 swift 机型库匹配）")
+            else:
+                # 新路径：ICAO 非空但不在 swift 库（A350-900 等）
+                self._last_guessed_icao = norm
+                self._log(f"机型规范化：\"{raw_icao}\"（机模名 "
+                          f"\"{fd.aircraft_name}\"）→ {norm}"
+                          f"（非标准 ICAO，按 swift 机型库重推）")
+        elif not norm:
+            self._last_guessed_icao = ""   # 名称也推不出，保持未知
         else:
-            self._last_guessed_icao = ""
+            self._last_guessed_icao = ""   # 正常 ICAO，无需推断
 
         if self.on_local_flight_data:
             self.on_local_flight_data(fd)
@@ -802,7 +829,10 @@ class NetworkModel:
             # 在 icao 为空时直接跳过，导致 self.aircraft_icao 保留上一架飞机的
             # 值，而尾号是独立更新的 → 服务器上出现 "equipment: MD82" +
             # "livery: N988DR(F-14)" 这种机型与尾号不匹配的脏数据（实测踩过）。
+            # ATC* 占位符同样当未知（见函数开头说明）。
             icao = (fd.aircraft_icao or "").strip().upper()
+            if icao.startswith("ATC"):
+                icao = ""
             changed = False
             if icao != self.aircraft_icao:
                 self.aircraft_icao = icao

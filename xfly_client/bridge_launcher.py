@@ -39,10 +39,14 @@ class BridgeLauncher:
 
     def __init__(self, app_dir: str, *,
                  on_log: Optional[Callable[[str], None]] = None,
-                 toggle_labels: bool = False):
+                 toggle_labels: bool = False,
+                 traffic_lib: str = "auto"):
         self._app_dir = app_dir
         self._on_log = on_log
         self._toggle_labels = bool(toggle_labels)
+        # MSFS AI 模型库（FSLTL / AIG / auto）——作为 --traffic-lib 透传，
+        # 保证 MConnect 首次扫描/匹配就用用户选的库，无需等设置下发。
+        self._traffic_lib = traffic_lib if traffic_lib in ("auto", "fsltl", "aig") else "auto"
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._exe = os.path.join(app_dir, "MConnect", "build", "MConnect.exe")
@@ -73,6 +77,7 @@ class BridgeLauncher:
                 argv = [self._exe]
                 if self._toggle_labels:
                     argv.append("--labels")
+                argv.extend(["--traffic-lib", self._traffic_lib])
                 self._proc = subprocess.Popen(
                     argv,
                     cwd=os.path.dirname(self._exe),

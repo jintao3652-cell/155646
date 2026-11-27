@@ -36,7 +36,15 @@ const LANGS = [
         <label>{{ t('settings.pluginPort') }} <el-input v-model="store.set.xconnect_port" size="small" /></label>
         <el-checkbox v-model="store.set.debug">{{ t('settings.debugMode') }}</el-checkbox>
         <el-checkbox v-model="store.set.msfs_labels">{{ t('settings.msfsLabels') }}</el-checkbox>
+        <label>{{ t('settings.msfsTrafficLib') }}
+          <el-select v-model="store.set.traffic_lib" size="small">
+            <el-option value="auto" :label="t('settings.trafficLibAuto')" />
+            <el-option value="fsltl" :label="t('settings.trafficLibFsltl')" />
+            <el-option value="aig" :label="t('settings.trafficLibAig')" />
+          </el-select>
+        </label>
         <p class="tip">{{ t('settings.pluginTip') }}</p>
+        <p class="tip">{{ t('settings.msfsTrafficLibTip') }}</p>
         <p class="tip">{{ t('settings.msfsLabelsTip') }}</p>
       </fieldset>
       <fieldset>

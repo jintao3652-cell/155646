@@ -63,8 +63,15 @@ class XflyGui:
         self._start_xconnect()
 
     def _start_xconnect(self) -> None:
+        # XC 与 MC 是同级独立分类，初始状态各自推送
         self._post("xconnect", "waiting")
-        self._xconnect.start()  # 持续重连，直到插件上线
+        self._post("mconnect", "waiting")
+        self._xconnect.start()  # 持续重连，直到任一桥上线
+
+    def _bridge_event(self) -> str:
+        """按当前桥分类返回事件名：XConnect→"xconnect"、MConnect→"mconnect"。"""
+        kind = getattr(self._xconnect, "bridge_kind", "")
+        return "mconnect" if kind == "mconnect" else "xconnect"
 
     # ---------- 组件 ----------
 
@@ -207,9 +214,9 @@ class XflyGui:
         self.model.on_local_flight_data = lambda fd: self._post("flight", fd)
         self.model.on_fsd_unexpected_disconnect = self._on_fsd_dropped
         self.model.on_xconnect_connected = \
-            lambda: self._post("xconnect", "connected")
+            lambda: self._post(self._bridge_event(), "connected")
         self.model.on_xconnect_disconnected = \
-            lambda: self._post("xconnect", "disconnected")
+            lambda: self._post(self._bridge_event(), "disconnected")
 
         sim_type = SIM_TYPES[self.sim_var.get()]
 
@@ -425,7 +432,9 @@ class XflyGui:
                 elif kind == "text":
                     self._show_text(args[0], args[1])
                 elif kind == "xconnect":
-                    self._set_xconnect_state(args[0])
+                    self._set_bridge_state(args[0], "XC")
+                elif kind == "mconnect":
+                    self._set_bridge_state(args[0], "MC")
                 elif kind == "flight":
                     self._last_fd = args[0]
                     icao = getattr(args[0], "aircraft_icao", "")
@@ -446,16 +455,19 @@ class XflyGui:
     def _show_log(self, msg: str) -> None:
         print(msg)
 
-    def _set_xconnect_state(self, state: str) -> None:
+    def _set_bridge_state(self, state: str, label: str) -> None:
+        """桥状态显示：XC（XConnect）与 MC（MConnect）同级独立，各自标注。"""
         if state == "connected":
-            self.xplane_state_var.set("插件: 已上线")
+            self.xplane_state_var.set(f"插件({label}): 已上线")
         elif state == "waiting":
-            self.xplane_state_var.set("插件: 等待上线…")
+            self.xplane_state_var.set(f"插件({label}): 等待上线…")
         elif state == "failed":
-            self.xplane_state_var.set("插件: 未上线")
-            self._show_log("[xconnect] 无法连接插件，请检查 X-Plane 是否运行")
+            self.xplane_state_var.set(f"插件({label}): 未上线")
+            tag = "mconnect" if label == "MC" else "xconnect"
+            sim = "MSFS" if label == "MC" else "X-Plane"
+            self._show_log(f"[{tag}] 无法连接插件，请检查 {sim} 是否运行")
         elif state == "disconnected":
-            self.xplane_state_var.set("插件: 离线")
+            self.xplane_state_var.set(f"插件({label}): 离线")
 
     def _show_text(self, fr: str, msg: str) -> None:
         print(f"[消息] {fr}: {msg}")
@@ -476,10 +488,13 @@ class XflyGui:
             return
         fsd = model.fsd
         self.fsd_state_var.set(f"FSD: {fsd.state if fsd else '—'}")
-        # 插件在线状态（监听插件是否上线）
+        # 插件在线状态（监听插件是否上线；按当前桥分类标注 XC/MC）
+        kind = getattr(self._xconnect, "bridge_kind", "")
+        cur = self.xplane_state_var.get()
         if self._xconnect.connected:
-            self.xplane_state_var.set("插件: 已上线")
-        elif self.xplane_state_var.get() not in ("插件: —", "插件: 未上线"):
+            label = "MC" if kind == "mconnect" else "XC"
+            self.xplane_state_var.set(f"插件({label}): 已上线")
+        elif "已上线" in cur or "等待上线" in cur:
             self.xplane_state_var.set("插件: 离线")
         online = fsd is not None and fsd.state == STATE_ONLINE
         fd = self._last_fd

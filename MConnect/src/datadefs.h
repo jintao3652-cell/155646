@@ -76,8 +76,12 @@ typedef struct {
     int    com1_mhz1000, com2_mhz1000, com3_mhz1000;
     int    com1_stby_mhz1000, com2_stby_mhz1000, com3_stby_mhz1000;
     /* 发射/接收选择（语音通讯关键状态）。XVoice 用 PILOT/COPILOT TRANSMITTER
-     * TYPE + COM TRANSMIT:n 判"飞行员在哪个频率讲话"，MConnect 对齐这套。 */
+     * TYPE + COM TRANSMIT:n 判"飞行员在哪个频率讲话"，MConnect 对齐这套。
+     * com_status 对齐 swift（VATSIM 客户端）：COM STATUS:n 枚举
+     *   0=OK 1=不存在 2=断电 3=故障 —— 只有 0 的台才真正可用，
+     *   transmit/receive 都要 && status==0（swift 同款逻辑）。 */
     int    com_transmit[3];       /* COM TRANSMIT:1..3，各台是否在发（0/1） */
+    int    com_status[3];         /* COM STATUS:1..3（0=OK，非 0 = 该台不可用） */
     int    pilot_xmit_type;       /* PILOT TRANSMITTER TYPE: 0=COM1 1=COM2 2=COM3 */
     int    copilot_xmit_type;     /* COPILOT TRANSMITTER TYPE，同上 */
     int    com_receive_all;       /* COM RECEIVE ALL：是否全收 */
@@ -90,17 +94,30 @@ typedef struct {
     int    transponder;           /* 4 位八进制码（如 1234） */
     int    xpdr_state;            /* 0=Off 1=Stby 2=Test 3=On 4=Alt 5=Ground */
     int    on_ground;
-    double gear_ratio;            /* 0=收起 1=放下（GEAR HANDLE POSITION → 用总位置） */
+    /* 起落架 0=收起 1=放下，四个来源取最大值：
+     *   GEAR TOTAL PCT EXTENDED（系统状态，默认机维护）
+     *   GEAR ANIMATION POSITION:0..2 / 100（机模动画，Fenix 等 WASM 起落架
+     *     只写这个，TOTAL 恒 0 —— CSN7412 实测）
+     *   GEAR HANDLE POSITION（手柄 Bool，swift 的本机起落架上报来源；
+     *     部分机模连动画都不维护标准 SimVar，只剩手柄可信） */
+    double gear_ratio;            /* 0=收起 1=放下 */
     double flaps_ratio;           /* 0..1 */
     double throttle_ratio;        /* 0..1（1 号发动机） */
     double spoilers_ratio;        /* 0..1 */
     int    light_landing, light_taxi, light_nav, light_beacon, light_strobe;
     int    num_engines;
     double n1_pct[4];             /* 各发 N1（%），不足 4 发填 0 */
+    int    eng_on[4];             /* 各发燃烧标志（GENERAL ENG COMBUSTION:1..4）。
+                                  * swift 的引擎开关判定来源：N1 只对涡轮机有效，
+                                  * 活塞机 N1 恒 0 —— 只看 N1 会把活塞机全部
+                                  * 上报成发动机关闭。on = combustion || N1>5。 */
     char   title[256];            /* 机型容器标题（TITLE） */
     char   atc_id[32];            /* 尾号（ATC ID） */
     char   atc_airline[32];       /* 航司（ATC AIRLINE） */
     char   atc_model[32];         /* ATC MODEL（常为机型名而非 ICAO） */
+    char   atc_type[16];          /* ATC TYPE（标准 ICAO 机型代码，如 B738/A320）。
+                                  * swift 对远端机型的 ICAO 匹配首选来源；
+                                  * 本机识别链里排在 TITLE 反查之后、ATC MODEL 之前 */
     char   icao_type[16];         /* 由 catalog 反查得到的 ICAO 机型代码 */
     int    parking_brake;
 } FlightRaw;

@@ -154,6 +154,8 @@ body,
   margin-left: auto;
   display: flex;
   gap: 6px;
+  /* XC 与 MC 拆为两个同级标签后数量变多，允许换行避免挤出工具栏 */
+  flex-wrap: wrap;
 }
 .tb-tags .el-tag {
   border: none;

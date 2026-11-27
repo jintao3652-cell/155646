@@ -2,7 +2,7 @@
   import { computed } from 'vue'
   import { useRoute } from 'vue-router'
   import { useI18n } from 'vue-i18n'
-  import { store, openFlightPlan, openSettings, noop, doConnect, doDisconnect, cslTag, message } from '../store.js'
+  import { store, openFlightPlan, openSettings, noop, doConnect, doDisconnect, cslTag, message, bridgeActive } from '../store.js'
   import { winMin, winClose } from '../store.js'
   import router from '@/router'
   import ScreenButton from './RMP/ScreenButton.vue'
@@ -32,7 +32,8 @@
   const fsdActive = computed(() => store.connected)
   /* TEL/ATC 指示灯：未连线 info，连线后 success */
   const onlineStatus = computed(() => store.connected ? 'success' : 'info')
-  const xplActive = computed(() => store.xpState === 'connected')
+  /* XPL 灯：任一座桥（XC 或 MC）在线即亮，两桥同级 */
+  const xplActive = bridgeActive
   const cslActive = computed(() => cslTag.value === 'success')
   const cslDanger = computed(() => cslTag.value === 'danger')
   const fplActive = computed(() => !!(store.fp.dep && store.fp.dest))

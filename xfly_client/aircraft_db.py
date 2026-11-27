@@ -817,6 +817,43 @@ def guess_designator(name: str, engines: int = 0) -> str:
     return best[0] if best else ""
 
 
+def normalize_icao(raw: str, name: str = "", engines: int = 0) -> str:
+    """把模拟器上报的机型 ICAO 规范化成"服务器可用"的标准码。
+
+## 为什么要规范化（2026-11-27 livery=null 的根因）
+
+之前的推断只在 ICAO 为**空**（或 `ATC*` 占位符）时触发。但有些机模
+上报的 ICAO **非空却不是标准码**——IniBuilds A350 的 ATC ICAO TYPE
+就是 `A350-900`（标准码应为 `A359`）。它原样进入 PI：
+
+    EQUIPMENT=A350-900:AIRLINE=SJX:REG=B-6419      ← 没有 LIVERY 键
+
+`swift_livery("A350-900")` 在 swift 机型库（2606 条）里查不到 id →
+LIVERY 键不发 → **站点 JSON 里 livery 恒为 null**（实测 22:52 会话，
+equipment 也是非标准码）。空值路径（F-14 空 ICAO）早已修掉，
+这一条"非空但不可用"的路径漏了。
+
+## 规则
+
+1. `ATC*` 开头 → 占位符，当未知（走推断）。
+2. ICAO 在 swift 机型库**查得到 id** → 原样保留（绝大多数正常机模）。
+3. 查不到 → 按机模名称重新推断；推断出来的一定在库里
+   （`guess_designator` 的返回值都来自库），`A350-900` → A359。
+4. 推断也失败 → 保留原值：equipment 至少还能显示，
+   livery 为 null 是 swift 库不覆盖该机型，无法再改善。
+
+    实测：`A350-900`→A359、`Airbus A350-900`→A359、`A350-1000`→A35K。
+    """
+    icao = (raw or "").strip().upper()
+    if icao.startswith("ATC"):
+        icao = ""
+    if icao and swift_livery(icao):
+        return icao                      # 规则 2：库里有 id，直接用
+    # 名称缺失时把 ICAO 码本身当名称输入（"A350-900" 自身就能推出 A359）
+    guessed = guess_designator(name or icao, engines)
+    return guessed or icao               # 规则 3/4
+
+
 def lookup(designator: str) -> Optional[dict]:
     """按 designator 精确查一条记录（调试/展示用）。"""
     up = (designator or "").strip().upper()

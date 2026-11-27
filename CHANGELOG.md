@@ -15,16 +15,60 @@
 - CI：Windows XConnect 构建 + CTest；Python unittest + selftest。
   （Linux/macOS 暂时搁置，不纳入 CI/发布。）
 - 文档：FAQ、支持矩阵、桥协议、贡献指南、变更日志、MConnect 档案格式。
+- **MSFS 自绘呼号标签**：研究确认原生铭牌对 SimConnect 注入 AI 永不渲染
+  （模拟器硬限制，`TOGGLE_AIRCRAFT_LABELS` 已被官方废弃）。新增：
+  - MConnect 同端口 HTTP roster 快照端点（`GET /roster`，CORS，协议嗅探）；
+  - Community 覆盖包 `xflysim-labels`：JS overlay 注入飞行标记层，驾驶舱
+    视角把注入 AI 投影为世界锚定呼号标签（与 X-Plane 自绘样式一致）；
+  - `msfs_toggle_labels` / `Send:LABELS` 语义改为 overlay 显隐开关，运行时
+    生效（不再发废弃的铭牌事件）。
+- **MSFS AI 模型库选择**：设置新增 `msfs_traffic_lib`（自动 / FSLTL / AIG）。
+  扫描时按包名给每条目录条目标记来源（`fsltl-*` / `aig-*`），匹配时优先
+  使用所选库，缺失机型或涂装才回退另一套；`Send:TRAFFICLIB` 运行时切换，
+  下一帧重建他机模型。`--traffic-lib <auto|fsltl|aig>` 供启动与诊断使用。
+  `catalog_dump_stats()` 按来源计数，`--scan-only` 可直接确认两库都读到。
+  X-Plane 侧固定使用 X-CSL，不受该项影响。
 
 ### Changed
 
+- **本机字段读取对齐 swift（VATSIM 客户端）的 MSFS 2020/2024 实践**：
+  - 引擎开关判定改为 `GENERAL ENG COMBUSTION`（|| N1>5 兜底）——N1 对
+    活塞机恒 0，只看 N1 会把活塞机全部上报熄火；
+  - ICAO 机型识别链新增 `ATC TYPE` 来源（标准 ICAO 代码，swift 的机型
+    匹配首选；排在 TITLE 反查之后、ATC MODEL 之前）；
+  - 起落架新增第三来源 `GEAR HANDLE POSITION`（swift 的本机起落架上
+    报来源；TOTAL PCT ∪ 动画位置 ∪ 手柄取最大值）；
+  - COM 可用性判定新增 `COM STATUS:n`（0=OK 1=不存在 2=断电 3=故障，
+    swift 同款：transmit && status==0）。
 - 远端全量 ACC 轮询：50km 内每 2s（全部请求），50km 外 30s（每轮最多 10 个）。
 - `fsd.log` 10MB×3、`xconnect.log` 8MB×3 滚动；`#AP` 密码统一替换为 `***`。
 - XConnect 降低高频日志（`send flight_data` 30s、`players updated` 仅变化时）。
 - 桥接握手信息写入客户端状态，便于诊断版本/能力不一致。
+- **MSFS 铭牌开关改为运行时生效**：新增 `Send:LABELS` 桥命令，设置里改开关
+  并保存时立即下发切换，不再要求重启 MConnect（见 Added：语义已改为自绘
+  overlay 显隐，废弃的铭牌事件不再发送）。
 
 ### Fixed
 
+- **站点 JSON 里 `livery` 恒为 null（IniBuilds A350 实测）**：机型推断
+  原来只在 ICAO 为空（或 `ATC*` 占位符）时触发，而 IniBuilds A350 上报的
+  ICAO 是非标准码 `A350-900`（标准码 A359）——非空、非占位，直接穿透护栏
+  进入 PI；`swift_livery("A350-900")` 在 swift 机型库查不到 id →
+  `LIVERY` 键不发 → 站点 livery 恒 null。修复：新增
+  `aircraft_db.normalize_icao()`（库内码原样保留；库外码按机模名称/码本身
+  重推，`A350-900` → A359；推不出保留原值保底 equipment），
+  `model.py`/`webapp.py` 两条上报路径统一走规范化
+  （回归测试 `tests/test_normalize_icao.py`）。
+- **站点 JSON 里 `engines` 恒为 null（第二条实测路径）**：机型 ICAO 反查
+  不到 swift id（如 MSFS 老插件的 `ATCCOM` 占位符）时 PI 缺 `LIVERY` 键，
+  `ENGINES=` 顶到 LIVERY 的槽位，服务器按位置取第 4 键拿到 `REG=` →
+  engines null（PI 里明明有 ENGINES=2）。修复：
+  - `packet.plane_info`：LIVERY 缺失时连带省略 ENGINES（保证槽位）；
+  - `model.py`/`webapp.py`：`ATC*` 占位符当**未知机型**走名称推断
+    （Fenix 连写 title → A320），equipment/livery/engines 三链一起恢复。
+- MConnect 起落架识别：Fenix 等 WASM 起落架机模只写 `GEAR ANIMATION POSITION`
+  而不维护 `GEAR TOTAL PCT EXTENDED`（停在地面上仍报 0），对端 CSL 起落架
+  显示收起。现按两个来源取最大值上报。
 - 服务器不支持 `^` 视觉位置时返回 `$ER 004 Syntax error` 刷屏：按最近发送的
   `^`/`#SB VI` 自动关闭对应报文（保留 `@`），并节流其它 004 日志。
 - ACC 部件规范化：只发送服务器认识的 6 个灯光键（去掉 recognition/cabin/wing），

@@ -179,13 +179,41 @@ MSFS 侧的取值说明：
 
 ### 呼号标签
 
-- 每个 AI 对象创建后把 `ATC ID` 写成远端**呼号**。
-- MSFS 内置"机模标签"（辅助选项）显示的就是 ATC ID：开启后他机头顶显示呼号。
-- `MConnect.exe --labels`（或客户端配置 `msfs_toggle_labels: true`）在启动时
-  翻转一次内置标签开关（toggle 语义：原本已开启会被关闭）。
+- 每个 AI 对象创建后把 `ATC ID` 写成远端**呼号**（内置 ATC 语音会正确称呼；
+  原生 Traffic Nameplates 对注入 AI 永不渲染，见下）。
+- **原生铭牌不可行（模拟器硬限制）**：MSFS 20/24 只对模拟器自建 AI/多人
+  飞机渲染铭牌，SimConnect 注入的 AI 一律没有；`TOGGLE_AIRCRAFT_LABELS`
+  事件已被官方废弃（任何版本均无效果，无替代）。
+- **自绘 overlay（现行方案）**：Community 覆盖包 `xflysim-labels`（JS，
+  注入飞行标记层）每 500ms 轮询 MConnect 的 HTTP roster 快照，把注入 AI
+  投影为世界锚定呼号标签（驾驶舱视角，样式与 X-Plane 自绘一致）。
+- 快照端点：`GET http://127.0.0.1:51002/roster`（备用端口 51003/51004，
+  同端口协议嗅探，桥接客户端不受影响），带 `Access-Control-Allow-Origin: *`。
+  响应示例：
+
+```json
+{"type":"roster_snapshot","labels_on":1,"sim":"msfs","players":[
+  {"callsign":"CCA1234","icao":"B738","lat":31.14,"lon":121.80,
+   "alt":1500.0,"heading":90.0,"gs":250.0}],"count":1}
+```
+
+- 显隐开关：`--labels`（启动默认）或 `{"type":"Send:LABELS"}`（运行时翻转）
+  → 快照里的 `labels_on`，overlay 轮询后立即显隐，无需重启。
 
 有效波段校验：`118000 ≤ freq ≤ 137000`（MHz×1000），越界直接拒收并记日志
 （客户端可能把 NAV 频率误发到 COM 通道）。
+
+### Send:TRAFFICLIB（切换 AI 模型库偏好）
+
+```json
+{"type":"Send:TRAFFICLIB","lib":"fsltl"}
+{"type":"Send:TRAFFICLIB","lib":"aig"}
+{"type":"Send:TRAFFICLIB","lib":"auto"}
+```
+
+`lib` 也接受数字 `0=auto / 1=fsltl / 2=aig`。只改变匹配偏好，不重新扫描
+目录；已创建的 AI 在下一帧按 title/livery 变化自动重建。仅 MConnect 支持，
+X-Plane 固定使用 X-CSL，不识别该命令。
 
 ### Send:XPDR（设置应答机）
 

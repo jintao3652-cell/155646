@@ -47,7 +47,8 @@
 #define CEV_COM2_RECV       217   /* COM2_RECEIVE_SELECT */
 #define CEV_COM3_RECV       218   /* COM3_RECEIVE_SELECT */
 /* MSFS 内置机模标签开关（呼号标签的显示开关，--labels 用） */
-#define CEV_TOGGLE_LABELS   219   /* TOGGLE_AIRCRAFT_LABELS */
+/* （CEV_TOGGLE_LABELS 已移除：TOGGLE_AIRCRAFT_LABELS 事件被 MSFS 废弃，
+ * 标签显隐走 overlay 方案 —— CMD_LABELS_TOGGLE → mconnect_toggle_labels_overlay。） */
 
 /* 命令种类 */
 typedef enum {
@@ -60,7 +61,8 @@ typedef enum {
     CMD_XPNDR_CODE,     /* 设置应答机 4 位码 */
     CMD_XPNDR_STATE,    /* 设置应答机模式（OFF/STBY/ON/ALT…） */
     CMD_XPNDR_IDENT,    /* 应答机 IDENT 脉冲 */
-    CMD_INPUT_EVENT     /* 按 hash 触发当前机模的 InputEvent */
+    CMD_INPUT_EVENT,    /* 按 hash 触发当前机模的 InputEvent */
+    CMD_LABELS_TOGGLE   /* 翻转 MSFS 内置机模标签（Send:LABELS 运行时下发） */
 } CmdKind;
 
 typedef struct {
@@ -114,9 +116,19 @@ int  control_parse_squawk(const char* s);
  * 必须重映射（否则"设为 ON"会把应答机打到 Test，管制看不到你）。 */
 int  control_canonical_to_msfs_state(int st);
 
-/* 翻转 MSFS 内置"机模标签"（TOGGLE_AIRCRAFT_LABELS 事件，--labels 用）。
- * 注意：事件是 toggle 语义且无状态可读 —— 若标签已开启会被关掉。
- * 返回 1 = 已发送。 */
-int  control_toggle_aircraft_labels(void);
+/* ---------------- 自绘呼号标签开关 ----------------
+ * MSFS 对 SimConnect 注入的 AI 不渲染原生 Traffic Nameplates（渲染层硬
+ * 限制），呼号显示由 Community 覆盖包 xflysim-labels 的 JS overlay 实现：
+ * 它每 500ms 轮询本进程 HTTP roster 快照（同端口 51002-4，首包嗅探），
+ * 快照里的 labels_on 即本开关（--labels / Send:LABELS 控制）。 */
+
+/* 当前开关状态（1 = overlay 显示标签）。 */
+int  control_labels_overlay_on(void);
+
+/* 运行时翻转（Send:LABELS 命令执行体）。返回翻转后的状态。 */
+int  control_toggle_labels_overlay(void);
+
+/* 启动时设置初始状态（--labels 参数）。 */
+void control_set_labels_overlay(int on);
 
 #endif /* MCONNECT_CONTROL_H */

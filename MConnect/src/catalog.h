@@ -23,6 +23,19 @@
 
 #include "mconnect.h"
 
+/* AI 模型库来源。扫描时按包名标记，匹配时按用户选择优先使用。
+ * 两套库都装了也不冲突：偏好库优先，未命中才回退其他来源，避免白机。 */
+typedef enum {
+    CAT_SRC_OTHER = 0,   /* 其它包（PMDG/Fenix 涂装等）/ 内置兜底 */
+    CAT_SRC_FSLTL = 1,   /* fsltl-* 包 */
+    CAT_SRC_AIG   = 2    /* aig-* / aigaim 包 */
+} CatalogSource;
+
+/* 模型库偏好（设置项 msfs_traffic_lib 与 --traffic-lib 共用） */
+#define CAT_LIB_AUTO  0
+#define CAT_LIB_FSLTL 1
+#define CAT_LIB_AIG   2
+
 /* 单条目：一个 (容器标题, 涂装) 组合，代表"能创建出来的一架具体飞机" */
 typedef struct {
     char title[112];    /* 容器标题（AICreate 的第 1 个参数） */
@@ -31,6 +44,7 @@ typedef struct {
     char airline[8];    /* 航司码（atc_airline / icao_airline） */
     char reg[16];       /* 绑定尾号（atc_id，空 = 通用） */
     unsigned char modular;   /* 1 = 需要走 _EX1 + livery */
+    unsigned char source;    /* CatalogSource：来自哪套 AI 模型库 */
 } CatalogEntry;
 
 /* 匹配结果 */
@@ -40,10 +54,20 @@ typedef struct {
     char title[112];
     char livery[64];
     unsigned char modular;
+    unsigned char source;    /* CatalogSource：实际命中的模型库 */
 } CatalogMatch;
 
 /* 启动目录扫描（后台线程；非阻塞返回）。dir_override 为空则自动探测。 */
 void catalog_start_scan(const char* dir_override);
+
+/* 运行时设置 AI 模型库偏好：CAT_LIB_AUTO / FSLTL / AIG。
+ * 只影响"优先使用哪套库"，不会丢弃另一套的条目；偏好库无匹配时自动回退。
+ * 网络线程可调用（内部原子变量 + 目录锁）。 */
+void  catalog_set_lib(int lib);
+int   catalog_lib(void);
+const char* catalog_lib_name(int lib);
+/* 条目来源名（FSLTL / AIG / OTHER），用于 AI 匹配日志。 */
+const char* catalog_source_name(int source);
 
 /* 扫描是否完成（未完成时匹配会退到内置兜底表）。 */
 int  catalog_ready(void);

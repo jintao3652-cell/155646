@@ -1,0 +1,20 @@
+{
+  "dependencies": [
+    {
+      "name": "fs-base-ui-pages",
+      "package_version": "0.1.0"
+    }
+  ],
+  "content_type": "MISC",
+  "title": "XFlySim Callsign Labels",
+  "manufacturer": "",
+  "creator": "XFlySim",
+  "package_version": "0.1.0",
+  "minimum_game_version": "1.28.5.0",
+  "release_notes": {
+    "neutral": {
+      "LastUpdate": "Initial release: self-drawn callsign labels for SimConnect-injected AI",
+      "OlderHistory": ""
+    }
+  }
+}

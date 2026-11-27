@@ -8,6 +8,7 @@
 #include "wasmbridge.h"
 #include "json.h"
 #include "sc.h"
+#include "mconnect.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -138,8 +139,8 @@ int control_init(void) {
     ok &= map_event(CEV_COM1_RECV,     "COM1_RECEIVE_SELECT");
     ok &= map_event(CEV_COM2_RECV,     "COM2_RECEIVE_SELECT");
     ok &= map_event(CEV_COM3_RECV,     "COM3_RECEIVE_SELECT");
-    /* 内置机模标签开关（呼号标签显示，--labels 用；失败只影响该功能） */
-    map_event(CEV_TOGGLE_LABELS,       "TOGGLE_AIRCRAFT_LABELS");
+    /* （CEV_TOGGLE_LABELS 已移除：TOGGLE_AIRCRAFT_LABELS 事件被 MSFS 官方
+     * 废弃，呼号标签改走 overlay 方案，见 CMD_LABELS_TOGGLE。） */
 
     g_evt_ready = ok ? 1 : 0;
     xc_logf("control: event mapping %s", ok ? "ok" : "PARTIAL (see above)");
@@ -671,6 +672,14 @@ static int exec_command(const Command* c) {
         /* 失败 → 试 WASM 桥（有些机模的 InputEvent 只在 WASM 上下文有效） */
         return try_rpn_fallback(c);
 
+    case CMD_LABELS_TOGGLE:
+        /* v2：TOGGLE_AIRCRAFT_LABELS 事件已被 MSFS 官方废弃（任何版本都无
+         * 效果），标签显隐改为 overlay 方案 —— 翻转 HTTP roster 快照里的
+         * labels_on 标志，sim 内 xflysim-labels 覆盖包轮询生效。
+         * 不需要 SimConnect，直接返回。 */
+        control_toggle_labels_overlay();
+        return 1;
+
     case CMD_XPNDR_STATE: {
         /* 应答机模式没有对应事件，写可写 SimVar TRANSPONDER STATE。
          * 定义在启动时建好（datadefs_register_xpdr），避免每条命令临时建定义。
@@ -737,20 +746,25 @@ unsigned control_profile_caps(void) {
     return p ? p->caps : 0u;
 }
 
-int control_toggle_aircraft_labels(void) {
-    if (!g_evt_ready || !g_sc.TransmitClientEvent) return 0;
-    {
-        HRESULT hr = g_sc.TransmitClientEvent(
-            g_sc_handle, SC_OBJECT_ID_USER, CEV_TOGGLE_LABELS, 0,
-            PRIO_HIGHEST, EVT_FLAG_GROUP_IS_PRIORITY);
-        if (FAILED(hr)) {
-            xc_logf("control: TOGGLE_AIRCRAFT_LABELS failed hr=0x%08lx",
-                    (unsigned long)hr);
-            return 0;
-        }
-    }
-    xc_logf("control: 已翻转 MSFS 内置机模标签（TOGGLE_AIRCRAFT_LABELS）");
-    return 1;
+/* ---------------- 自绘呼号标签开关 ----------------
+ * 状态放 control.c（CMD_LABELS_TOGGLE 的归属模块，control_test 只链本文件）；
+ * mconnect.c 的 HTTP roster 快照经 control_labels_overlay_on() 读取。 */
+static volatile LONG g_labels_overlay_on = 0;
+
+int control_labels_overlay_on(void) {
+    return (int)InterlockedCompareExchange(&g_labels_overlay_on, 0, 0);
+}
+
+int control_toggle_labels_overlay(void) {
+    LONG prev = InterlockedExchange(&g_labels_overlay_on,
+                                    g_labels_overlay_on ? 0 : 1);
+    xc_logf("labels: overlay %s -> %s", prev ? "on" : "off",
+            g_labels_overlay_on ? "on" : "off");
+    return (int)g_labels_overlay_on;
+}
+
+void control_set_labels_overlay(int on) {
+    InterlockedExchange(&g_labels_overlay_on, on ? 1 : 0);
 }
 
 void control_drain(void) {
@@ -1011,6 +1025,18 @@ static void handle_rpn(const Json* root) {
     xc_logf("control: RPN 未执行（WASM 桥不可用）: %s", rpn);
 }
 
+/* Send:LABELS —— 翻转 MSFS 内置机模标签（Traffic Nameplates）。
+ *   {"type":"Send:LABELS"}
+ * 无参数：底层只有 toggle 事件（无状态 SimVar，做不了绝对开关）。
+ * 入命令队列由主线程执行（SimConnect 非线程安全，与其他控制命令一致）。 */
+static void handle_labels(void) {
+    Command c;
+
+    memset(&c, 0, sizeof(c));
+    c.kind = CMD_LABELS_TOGGLE;
+    control_post(&c);
+}
+
 int control_handle_message(const Json* root, void* unused) {
     const Json* jt;
     (void)unused;
@@ -1033,6 +1059,10 @@ int control_handle_message(const Json* root, void* unused) {
     }
     if (strcmp(jt->sval, "Send:RPN") == 0) {
         handle_rpn(root);
+        return 1;
+    }
+    if (strcmp(jt->sval, "Send:LABELS") == 0) {
+        handle_labels();
         return 1;
     }
     return 0;

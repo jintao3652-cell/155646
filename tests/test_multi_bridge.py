@@ -88,10 +88,38 @@ class TestMultiEndpointConnect(unittest.TestCase):
         return c
 
     def test_msfs_bridge_online(self):
-        self._connect_to("msfs", "MConnect")
+        c = self._connect_to("msfs", "MConnect")
+        # MC 必须被分类为独立的 mconnect 桥，不能归入 xconnect
+        self.assertEqual(c.bridge_kind, "mconnect")
 
     def test_xplane_bridge_online(self):
-        self._connect_to("xplane", "XConnect")
+        c = self._connect_to("xplane", "XConnect")
+        self.assertEqual(c.bridge_kind, "xconnect")
+
+    def test_kind_classified_by_plugin_name_overrides_port(self):
+        """握手插件名优先于端口推断：端口表猜错时以插件名为准。"""
+        holder = {}
+        # 用非 MConnect 端口（伪装成 51001 段）跑 MConnect 握手
+        port = _start_fake_bridge(holder, "msfs", "MConnect")
+        ready = threading.Event()
+        c = XConnectClient("127.0.0.1", 51001, ports=[port])
+        c.on_handshake = lambda doc: ready.set()
+        c.start()
+        try:
+            self.assertTrue(ready.wait(3.0), "未完成握手")
+            self.assertEqual(c.bridge_kind, "mconnect",
+                             "插件名含 MConnect 时必须分类为 mconnect")
+        finally:
+            c.stop()
+
+    def test_kind_classified_by_port_before_handshake(self):
+        """连上后（握手前）即可按端口给出 provisional 分类。"""
+        c = XConnectClient("127.0.0.1", 51001, mconnect_port=51002)
+        self.assertEqual(c._classify_port(51001), "xconnect")
+        self.assertEqual(c._classify_port(51002), "mconnect")
+        self.assertEqual(c._classify_port(51003), "mconnect")
+        self.assertEqual(c._classify_port(51004), "mconnect")
+        self.assertEqual(c.bridge_kind, "", "未连接前分类应为空")
 
     def test_falls_back_when_primary_bridge_offline(self):
         """首选端口无服务时，应回退连到另一个在线端点（如 XP 关、MSFS 开）。"""

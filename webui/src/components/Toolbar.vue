@@ -1,7 +1,7 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { store, doConnect, doDisconnect, onSim, onCallsignInput,
-         fsdText, fsdTag, xpText, xpTag, cslText, cslTag, cslTitle,
+         fsdText, fsdTag, xpText, xpTag, mcText, mcTag, cslText, cslTag, cslTitle,
          regText, regSrcText } from '../store.js'
 const { t } = useI18n()
 </script>
@@ -33,7 +33,9 @@ const { t } = useI18n()
         <el-tag size="small" type="info" effect="dark">{{ regText }}</el-tag>
       </el-tooltip>
       <el-tag size="small" :type="fsdTag" effect="dark">{{ fsdText }}</el-tag>
+      <!-- XC 与 MC 是两个同级独立的桥分类：X-Plane 走 XC，MSFS 走 MC -->
       <el-tag size="small" :type="xpTag" effect="dark">{{ xpText }}</el-tag>
+      <el-tag size="small" :type="mcTag" effect="dark">{{ mcText }}</el-tag>
       <el-tooltip :content="cslTitle" placement="bottom">
         <el-tag size="small" :type="cslTag" effect="dark">{{ cslText }}</el-tag>
       </el-tooltip>

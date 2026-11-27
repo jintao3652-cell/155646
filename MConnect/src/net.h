@@ -32,6 +32,12 @@ int net_write_all(net_sock_t sock, const char* buf, int len);
 /* 发送一行文本（自动补 \n）。 */
 int net_send_line(net_sock_t sock, const char* line);
 
+/* 首包嗅探：该连接是否 HTTP 请求（同端口双协议：桥接 JSON 行 / HTTP 快照）。 */
+int net_peek_is_http(net_sock_t sock);
+
+/* 消费掉 HTTP 请求头（GET/OPTIONS 无 body）。返回 0 成功。 */
+int net_skip_http_head(net_sock_t sock);
+
 /* 主动关闭并唤醒阻塞中的 accept/recv。 */
 void net_close(net_sock_t sock);
 

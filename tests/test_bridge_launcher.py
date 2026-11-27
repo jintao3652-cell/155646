@@ -48,6 +48,28 @@ class TestBridgeLauncher(unittest.TestCase):
             self.assertFalse(launcher.start())
             self.assertTrue(any("未编译" in m for m in logs))
 
+    def test_traffic_lib_setting_passthrough(self):
+        from xfly_client.config import AppConfig
+        from xfly_client.bridge_launcher import BridgeLauncher
+        cfg = AppConfig()
+        self.assertEqual(cfg.msfs_traffic_lib, "auto",
+                         "默认自动（FSLTL/AIG 都可用）")
+        launcher = BridgeLauncher("dummy", traffic_lib="fsltl")
+        self.assertEqual(launcher._traffic_lib, "fsltl")
+        # 非法值回退 auto，不让坏配置污染命令行
+        self.assertEqual(BridgeLauncher("dummy", traffic_lib="bogus")._traffic_lib,
+                         "auto")
+        self.assertIn("--traffic-lib", read("xfly_client/bridge_launcher.py"))
+        for path in ("webapp.py", "main.py"):
+            self.assertIn("msfs_traffic_lib", read(path),
+                          f"{path} 必须把配置透传给启动器")
+
+    def test_traffic_lib_runtime_command_wired(self):
+        self.assertIn("Send:TRAFFICLIB", read("xfly_client/xconnect/client.py"))
+        self.assertIn("Send:TRAFFICLIB", read("MConnect/src/mconnect.c"))
+        self.assertIn("set_msfs_traffic_lib", read("webapp.py"))
+        self.assertIn("set_msfs_traffic_lib", read("webui/src/store.js"))
+
     def test_webapp_wires_launcher(self):
         code = read("webapp.py")
         self.assertIn("BridgeLauncher(", code)

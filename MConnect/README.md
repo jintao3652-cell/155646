@@ -118,6 +118,7 @@ MConnectConsole.exe [选项]
   --dump-wasm        检查 WASM 桥（MobiFlight 模块）是否可用
   --dump-profiles    打印机型档案表（各机模实测写法与已知限制）
   --parts-probe      真机探针：注入临时 AI 飞机，检测部件 SimVar/灯光事件是否可写
+  --traffic-lib <s>  AI 模型库偏好：auto（默认）/ fsltl / aig
   --simconnect <p>   指定 SimConnect.dll 路径或所在目录
   --verbose, -v      详细日志
 ```
@@ -135,7 +136,18 @@ MConnectConsole.exe [选项]
   XXXX   -> level=4  "Generic Airliner Twin Engines Asobo 00"  livery=""
 ```
 
+日志还会按来源分别统计，一眼确认 FSLTL/AIG 两套库是否都扫到了：
+
+```
+catalog: AI 库条目 FSLTL=<n> AIG=<n> 其它=<n>（当前偏好=AUTO）
+```
+
 ## 机型目录
+
+三处来源合并去重。每条条目会按 Community 包名标记来源
+（`fsltl-*` → FSLTL，`aig-*` / `AIG_AIManager` → AIG，其它 → OTHER），
+供设置里的「MSFS 他机模型库」优先匹配使用：所选库先跑完四级匹配，
+没有合适机型/涂装时才回退到另一套库与内置表。两套库可以同时安装。
 
 三处来源合并去重：
 
@@ -233,22 +245,30 @@ MConnectConsole.exe [选项]
 | `recv_all`（全收） | 显式忽略 + 日志 | MSFS 无"全收"事件（读侧有 `COM RECEIVE ALL`，无对应写入） |
 | `power`（单台电源） | 显式忽略 + 日志 | MSFS 无单台 COM 电源 SimVar |
 
-### 呼号标签（ATC ID）
+### 呼号标签（自绘 overlay）
 
 MConnect 在每个 AI 创建成功后把 `ATC ID` 写成远端呼号（DEF_AI_ATCID，
-String32）。MSFS 内置的 **"交通铭牌"（Traffic Nameplates，选项→常规选项→
-交通→显示交通铭牌）** 显示的就是 ATC ID——开启铭牌即可看到他机呼号。
+String32）——内置 ATC 语音会用它称呼远端航班。
 
-限制（模拟器硬约束，代码无法绕过）：
+**为什么原生铭牌不可行（2026-11 研究结论，模拟器硬限制）**：
 
-- **铭牌位置由模拟器固定绘制**（锚在飞机包围球上方一段屏幕偏移），离机越远
-  视觉上飘得越高，SimConnect 无 API 移动/重锚/改样式，做不到贴机身。
-  X-Plane 侧的贴机身呼号由 XConnect 自绘实现（见 XConnect README）
-- `TOGGLE_AIRCRAFT_LABELS` 事件在 **MSFS 2020 已废弃**（官方确认，无替代）：
-  `--labels` / 客户端配置 `msfs_toggle_labels` 在 2020 上无效，只能在模拟器
-  设置里手动开关；2024 上事件仍可用
-- 事件只在 MConnect 启动时发一次（toggle 语义：原本已开会被关掉），改配置后
-  需重启 MConnect
+- MSFS 20/24 只对**模拟器自建**的 AI/多人飞机渲染 Traffic Nameplates；
+  SimConnect 注入的 AI（`AICreateNonATCAircraft` / Parked / Enroute 均同）
+  一律没有铭牌（官方 DevSupport 确认 + FSTraffic/AIG/FSLTL/vPilot 全线一致）
+- `TOGGLE_AIRCRAFT_LABELS` 事件已被官方废弃，任何版本均无效果、无替代
+  （2024 的 ALT+2 快捷键无对应 SimConnect 事件）
+
+**现行方案：xflysim-labels 覆盖包（自绘，与 X-Plane 侧对齐）**：
+
+- Community 包 `xflysim-labels`（随发布包附带，解压进 Community 即可）：
+  JS overlay 注入飞行标记层（覆盖版 `InGameMarkers.html`），每 500ms 轮询
+  MConnect 的 **HTTP roster 快照**（同端口 51002-4，协议嗅探，不影响桥接），
+  读用户机位置/姿态 SimVar 把注入 AI 投影为世界锚定的琥珀色呼号标签
+- 显隐控制：`--labels`（启动默认）或客户端设置开关（保存时发 `Send:LABELS`
+  运行时翻转快照里的 `labels_on`，overlay 立即生效，无需重启）
+- v1 限制：仅驾驶舱视角可见；驾驶舱自由环视不补偿（标签会漂移）；
+  FOV 由 `COCKPIT_CAMERA_ZOOM` 近似换算（`xfly_labels.js` 顶部常量可调）；
+  MSFS 大版本更新后如原生 `InGameMarkers.html` 变更需重新合并覆盖文件
 
 ### 深度机模：三级写入通道
 

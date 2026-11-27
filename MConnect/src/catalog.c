@@ -18,6 +18,59 @@ static volatile LONG g_cat_stop = 0;
 static HANDLE g_cat_thread = NULL;
 static CRITICAL_SECTION g_cat_lock;
 static int g_cat_lock_init = 0;
+/* 用户选择的 AI 模型库偏好（CAT_LIB_*）。原子读写，网络线程可随时切换。 */
+static volatile LONG g_cat_lib = CAT_LIB_AUTO;
+
+/* ---------------- AI 模型库偏好 ---------------- */
+
+const char* catalog_lib_name(int lib) {
+    switch (lib) {
+    case CAT_LIB_FSLTL: return "FSLTL";
+    case CAT_LIB_AIG:   return "AIG";
+    default:            return "AUTO";
+    }
+}
+
+const char* catalog_source_name(int source) {
+    switch (source) {
+    case CAT_SRC_FSLTL: return "FSLTL";
+    case CAT_SRC_AIG:   return "AIG";
+    default:            return "OTHER";
+    }
+}
+
+int catalog_lib(void) {
+    return (int)InterlockedCompareExchange(&g_cat_lib, 0, 0);
+}
+
+void catalog_set_lib(int lib) {
+    int old = catalog_lib();
+    if (lib != CAT_LIB_AUTO && lib != CAT_LIB_FSLTL && lib != CAT_LIB_AIG) {
+        lib = CAT_LIB_AUTO;
+    }
+    InterlockedExchange(&g_cat_lib, lib);
+    if (old != lib) {
+        xc_logf("catalog: AI 模型库偏好 %s -> %s（优先使用，缺失时回退其它库）",
+                catalog_lib_name(old), catalog_lib_name(lib));
+    }
+}
+
+/* 从 Community 包名判断来源。FSLTL 基础包是 fsltl-traffic-base，
+ * AIG 是 aig-aitraffic-* / AIG_AIManager / aigaim-*，与大小写无关。
+ * 两种库的 title 前缀也分别有 FSLTL_ / AIGAIM_，但包名更稳：涂装包
+ * 里的 title 可能继承机模名，不一定带库前缀。 */
+static int source_from_package(const char* pkg) {
+    char low[128];
+    size_t i, n = 0;
+    if (!pkg || !*pkg) return CAT_SRC_OTHER;
+    for (i = 0; pkg[i] && n < sizeof(low) - 1; i++)
+        low[n++] = (char)tolower((unsigned char)pkg[i]);
+    low[n] = '\0';
+    if (strstr(low, "fsltl")) return CAT_SRC_FSLTL;
+    if (strstr(low, "aigaim") || strstr(low, "aig-aitraffic") ||
+        strncmp(low, "aig_", 4) == 0) return CAT_SRC_AIG;
+    return CAT_SRC_OTHER;
+}
 
 /* ---------------- 字符串工具 ---------------- */
 
@@ -371,7 +424,8 @@ const char* catalog_icao_from_title_keywords(const char* title) {
 
 /* 添加条目（按 title+livery 去重）。持锁调用或扫描线程独占时调用。 */
 static void cat_add_raw(const char* title, const char* livery, const char* icao,
-                        const char* airline, const char* reg, int modular) {
+                        const char* airline, const char* reg, int modular,
+                        int source) {
     int i;
     if (!title || !title[0]) return;
     if (g_cat_n >= CATALOG_MAX) return;
@@ -403,6 +457,7 @@ static void cat_add_raw(const char* title, const char* livery, const char* icao,
         if (reg && reg[0])
             snprintf(e->reg, sizeof(e->reg), "%s", reg);
         e->modular = (unsigned char)(modular ? 1 : 0);
+        e->source = (unsigned char)source;
     }
 }
 
@@ -461,7 +516,7 @@ static void airline_from_cfg(Ini* ini, char* out, int cap) {
  *   [GENERAL] icao_type_designator / atc_model
  *   [FLTSIM.N] title / atc_id / atc_airline / icao_airline / texture
  * 每个 FLTSIM 节产出一条条目。 */
-static void scan_aircraft_cfg(const char* cfg_path) {
+static void scan_aircraft_cfg(const char* cfg_path, int source) {
     Ini* ini;
     char icao[16] = "";
     int has_fltsim = 0;
@@ -492,7 +547,7 @@ static void scan_aircraft_cfg(const char* cfg_path) {
         }
         if (title[0]) {
             LOCK_ENTER(&g_cat_lock);
-            cat_add_raw(title, "", icao, airline, reg, 0);
+            cat_add_raw(title, "", icao, airline, reg, 0, source);
             LOCK_LEAVE(&g_cat_lock);
         }
         ini_close(ini);
@@ -526,7 +581,7 @@ static void scan_aircraft_cfg(const char* cfg_path) {
                 snprintf(livery, sizeof(livery), "%s", tex);
 
             LOCK_ENTER(&g_cat_lock);
-            cat_add_raw(title, livery, icao, airline, reg, 0);
+            cat_add_raw(title, livery, icao, airline, reg, 0, source);
             LOCK_LEAVE(&g_cat_lock);
         }
     }
@@ -537,7 +592,7 @@ static void scan_aircraft_cfg(const char* cfg_path) {
 /* 解析 2024 的 livery.cfg：[GENERAL] name 给涂装名，容器标题需要靠运行时
  * 枚举（catalog_add_enumerated 配对）。这里先以"空标题"占位记录涂装名，
  * 待 2024 的 EnumerateSimObjectsAndLiveries 回来后再补标题。 */
-static void scan_livery_cfg(const char* cfg_path) {
+static void scan_livery_cfg(const char* cfg_path, int source) {
     Ini* ini = ini_open(cfg_path);
     char name[128];
     if (!ini) return;
@@ -549,47 +604,58 @@ static void scan_livery_cfg(const char* cfg_path) {
         const char* p = name;
         while (*p == '!') p++;   /* "!Airline" 的强制排序前缀 */
         LOCK_ENTER(&g_cat_lock);
-        cat_add_raw("", p, "", "", "", 1);
+        cat_add_raw("", p, "", "", "", 1, source);
         LOCK_LEAVE(&g_cat_lock);
     }
     ini_close(ini);
 }
 
-static void scan_dir(const char* dir, int depth);
+static void scan_dir(const char* dir, int depth, int source);
 
 /* 递归找 aircraft.cfg 与 livery.cfg。depth 上限：MSFS 的包结构一般是
  * <pkg>/SimObjects/Airplanes/<name>/aircraft.cfg（4 层），给 8 层足够，
- * 同时避免在超深目录上浪费时间。 */
-static void scan_dir(const char* dir, int depth) {
+ * 同时避免在超深目录上浪费时间。
+ *
+ * source 沿目录树传递：任何一层目录名命中 FSLTL/AIG 包名，其子树的
+ * 全部条目都标记为对应来源（Official/OneStore/<pkg> 这种多层布局也适用）。 */
+static void scan_dir(const char* dir, int depth, int source) {
     WIN32_FIND_DATAA fd;
     HANDLE h;
     char pattern[MAX_PATH];
+    char sub[MAX_PATH];
+    const char* slash;
     int guard = 0;
 
     if (depth > 8) return;
     if (InterlockedCompareExchange(&g_cat_stop, 1, 1) == 1) return;
+
+    /* 目录自身（如 --scan 指向的 fsltl-traffic-base）也算一次包名 */
+    slash = strrchr(dir, '\\');
+    if (!slash) slash = strrchr(dir, '/');
+    {
+        int own = source_from_package(slash ? slash + 1 : dir);
+        if (own != CAT_SRC_OTHER) source = own;
+    }
 
     snprintf(pattern, sizeof(pattern), "%s\\*", dir);
     h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE) return;
 
     do {
-        char sub[MAX_PATH];
+        int child_source = source;
         if (fd.cFileName[0] == '.') continue;
-        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-            (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
-            /* 符号链接目录（Addons Linker 会用）需要跟进去，
-             * 但要防环：靠 depth 限制兜底 */
-        }
         snprintf(sub, sizeof(sub), "%s\\%s", dir, fd.cFileName);
 
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            scan_dir(sub, depth + 1);
+            /* 符号链接目录（Addons Linker）照常跟进，靠 depth 防环 */
+            child_source = source_from_package(fd.cFileName);
+            if (child_source == CAT_SRC_OTHER) child_source = source;
+            scan_dir(sub, depth + 1, child_source);
         } else {
             if (_stricmp(fd.cFileName, "aircraft.cfg") == 0) {
-                scan_aircraft_cfg(sub);
+                scan_aircraft_cfg(sub, source);
             } else if (_stricmp(fd.cFileName, "livery.cfg") == 0) {
-                scan_livery_cfg(sub);
+                scan_livery_cfg(sub, source);
             }
         }
         if (++guard > 200000) break;   /* 防御性上限 */
@@ -669,7 +735,7 @@ static void scan_all_packages(void) {
         for (k = 0; k < sizeof(kSubs) / sizeof(kSubs[0]); k++) {
             snprintf(sub, sizeof(sub), "%s\\%s", roots[i], kSubs[k]);
             if (GetFileAttributesA(sub) != INVALID_FILE_ATTRIBUTES) {
-                scan_dir(sub, 0);
+                scan_dir(sub, 0, CAT_SRC_OTHER);
                 scanned++;
             }
         }
@@ -698,10 +764,10 @@ static void scan_all_packages(void) {
                 RegCloseKey(k);
                 snprintf(sub, sizeof(sub), "%s\\Community", app);
                 if (GetFileAttributesA(sub) != INVALID_FILE_ATTRIBUTES)
-                    scan_dir(sub, 0);
+                    scan_dir(sub, 0, CAT_SRC_OTHER);
                 snprintf(sub, sizeof(sub), "%s\\Official", app);
                 if (GetFileAttributesA(sub) != INVALID_FILE_ATTRIBUTES)
-                    scan_dir(sub, 0);
+                    scan_dir(sub, 0, CAT_SRC_OTHER);
                 return;
             }
             RegCloseKey(k);
@@ -716,7 +782,7 @@ static THREAD_RET catalog_thread(THREAD_ARG arg) {
 
     xc_logf("catalog: scan start");
     if (override_dir && override_dir[0]) {
-        scan_dir(override_dir, 0);
+        scan_dir(override_dir, 0, CAT_SRC_OTHER);
     } else {
         scan_all_packages();
     }
@@ -830,11 +896,21 @@ const char* catalog_icao_for_title(const char* title) {
     if (g_cat && g_cat_lock_init) {
         LOCK_ENTER(&g_cat_lock);
         for (i = 0; i < g_cat_n; i++) {
-            if (g_cat[i].icao[0] && _stricmp(g_cat[i].title, title) == 0) {
-                static char out[16];
-                snprintf(out, sizeof(out), "%s", g_cat[i].icao);
-                LOCK_LEAVE(&g_cat_lock);
-                return out;
+            if (!g_cat[i].icao[0]) continue;
+            if (_stricmp(g_cat[i].title, title) == 0) {
+                /* ⚠️ 目录条目的 ICAO 可能是机模 cfg 里填的占位符
+                 * （ATCCOM/ATCPVT…，机模作者没写 icao_type_designator 时
+                 * MSFS 给的默认值，实测 Fenix A320）。占位符**不算识别
+                 * 成功** —— 不能直接 return，否则会绕过下面的内置表与
+                 * 关键词兜底，把 "ATCCOM" 原样上报导致对端机型匹配全灭
+                 * （2026-11-26 22:56 会话实证）。跳过这条继续找。 */
+                if (_strnicmp(g_cat[i].icao, "ATC", 3) == 0) continue;
+                {
+                    static char out[16];
+                    snprintf(out, sizeof(out), "%s", g_cat[i].icao);
+                    LOCK_LEAVE(&g_cat_lock);
+                    return out;
+                }
             }
         }
         LOCK_LEAVE(&g_cat_lock);
@@ -843,7 +919,9 @@ const char* catalog_icao_for_title(const char* title) {
     {
         size_t k;
         for (k = 0; k < sizeof(kBuiltin) / sizeof(kBuiltin[0]); k++) {
-            if (_stricmp(kBuiltin[k].title, title) == 0) return kBuiltin[k].icao;
+            if (_stricmp(kBuiltin[k].title, title) == 0 &&
+                _strnicmp(kBuiltin[k].icao, "ATC", 3) != 0)
+                return kBuiltin[k].icao;
         }
     }
     /* 关键词兜底：FenixA320 连写 / 涂装名打头等场景（见 kTitleKeywords） */
@@ -875,7 +953,14 @@ void catalog_add_enumerated(const char* title, const char* livery) {
             return;
         }
     }
-    cat_add_raw(title, livery, icao, "", "", 1);
+    {
+        /* 2024 枚举只给标题/涂装，用标题前缀补一个来源标记 */
+        int src = CAT_SRC_OTHER;
+        if (_strnicmp(title, "FSLTL", 5) == 0) src = CAT_SRC_FSLTL;
+        else if (_strnicmp(title, "AIGAIM", 6) == 0 ||
+                 _strnicmp(title, "AIG_", 4) == 0) src = CAT_SRC_AIG;
+        cat_add_raw(title, livery, icao, "", "", 1, src);
+    }
     LOCK_LEAVE(&g_cat_lock);
 }
 
@@ -884,7 +969,7 @@ void catalog_add_enumerated(const char* title, const char* livery) {
 /* 在目录里按 (icao, airline) 找涂装；reg 非空时优先精确尾号。
  * 返回 1 命中。level 由调用方标注。 */
 static int match_in_catalog(const char* icao, const char* airline,
-                            const char* reg, CatalogMatch* out) {
+                            const char* reg, CatalogMatch* out, int lib) {
     int i;
     int best = -1;
     int best_score = -1;
@@ -897,6 +982,7 @@ static int match_in_catalog(const char* icao, const char* airline,
         const CatalogEntry* e = &g_cat[i];
 
         if (!e->title[0]) continue;
+        if (lib && e->source != lib) continue;   /* 用户指定的模型库优先 */
         if (_stricmp(e->icao, icao) != 0) continue;
 
         /* 第 1 级：尾号一致（涂装名/标题含同一尾号，或 atc_id 精确相同） */
@@ -943,6 +1029,7 @@ static int match_in_catalog(const char* icao, const char* airline,
         snprintf(out->title, sizeof(out->title), "%s", g_cat[best].title);
         snprintf(out->livery, sizeof(out->livery), "%s", g_cat[best].livery);
         out->modular = g_cat[best].modular;
+        out->source = g_cat[best].source;
         out->found = 1;
         if (best_score >= 90) out->level = 1;
         else if (best_score >= 55) out->level = 2;
@@ -954,11 +1041,36 @@ static int match_in_catalog(const char* icao, const char* airline,
     return 0;
 }
 
+/* 按指定来源集合跑完整四级匹配；lib=0 表示不限制来源。 */
+static int match_round(const char* icao, const char* airline, const char* reg,
+                       CatalogMatch* out, int lib) {
+    const char* alias;
+
+    /* 第 1~3 级：尾号 → 航司 → 机型 */
+    if (match_in_catalog(icao, airline, reg, out, lib)) return 1;
+
+    /* 空航司时也试一次"只按机型"（有些包装的航司码是 ZZZZ） */
+    if (airline && airline[0] &&
+        match_in_catalog(icao, "", reg, out, lib)) return 1;
+
+    /* 第 4 级：机型别名 → 同族机型再试 */
+    alias = alias_target(icao);
+    if (alias && _stricmp(alias, icao) != 0) {
+        if (match_in_catalog(alias, airline, reg, out, lib) ||
+            match_in_catalog(alias, "", "", out, lib)) {
+            out->level = 4;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void catalog_match(const char* icao_in, const char* airline, const char* reg,
                    CatalogMatch* out) {
     char icao[16];
     const char* alias;
     const char* level_icao;
+    int lib;
 
     if (!out) return;
     memset(out, 0, sizeof(*out));
@@ -966,27 +1078,15 @@ void catalog_match(const char* icao_in, const char* airline, const char* reg,
     catalog_sanitize_icao(icao_in, icao, sizeof(icao));
     if (!icao[0]) snprintf(icao, sizeof(icao), "ZZZZ");
 
-    level_icao = icao;
+    /* 先把偏好库的四级全跑完，再回退全部来源。
+     * 不能逐级别"先偏好后全局"：那样偏好库里的白机会被另一套库的
+     * 航司涂装抢走，等于用户的选择没生效。 */
+    lib = catalog_lib();
+    if (lib && match_round(icao, airline, reg, out, lib)) return;
+    if (match_round(icao, airline, reg, out, 0)) return;
 
-    /* 第 1~3 级：在扫描目录里找 */
-    if (match_in_catalog(icao, airline, reg, out)) return;
-
-    /* 空航司时也试一次"只按机型"（有些包装的航司码是 ZZZZ） */
-    if (airline && airline[0] && match_in_catalog(icao, "", reg, out)) return;
-
-    /* 第 4 级：机型别名 → 同族机型再试 */
     alias = alias_target(icao);
-    if (alias && _stricmp(alias, icao) != 0) {
-        level_icao = alias;
-        if (match_in_catalog(alias, airline, reg, out)) {
-            out->level = 4;
-            return;
-        }
-        if (match_in_catalog(alias, "", "", out)) {
-            out->level = 4;
-            return;
-        }
-    }
+    level_icao = (alias && _stricmp(alias, icao) != 0) ? alias : icao;
 
     /* 扫描目录完全不可用（未装第三方包）→ 内置兜底表 */
     {
@@ -1012,6 +1112,7 @@ void catalog_match(const char* icao_in, const char* airline, const char* reg,
 
 void catalog_dump_stats(void) {
     int total, with_icao = 0, modular = 0, i;
+    int n_fsltl = 0, n_aig = 0, n_other = 0;
     if (!g_cat || !g_cat_lock_init) return;
 
     LOCK_ENTER(&g_cat_lock);
@@ -1019,6 +1120,9 @@ void catalog_dump_stats(void) {
     for (i = 0; i < g_cat_n; i++) {
         if (g_cat[i].icao[0]) with_icao++;
         if (g_cat[i].modular) modular++;
+        if (g_cat[i].source == CAT_SRC_FSLTL) n_fsltl++;
+        else if (g_cat[i].source == CAT_SRC_AIG) n_aig++;
+        else n_other++;
     }
     LOCK_LEAVE(&g_cat_lock);
 
@@ -1026,4 +1130,7 @@ void catalog_dump_stats(void) {
             "supportsModular=%d",
             total, with_icao, modular, catalog_builtin_count(),
             g_sc.supports_modular);
+    /* 按来源分开统计：一眼确认 FSLTL / AIG 两套库是否都扫描到了 */
+    xc_logf("catalog: AI 库条目 FSLTL=%d AIG=%d 其它=%d（当前偏好=%s）",
+            n_fsltl, n_aig, n_other, catalog_lib_name(catalog_lib()));
 }
