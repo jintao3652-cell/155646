@@ -33,6 +33,15 @@
 #define REQ_FLIGHT_AUX  7
 /* AI 飞机 ATC ID 写入（呼号标签：MSFS 内置机模标签显示的就是 ATC ID） */
 #define DEF_AI_ATCID    8
+/* IniBuilds A350 面板灯光 LVar（可选）。
+ * **必须从 DEF_FLIGHT 主定义里拆出来**：MSFS 2020 的 SimConnect 不认
+ * `(L:..., number)` 这种 calculator 变量名，AddToDataDefinition 虽然返回
+ * S_OK，但 SimConnect 会在解析定义时抛 NAME_UNRECOGNIZED，并从发包里
+ * 剔除这些字段（7 个 double = 56 字节），导致主遥测包长不匹配被整包丢弃
+ * —— 连带 TITLE / ATC TYPE 读不到，本机机型自动识别彻底失效。
+ * 拆开后：主包长度固定，LVar 读不到只影响 A350 灯光覆盖。 */
+#define DEF_INI_LIGHTS  9
+#define REQ_INI_LIGHTS  9
 
 /* AI 飞机位置写入结构。**字段顺序必须与 ai_define_position() 完全一致**，
  * 否则 SetDataOnSimObject 会报 SIZE_MISMATCH。
@@ -136,6 +145,11 @@ int  datadefs_register_xpdr(void);
 /* 注册辅助遥测定义（flight_id / COM RECEIVE / 扩展灯光）。
  * 可选：失败（旧版模拟器缺变量）只影响这些字段，返回 -1 不影响主遥测。 */
 int  datadefs_register_aux(void);
+
+/* 注册 IniBuilds A350 灯光 LVar 定义（可选，见 DEF_INI_LIGHTS 说明）。
+ * 与主遥测完全隔离：MSFS 2020 不认 LVar 变量名时只报一次异常，
+ * 主飞行数据（含机型识别）照常工作。返回 -1 仅表示灯光覆盖不可用。 */
+int  datadefs_register_ini_lights(void);
 
 /* 注册 AI 飞机 ATC ID 写入定义（呼号标签）。 */
 int  datadefs_register_ai_atcid(void);

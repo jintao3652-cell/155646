@@ -134,16 +134,9 @@ typedef struct {
     char   atc_model[32];
     char   atc_type[32];          /* ATC TYPE = 标准 ICAO 机型代码（如 B738） */
     DWORD  parking_brake;
-    /* IniBuilds A350 外部灯开关 LVar 直读（见 add() 末尾的说明）。
-     * 非 A350 机模这些 LVar 不存在，SimConnect 恒返回 0 —— 由
-     * apply_ini_lights() 按 title/ICAO 判定后才用于覆盖标准灯。 */
-    double ini_beacon;
-    double ini_landing;
-    double ini_logo;
-    double ini_nav;
-    double ini_strobe;
-    double ini_wing;
-    double ini_nose;
+    /* IniBuilds A350 灯光 LVar 已拆到独立定义 DEF_INI_LIGHTS。
+     * 绝不能放回这里：MSFS 2020 会从主包剔除这些不被识别的字段
+     * （7×double=56 字节），使整包长度校验失败、机型识别失效。 */
     /* 起落架动画位置（GEAR ANIMATION POSITION:0..2，percent 0..100）。
      * Fenix 等深度机模的起落架系统在 WASM 内实现，**只写动画位置**，
      * 不维护 GEAR TOTAL PCT EXTENDED（实测停机坪上 TOTAL 恒 0）→
@@ -264,35 +257,10 @@ int datadefs_init(void) {
 
     hr |= add(h, DEF_FLIGHT, "BRAKE PARKING POSITION", "Bool", SC_DATATYPE_INT32);
 
-    /* IniBuilds A350 外部灯开关 LVar。
-     *
-     * A350 的灯光系统全部在机模 WASM 内实现，**不写标准 LIGHT SimVar**
-     * （实测 BEACON/LOGO/WING/NAV/STROBE 拨到 ON 后标准 SimVar 仍是 false，
-     * 只有部分灯走标准通道），导致上报的灯光几乎全灭。这里直接读面板
-     * 开关 LVar —— SimConnect 变量名支持 calculator 形式的 L: 读取
-     * （与 MobiFlight 同款做法，无需 WASM 桥）。
-     * 档位语义经 HubHop 全量预置核对：
-     *   BEACON / LANDING / WING: 0=OFF 1=ON（2 态）
-     *   LOGO:   0=OFF 1=AUTO 2=ON
-     *   NAV:    0=OFF 1=NAV2 2=NAV1（1/2 两档导航灯都亮）
-     *   STROBE: 0=OFF 1=AUTO 2=ON（AUTO 空中闪、地面灭）
-     *   NOSE:   0=OFF 1=TAXI 2=T.O.（TO 位起落架灯亮，并入 landing）
-     * LVar 不存在的机模恒返回 0 —— 覆盖只在 title/ICAO 判定为
-     * IniBuilds A350 后进行，见 apply_ini_lights()。 */
-    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_BEACON, number)",  "number",
-              SC_DATATYPE_FLOAT64);
-    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_LANDING, number)", "number",
-              SC_DATATYPE_FLOAT64);
-    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_LOGO, number)",    "number",
-              SC_DATATYPE_FLOAT64);
-    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_NAV, number)",     "number",
-              SC_DATATYPE_FLOAT64);
-    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_STROBE, number)",  "number",
-              SC_DATATYPE_FLOAT64);
-    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_WING, number)",    "number",
-              SC_DATATYPE_FLOAT64);
-    hr |= add(h, DEF_FLIGHT, "(L:INI_LIGHTS_NOSE, number)",    "number",
-              SC_DATATYPE_FLOAT64);
+    /* 注意：IniBuilds A350 灯光 LVar 不放在这个定义里，见
+     * datadefs_register_ini_lights() / DEF_INI_LIGHTS 的说明。
+     * MSFS 2020 的 SimConnect 会从主包剔除 calculator 变量（L:...），
+     * 混在这里会让主遥测整包被长度检查丢弃、机型识别失效。 */
 
     /* 起落架动画位置（0..100，3 个支柱：前/左/右）。
      * 与上面 GEAR TOTAL PCT EXTENDED 互补：Fenix 等 WASM 起落架只写
@@ -558,9 +526,77 @@ static int mhz_to_mhz1000(double mhz) {
     return (int)(mhz * 1000.0 + 0.5);
 }
 
-/* A350 灯开关 LVar 暂存（DEF_FLIGHT 每帧更新，apply_ini_lights 消费）。
+/* A350 灯开关 LVar 暂存（DEF_INI_LIGHTS 每帧更新，apply_ini_lights 消费）。
  * 顺序：0=BEACON 1=LANDING 2=LOGO 3=NAV 4=STROBE 5=WING 6=NOSE */
 static double g_ini_lt[7];
+
+/* IniBuilds A350 外部灯开关 LVar（独立定义，见 DEF_INI_LIGHTS 说明）。
+ *
+ * A350 的灯光系统全部在机模 WASM 内实现，**不写标准 LIGHT SimVar**
+ * （实测 BEACON/LOGO/WING/NAV/STROBE 拨到 ON 后标准 SimVar 仍是 false，
+ * 只有部分灯走标准通道），导致上报的灯光几乎全灭。这里直接读面板
+ * 开关 LVar —— 与 MobiFlight 同款 calculator 语法，无需 WASM 桥。
+ *
+ * 档位语义经 HubHop 全量预置核对：
+ *   BEACON / LANDING / WING: 0=OFF 1=ON（2 态）
+ *   LOGO:   0=OFF 1=AUTO 2=ON
+ *   NAV:    0=OFF 1=NAV2 2=NAV1（1/2 两档导航灯都亮）
+ *   STROBE: 0=OFF 1=AUTO 2=ON（AUTO 空中闪、地面灭）
+ *   NOSE:   0=OFF 1=TAXI 2=T.O.（TO 位起落架灯亮，并入 landing）
+ *
+ * **为什么独立定义**：MSFS 2020 的 SimConnect 对 `(L:..., number)` 返回
+ * NAME_UNRECOGNIZED，并从 SIMOBJECT_DATA 里剔除这些字段（7×8=56 字节）。
+ * 之前混在 DEF_FLIGHT 里，主包按 780 字节硬校验 → 每帧整包丢弃 →
+ * TITLE/ATC TYPE 永远读不到 → 本机机型自动识别完全失效（实测）。
+ * 拆开后 LVar 读不到只丢这 7 个灯值，核心遥测与机型识别不受影响。 */
+#pragma pack(push, 1)
+typedef struct {
+    double beacon;
+    double landing;
+    double logo;
+    double nav;
+    double strobe;
+    double wing;
+    double nose;
+} IniLightsPkt;
+#pragma pack(pop)
+
+int datadefs_register_ini_lights(void) {
+    HANDLE h = g_sc_handle;
+    HRESULT hr = S_OK;
+
+    if (!h) return -1;
+    hr |= add(h, DEF_INI_LIGHTS, "(L:INI_LIGHTS_BEACON, number)",  "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_INI_LIGHTS, "(L:INI_LIGHTS_LANDING, number)", "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_INI_LIGHTS, "(L:INI_LIGHTS_LOGO, number)",    "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_INI_LIGHTS, "(L:INI_LIGHTS_NAV, number)",     "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_INI_LIGHTS, "(L:INI_LIGHTS_STROBE, number)",  "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_INI_LIGHTS, "(L:INI_LIGHTS_WING, number)",    "number",
+              SC_DATATYPE_FLOAT64);
+    hr |= add(h, DEF_INI_LIGHTS, "(L:INI_LIGHTS_NOSE, number)",    "number",
+              SC_DATATYPE_FLOAT64);
+    if (FAILED(hr)) {
+        xc_logf("datadefs: IniBuilds lights definition failed hr=0x%08lx "
+                "(A350 light override disabled)", (unsigned long)hr);
+        return -1;
+    }
+    hr = g_sc.RequestDataOnSimObject(h, REQ_INI_LIGHTS, DEF_INI_LIGHTS,
+                                     SC_OBJECT_ID_USER, SC_PERIOD_SIM_FRAME,
+                                     SC_DATA_REQUEST_FLAG_DEFAULT, 0, 0, 0);
+    if (FAILED(hr)) {
+        xc_logf("datadefs: IniBuilds lights request failed hr=0x%08lx",
+                (unsigned long)hr);
+        return -1;
+    }
+    xc_logf("datadefs: IniBuilds lights definition ready (%d bytes)",
+            (int)sizeof(IniLightsPkt));
+    return 0;
+}
 
 /* IniBuilds A350 外部灯覆盖。
  *
@@ -573,7 +609,7 @@ static double g_ini_lt[7];
  * 条件里 title 匹配在前、ICAO 在后：ICAO 反查失败时（新装涂装目录
  * 未被 catalog 收录）title 里也带 "A350" 字样，同样生效。
  *
- * 档位语义见 datadefs_init 里 add() 的注释（HubHop 核对）。
+ * 档位语义见 datadefs_register_ini_lights 的注释（HubHop 核对）。
  * AUX 遥测（LIGHT LOGO/WING 走标准 SimVar）到达时会把覆盖结果冲掉，
  * 因此 AUX 解析分支末尾也要调用本函数。 */
 
@@ -636,6 +672,25 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     DWORD need = (DWORD)sizeof(FlightPkt);
 
     if (!d) return;
+
+    /* IniBuilds A350 灯光 LVar（独立可选定义，失败不影响主遥测）。
+     * MSFS 2020 不认这些变量名，包可能永远不到达 —— 这没关系。 */
+    if (d->dwRequestID == REQ_INI_LIGHTS) {
+        const IniLightsPkt* q;
+        if (cbData < sizeof(SC_RECV_SIMOBJECT_DATA) - sizeof(DWORD) +
+                     sizeof(IniLightsPkt))
+            return;
+        q = (const IniLightsPkt*)&d->dwData;
+        g_ini_lt[0] = sane(q->beacon,  0.0, 3.0, 0.0);
+        g_ini_lt[1] = sane(q->landing, 0.0, 3.0, 0.0);
+        g_ini_lt[2] = sane(q->logo,    0.0, 3.0, 0.0);
+        g_ini_lt[3] = sane(q->nav,     0.0, 3.0, 0.0);
+        g_ini_lt[4] = sane(q->strobe,  0.0, 3.0, 0.0);
+        g_ini_lt[5] = sane(q->wing,    0.0, 3.0, 0.0);
+        g_ini_lt[6] = sane(q->nose,    0.0, 3.0, 0.0);
+        apply_ini_lights();
+        return;
+    }
 
     /* 辅助遥测（flight_id / 收听 / 扩展灯光）单独解析 */
     if (d->dwRequestID == REQ_FLIGHT_AUX) {
@@ -768,14 +823,7 @@ void datadefs_on_simobject_data(const void* pkt, DWORD cbData) {
     g_flight.light_nav = p->lt_nav != 0;
     g_flight.light_beacon = p->lt_beacon != 0;
     g_flight.light_strobe = p->lt_strobe != 0;
-    /* A350 面板开关 LVar 暂存（覆盖判定在 apply_ini_lights） */
-    g_ini_lt[0] = p->ini_beacon;
-    g_ini_lt[1] = p->ini_landing;
-    g_ini_lt[2] = p->ini_logo;
-    g_ini_lt[3] = p->ini_nav;
-    g_ini_lt[4] = p->ini_strobe;
-    g_ini_lt[5] = p->ini_wing;
-    g_ini_lt[6] = p->ini_nose;
+    /* A350 灯光 LVar 已由 REQ_INI_LIGHTS 独立包写入 g_ini_lt[]，见文件上方。 */
     g_flight.num_engines = (int)p->num_engines;
     if (g_flight.num_engines < 0) g_flight.num_engines = 0;
     if (g_flight.num_engines > 4) g_flight.num_engines = 4;

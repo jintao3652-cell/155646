@@ -509,9 +509,11 @@ void update_players(double now) {
                                                    alt, &hit);
                     p->probe_ok = hit;
                 } else {
-                    terrain = p->probe_msl;
                     hit = p->probe_ok;
                 }
+                /* 新探针与缓存分支都要取缓存值：此前仅在 else 里赋值，
+                 * 首次探针成功时 terrain 未初始化，AGL/贴地判断读到随机值。 */
+                terrain = p->probe_msl;
                 if (hit) {
                     double agl = alt - terrain;
                     double snapped = 0.0;

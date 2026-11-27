@@ -329,6 +329,15 @@ int main(void) {
               "目录条目反查");
     check_str(catalog_icao_for_title("Cessna Skyhawk G1000 Asobo"), "C172",
               "内置表反查");
+    /* 关键词兜底：标题连写、涂装名打头时仍要认出机型。
+     * 关键词表是大写、title 先转小写，两边都必须归一化（否则永远不命中）。 */
+    check_str(catalog_icao_for_title(
+                  "FenixA320 IAE SL Anon x Mika TRINITY AIRLINES"), "A320",
+              "Fenix A320 连写涂装标题（关键词兜底）");
+    check_str(catalog_icao_for_title("iniBuilds A350-900 Air China"), "A359",
+              "A350-900 长词优先，不能被 A350/A320 抢先");
+    check(catalog_icao_for_title("Unknown Aircraft XYZ") == NULL,
+          "未知机型不误判", NULL);
 
     /* --- 10. AI 模型库偏好 --- */
     printf("\n[10] AI 模型库偏好（FSLTL / AIG / 回退）\n");

@@ -12,8 +12,8 @@
 - 诊断 UI：设置页“导出诊断”；后端 `Api.diagnostics/export_diagnostics`。
 - MConnect 外部机型档案：`MConnect.exe` 同目录 `profiles.json`，2s 热加载，
   外部档案优先于内置表（`docs/MConnect-PROFILES.md`）。
-- CI：Windows XConnect 构建 + CTest；Python unittest + selftest。
-  （Linux/macOS 暂时搁置，不纳入 CI/发布。）
+- CI：Windows + Linux XConnect 构建 + CTest；Python unittest + selftest。
+  （macOS 暂时搁置，不纳入 CI/发布。）
 - 文档：FAQ、支持矩阵、桥协议、贡献指南、变更日志、MConnect 档案格式。
 - **MSFS 自绘呼号标签**：研究确认原生铭牌对 SimConnect 注入 AI 永不渲染
   （模拟器硬限制，`TOGGLE_AIRCRAFT_LABELS` 已被官方废弃）。新增：
@@ -84,6 +84,31 @@
 
 ### Fixed
 
+- **MSFS 侧本机机型无法自动识别（Fenix A320 实测）**：两处独立 bug 叠加。
+  1. `DEF_FLIGHT` 主数据定义里混入 7 个 IniBuilds A350 灯光 LVar
+     `(L:INI_LIGHTS_*, number)`，MSFS 2020 的 SimConnect 不认 calculator
+     变量名，抛 `NAME_UNRECOGNIZED` ×7 并从发包中剔除这些字段（56 字节），
+     主包按 780 字节硬校验 → 每帧整包丢弃 → `TITLE`/`ATC TYPE` 永远读不到。
+     拆成独立可选定义 `DEF_INI_LIGHTS`/`REQ_INI_LIGHTS`，主包降到 724 字节，
+     LVar 读不到只影响 A350 灯光覆盖。
+  2. `catalog_icao_from_title_keywords()` 把 title 转小写后，却拿**大写**
+     关键词表去做 `strstr`，大小写不敏感匹配永远失败 —— Fenix 连写涂装
+     标题（无精确目录条目、ATC TYPE 又是 `ATCCOM` 占位符）因此认不出机型。
+     关键词同样转小写后再比较。
+  实测：`local aircraft title="FenixA320..." -> ICAO A320`，不再出现
+  `SIMOBJECT_DATA too short`；新增 3 条目录回归测试，CTest 8/8。
+- **设置里手填机型保存失败，连线仍报「机型 ICAO 缺失」**：`openSettings()`
+  用旧字段名 `host/port/xphost/xpport` 初始化设置对象，而模板与
+  `saveSettings()` 用的是 `server_host/server_port/xconnect_host/xconnect_port`，
+  点保存时 `.trim()` 抛异常，手填机型等设置全部没写入配置。统一字段名，
+  并对旧内存状态做兼容；插件地址/端口缺省回填 `127.0.0.1` / `51001`，
+  避免配置缺字段时输入框留空；手填机型增加 2~4 位字母数字前端校验，
+  非法值直接提示，不再静默回退自动识别。
+- **XConnect Linux CI 编译失败**：`labels.c` 的呼号字号放大依赖
+  `glPushMatrix/glScalef`，GitHub runner 缺 `GL/gl.h` 与链接用的
+  `libGL.so`。CI 在 Ubuntu 构建前安装 `libgl1-mesa-dev`；Apple 平台改用
+  `<OpenGL/gl.h>`。顺带修复地形探针首次命中时 `terrain` 未初始化的真实
+  bug（AGL/贴地判断此前会读到随机值），并消除 `csl.c` 的嵌套注释告警。
 - **站点 JSON 里 `livery` 恒为 null（IniBuilds A350 实测）**：机型推断
   原来只在 ICAO 为空（或 `ATC*` 占位符）时触发，而 IniBuilds A350 上报的
   ICAO 是非标准码 `A350-900`（标准码 A359）——非空、非占位，直接穿透护栏

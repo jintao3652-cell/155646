@@ -382,6 +382,7 @@ class Api:
         # （比如刚切机模、推送还没到达，或者前端被清空后没来得及刷新）。
         # 只依赖前端传值会让"明明识别得出来"的机型卡在校验上。
         # 这里拿 `self._last_fd_*` 兜底，保证只要插件读到过机型名就能连。
+        # 注意：不回退到配置里的旧机型——那不是"当前正在使用的机型"。
         if not (2 <= len(aircraft) <= 4 and aircraft.isalnum()):
             fb = aircraft_db.guess_designator(
                 getattr(self, "_last_ac_name", "") or "",

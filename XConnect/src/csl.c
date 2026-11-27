@@ -102,7 +102,7 @@ static const char* kCslDataRefs[CSL_MAX_DATAREFS] = {
 #define CSL_DATAREF_COUNT ((int)(sizeof(kCslDataRefs) / sizeof(kCslDataRefs[0])))
 
 /* ---------------------------------------------------------------------------
- * libxplanemp/* 自定义 dataref 注册
+ * libxplanemp/... 自定义 dataref 注册
  *
  * XPLMInstance.h 明确要求：OBJ 里用到的自定义 dataref **必须在 XPLMLoadObject
  * 之前注册**，即使数值是通过 XPLMCreateInstance 的实例 dataref 列表提供的。
@@ -138,7 +138,7 @@ static void csl_register_datarefs(void) {
         XPLMDataRef existing;
         XPLMDataRef ref;
         if (!name) continue;
-        /* sim/time/* 是 X-Plane 内建，不能也不需要注册 */
+        /* sim/time/... 是 X-Plane 内建，不能也不需要注册 */
         if (strncmp(name, "libxplanemp/", 12) != 0) continue;
         /* 已存在（例如 XPMP2 已注册）就复用，绝对不要重复注册同名 dataref */
         existing = XPLMFindDataRef(name);

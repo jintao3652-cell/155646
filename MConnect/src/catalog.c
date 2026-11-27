@@ -413,9 +413,19 @@ const char* catalog_icao_from_title_keywords(const char* title) {
     low[n] = '\0';
 
     for (i = 0; i < sizeof(kTitleKeywords) / sizeof(kTitleKeywords[0]); i++) {
+        /* 关键词表里的拼写是大写（"A320"/"B737"…），而 low 是小写 title。
+         * 旧代码直接 strstr(low, k) → **永远匹配不上**，Fenix A320 连写
+         * 涂装标题反查失败、ATC TYPE 又是 ATCCOM 占位符 → 本机机型识别
+         * 彻底失效（2026-11-27 修复）。两侧都转小写后再比较。 */
+        char kw[32];
+        size_t j, m = 0;
         const char* k = kTitleKeywords[i].keyword;
+        for (j = 0; k[j] && m < sizeof(kw) - 1; j++)
+            kw[m++] = (char)((k[j] >= 'A' && k[j] <= 'Z')
+                                 ? k[j] + 32 : k[j]);
+        kw[m] = '\0';
         /* 关键词已在表内保证长词在前，直接 strstr */
-        if (strstr(low, k)) return kTitleKeywords[i].icao;
+        if (strstr(low, kw)) return kTitleKeywords[i].icao;
     }
     return NULL;
 }
