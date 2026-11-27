@@ -20,6 +20,7 @@ from typing import Optional
 import webview
 
 from xfly_client import aircraft_db
+from xfly_client import update_service
 from xfly_client.bridge_launcher import BridgeLauncher
 from xfly_client.config import AppConfig, load_config, save_config
 from xfly_client.diagnostics import collect as collect_diagnostics
@@ -36,6 +37,7 @@ from xfly_client.registration import norm_registration
 from xfly_client.resources import diagnostics_summary as resource_summary
 from xfly_client.simbrief import SimbriefError
 from xfly_client.simbrief import import_plan as simbrief_import_plan
+from xfly_client.version import CLIENT_NAME, CLIENT_VERSION
 from xfly_client.xconnect.client import XConnectClient
 
 # 资源根：PyInstaller 打包后在 sys._MEIPASS 临时解包目录（webui/dist 经
@@ -136,6 +138,16 @@ class Api:
         self._xconnect.on_flight_data = self._push_flight
         self._xconnect.on_csl_status = lambda d: self._push("csl", d)
         self._start_xconnect()
+
+        # 在线更新：只查客户端整包（插件不在这条通道里）。接口地址在
+        # xfly_client/update_service.py::UPDATE_API_URL，留空则整个功能静默关闭。
+        self._update = update_service.UpdateManager(
+            base_dir=app_base_dir(),
+            current=CLIENT_VERSION,
+            on_event=lambda st: self._push("update", st),
+            log=lambda m, level="INFO": self._push("log", m))
+        self._announce_last_update()
+        self._update.check(manual=False)
 
     def _manual_aircraft(self) -> str:
         """手填机型（库内合法码）；空串表示完全交给自动识别。"""
@@ -359,6 +371,63 @@ class Api:
             return {"ok": False, "code": "send_failed"}
         self._push("log", self._tr(
             f"[mconnect] AI 模型库偏好已切换为 {lib}，下一帧重建他机模型"))
+        return {"ok": True}
+
+    # ---------- 在线更新（仅客户端整包；插件不在此通道） ----------
+
+    def _announce_last_update(self) -> None:
+        """汇报上一次自更新的结果（助手在客户端退出后完成替换并重启）。
+
+        结果由更新助手写入用户目录的 update-result.json，这里读一次即清除，
+        所以只有紧随更新后的第一次启动会看到提示。
+        """
+        res = update_service.read_and_clear_result()
+        if not res:
+            return
+        version = str(res.get("version") or "")
+        if res.get("ok"):
+            # 助手替换的版本应与正在运行的版本一致；不一致说明替换没生效
+            # （例如源码运行 + XFLYSIM_UPDATE_TARGET 指向别处），按提示降级。
+            try:
+                same = update_service.compare_versions(
+                    version, CLIENT_VERSION) == 0
+            except update_service.UpdateError:
+                same = False
+            if same:
+                self._push("log", self._tr(f"[update] 已更新到版本 {version}"))
+                self._push("update", {"state": "updated", "latest": version,
+                                      "current": CLIENT_VERSION})
+            else:
+                self._push("log", self._tr(
+                    f"[update] 助手记录的目标版本为 {version}，当前运行版本为 "
+                    f"{CLIENT_VERSION}"))
+        else:
+            self._push("log", self._tr(
+                f"[update] 上次更新到 {version} 失败：{res.get('message') or ''}"))
+
+    def get_version(self) -> dict:
+        """当前版本：界面版本号与更新屏都以它为准，不再在文案里硬编码。"""
+        return {"name": CLIENT_NAME, "version": CLIENT_VERSION,
+                "installed": update_service.read_installed_version()}
+
+    def update_state(self) -> dict:
+        """更新状态快照（前端挂载时补一次，事件漏了也能自愈）。"""
+        return self._update.state()
+
+    def check_update(self, manual: bool = True) -> dict:
+        """检查更新（只比版本号）。后台线程执行，结果走 update 事件。"""
+        return self._update.check(manual=bool(manual))
+
+    def apply_update(self) -> dict:
+        """下载（断点续传 + 边下边算 MD5）→ 校验 → 拉起更新助手。
+
+        助手起来后前端会收到 state=restarting，随后由前端调用 win_close 退出；
+        绝不能在这里直接覆盖正在运行的 exe。
+        """
+        return self._update.apply()
+
+    def cancel_update(self) -> dict:
+        self._update.cancel()
         return {"ok": True}
 
     # ---------- 连线 / 断开 ----------
@@ -738,7 +807,11 @@ class Api:
             pass
 
     def close(self) -> None:
-        """应用退出：断开 FSD 并停止插件监听。"""
+        """应用退出：断开 FSD、停止插件监听、取消未完成的下载。"""
+        try:
+            self._update.cancel()
+        except Exception:
+            pass
         model, self._model = self._model, None
         if model is not None:
             model.shutdown()

@@ -60,6 +60,17 @@ export const store = reactive({
   overlays: { msg: false, set: false, fp: false },
   newMsg: false,
   screenMsg: null,
+  version: '',             // 当前版本（后端 get_version，右下角/更新屏共用）
+  /* 在线更新：状态机由后端 UpdateManager 推送 update 事件驱动。
+   * state: idle/disabled/checking/available/uptodate/downloading/
+   *        restarting/error/updated（disabled = 未配置更新接口地址） */
+  update: {
+    state: 'idle',
+    current: '', latest: '', notes: '', created: '', softwareName: '',
+    percent: 0, received: 0, total: 0,
+    error: '', errorCode: '', silent: false, manual: false,
+    dismissed: false,      // 用户点了"稍后"，本次运行不再打扰
+  },
   _logId: 0,
   _dragging: false,
   _dragX: 0, _dragY: 0,
@@ -232,6 +243,18 @@ export async function initStore() {
     store.lang = loc
     store.set.language = loc
     document.documentElement.lang = loc
+    /* 版本号与更新状态：后端在构造时已自动查过一次更新，这里补一次快照，
+     * 避免"检查结果早于前端挂载"时界面空白。 */
+    try {
+      const v = await store.api.get_version()
+      if (v && v.version) {
+        store.version = v.version
+        if (!store.update.current) store.update.current = v.version
+      }
+    } catch (e) { /* 忽略 */ }
+    try {
+      applyUpdateState(await store.api.update_state())
+    } catch (e) { /* 忽略 */ }
   } catch (e) { /* 忽略 */ }
 }
 
@@ -303,6 +326,7 @@ function handleEvent(ev) {
     case 'xconnect': setBridgeState('xpState', ev.data); break
     case 'mconnect': setBridgeState('mcState', ev.data); break
     case 'csl': setCslStatus(ev.data); break
+    case 'update': applyUpdateState(ev.data); break
     case 'xplog': addLog('◂ ' + JSON.stringify(ev.data), 'in'); break
     case 'sys': addLog(`[!] ${ev.data}`, 'err'); break
     case 'fsdstate': updateStatus(ev.data); break
@@ -330,6 +354,90 @@ function setCslStatus(d) {
   store.cslMissing = d.missing || []
   if (store.cslMissing.length)
     addLog(t('status.cslMissing', { list: store.cslMissing.join(', ') }), 'err')
+}
+
+/* ---------- 在线更新 ----------
+ *
+ * 后端 xfly_client/update_service.py 的 UpdateManager 把状态推成 update 事件：
+ *   checking → available | uptodate（→ downloading → restarting）| error
+ * 界面只在 LCD 主屏右下角提示 + 独立的更新小屏里操作，不弹大对话框。 */
+
+/** 合并一次状态快照；保留 dismissed 等纯前端字段。 */
+function applyUpdateState(d) {
+  if (!d || typeof d !== 'object') return
+  const prev = store.update.state
+  store.update = { ...store.update, ...d, percent: Number(d.percent) || 0 }
+  if (d.current) store.version = d.current
+  if (d.state === prev) return
+  if (d.state === 'available') {
+    store.update.dismissed = false      // 发现新版本重新提醒
+    addLog(t('update.logAvailable', { version: d.latest || '' }), 'in')
+  } else if (d.state === 'updated') {
+    const text = t('update.logUpdated', { version: d.latest || '' })
+    addLog(text, 'in')
+    toast(text, 'success', 4000)
+  } else if (d.state === 'restarting') {
+    toast(t('update.restarting'), 'success', 3000)
+    /* 助手已在等本进程退出：留一点时间让提示画出来，再关窗 */
+    setTimeout(() => { try { store.api.win_close() } catch (e) { /* 忽略 */ } }, 900)
+  } else if (d.state === 'error' && d.manual) {
+    message(errText({ code: d.errorCode, error: d.error }) || t('update.failed'), true)
+  }
+}
+
+/** LCD 主屏是否要显示"有更新"角标（点了催办过就不再闪）。 */
+export const updateAvailable = computed(() =>
+  ['available', 'downloading', 'restarting'].includes(store.update.state) &&
+  !store.update.dismissed)
+
+/** 下载进度百分比（后端只给 received/total 时也能算）。 */
+export const updatePercent = computed(() => {
+  const u = store.update
+  if (u.state !== 'downloading') return 0
+  if (u.percent > 0) return u.percent
+  if (u.total > 0) return Math.floor((u.received * 100) / u.total)
+  return 0
+})
+
+/** 检查更新：manual=true 时失败会提示，启动自动检查失败则静默。 */
+export async function checkUpdate(manual = true) {
+  if (!store.api) return
+  const r = await store.api.check_update(!!manual)
+  if (r && r.ok === false) {
+    if (r.code === 'update_no_url') {
+      if (manual) message(t('update.noUrl'), true)
+    } else {
+      message(errText(r) || t('update.failed'), true)
+    }
+  }
+}
+
+/** 下载 + 校验 + 拉起更新助手；助手起来后应用会自动退出并重启。 */
+export async function startUpdate() {
+  if (!store.api) return
+  const u = store.update
+  if (['downloading', 'restarting'].includes(u.state)) return
+  try {
+    await ElMessageBox.confirm(
+      t('update.confirm', { version: u.latest || '' }),
+      t('update.confirmTitle'),
+      {
+        confirmButtonText: t('update.confirmOk'),
+        cancelButtonText: t('update.later'),
+        type: 'warning',
+        closeOnClickModal: false,
+      },
+    )
+  } catch (e) {
+    return   /* 取消 */
+  }
+  const r = await store.api.apply_update()
+  if (!r || !r.ok) message(errText(r) || t('update.failed'), true)
+}
+
+/** 稍后再说：本次运行不再提醒（下次启动会重新检查）。 */
+export function dismissUpdate() {
+  store.update.dismissed = true
 }
 
 /* X-Plane transponder_mode 枚举（XP12: off=0 stdby=1 on=2 alt=3 test=4

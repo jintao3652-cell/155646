@@ -135,7 +135,9 @@
         </div>
       </el-col>
     </el-row>
-    <div class="cns-brand"><b>{{ t('cns.brand') }}</b>{{ t('cns.brandSim') }}<span class="ver">{{ t('cns.version') }}</span></div>
+    <div class="cns-brand"><b>{{ t('cns.brand') }}</b>{{ t('cns.brandSim') }}<span
+        class="ver" :title="t('update.versionTip')"
+        @click="() => router.push('/update')">v{{ store.version || '1.0.0' }}</span></div>
   </section>
 
 </template>
