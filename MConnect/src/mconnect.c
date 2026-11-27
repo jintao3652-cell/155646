@@ -1007,6 +1007,11 @@ int main(int argc, char** argv) {
     if (datadefs_register_aux() != 0) {
         xc_infof("[!] 辅助遥测不可用（flight_id/收听状态/扩展灯光不上报）");
     }
+    /* 可选：MSFS 2020 的 SimConnect 不认 LVar calculator 变量，这里会失败，
+     * 但已与 DEF_FLIGHT 主遥测隔离 —— 机型识别/位置/姿态全部照常。 */
+    if (datadefs_register_ini_lights() != 0) {
+        xc_infof("[!] IniBuilds A350 灯光覆盖不可用（不影响飞行数据）");
+    }
     if (datadefs_register_ai_atcid() != 0) {
         xc_infof("[!] AI 呼号标签（ATC ID）不可用");
     }

@@ -568,8 +568,14 @@ export async function openSettings() {
     remember: !!s.remember_password,
     callsign: s.callsign, airline: s.airline_icao,
     aircraft_manual: s.aircraft_manual || '',
-    host: s.server_host, port: s.server_port,
-    xphost: s.xconnect_host, xpport: s.xconnect_port,
+    // 字段名必须与模板 v-model / saveSettings() 一致。
+    // 旧代码用 host/port/xphost/xpport，打开设置后保存会在
+    // `server_host.trim()` 处抛错，导致手填机型等全部设置都没写入。
+    // 配置缺字段时回填默认值，避免设置页出现空输入框后被误保存为空。
+    server_host: s.server_host || 'ol.xflysim.com',
+    server_port: s.server_port || 6809,
+    xconnect_host: s.xconnect_host || '127.0.0.1',
+    xconnect_port: s.xconnect_port || 51001,
     debug: !!s.debug_mode,
     msfs_labels: !!s.msfs_toggle_labels,
     traffic_lib: s.msfs_traffic_lib || 'auto',
@@ -596,18 +602,32 @@ export async function exportDiagnostics() {
 }
 
 export async function saveSettings() {
+  const s = store.set
+  // 兼容旧内存状态（早期 openSettings 写的是 host/port/xphost/xpport）：
+  // 否则任一字段 undefined 会在 .trim() 抛错，整次保存静默失败。
+  if (s.server_host == null && s.host != null) s.server_host = s.host
+  if (s.server_port == null && s.port != null) s.server_port = s.port
+  if (s.xconnect_host == null && s.xphost != null) s.xconnect_host = s.xphost
+  if (s.xconnect_port == null && s.xpport != null) s.xconnect_port = s.xpport
+  // 手填机型必须是 2~4 位字母数字（与后端校验一致）；非法值宁可拦下来提示，
+  // 也不要静默忽略后退回自动识别，否则用户会看到"我填了却说没填"。
+  const acManual = (s.aircraft_manual || '').trim().toUpperCase()
+  if (acManual && !/^[A-Z0-9]{2,4}$/.test(acManual)) {
+    message(`${t('errors.field.aircraft')}: ${acManual}`, true)
+    return
+  }
   const d = {
-    real_name: store.set.real_name.trim(),
-    cid: store.set.cid.trim(),
-    password: store.set.remember ? store.set.password : '',
-    remember_password: store.set.remember,
-    callsign: store.set.callsign.trim().toUpperCase(),
-    airline_icao: store.set.airline.trim().toUpperCase(),
-    aircraft_manual: (store.set.aircraft_manual || '').trim().toUpperCase(),
-    server_host: store.set.server_host.trim(),
-    server_port: parseInt(store.set.server_port, 10),
-    xconnect_host: store.set.xconnect_host.trim(),
-    xconnect_port: parseInt(store.set.xconnect_port, 10),
+    real_name: s.real_name.trim(),
+    cid: s.cid.trim(),
+    password: s.remember ? s.password : '',
+    remember_password: s.remember,
+    callsign: s.callsign.trim().toUpperCase(),
+    airline_icao: s.airline.trim().toUpperCase(),
+    aircraft_manual: acManual,
+    server_host: s.server_host.trim(),
+    server_port: parseInt(s.server_port, 10),
+    xconnect_host: s.xconnect_host.trim(),
+    xconnect_port: parseInt(s.xconnect_port, 10),
     debug_mode: store.set.debug,
     msfs_toggle_labels: !!store.set.msfs_labels,
     msfs_traffic_lib: store.set.traffic_lib || 'auto',

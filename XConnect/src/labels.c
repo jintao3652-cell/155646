@@ -14,7 +14,13 @@
 #include "XPLMDisplay.h"
 #include "XPLMGraphics.h"
 
+/* 呼号字号放大依赖 OpenGL 变换矩阵。Apple SDK 的头文件在 OpenGL/ 下，
+ * Windows/Linux 则是 GL/gl.h（CMake 在 APPLE 分支定义 APL）。 */
+#if defined(APL)
+#include <OpenGL/gl.h>
+#else
 #include <GL/gl.h>
+#endif
 
 #define LABEL_MAX_DIST_M      40000.0  /* 超过此距离不画标签 */
 /* 标签高度按距离自适应：近距离别飞太高，远距离仍高于机模。

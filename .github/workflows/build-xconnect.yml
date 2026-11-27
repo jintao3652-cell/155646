@@ -30,6 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # labels.c 用 glPushMatrix/glScalef 放大呼号文本；Linux runner 默认
+      # 只有运行期 libGL.so.1，没有 GL/gl.h 和链接用的 libGL.so 符号链接。
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev
+
       # SDK 已内置仓库（XConnect/SDK，XPSDK 43.0，含头文件与 XPLM_64.lib）
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
